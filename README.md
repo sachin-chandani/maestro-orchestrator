@@ -18,7 +18,7 @@ Saved: 3  📝 —                 My passport is in the blue drawer
 
 **Who it's for:** people who forget things and want a private, scriptable place to dump them, plus developers who want a reminder engine they can host or embed.
 
-**Status:** early but usable. CLI, REST API, recurring reminders, ntfy and Twilio SMS work today. See the [roadmap](ROADMAP.md) for Telegram, voice calls, web UI and more.
+**Status:** early but usable (v0.2). CLI, web UI, REST API, recurring reminders, timezones, and delivery via desktop, ntfy, Twilio SMS and Telegram work today. See the [roadmap](ROADMAP.md) for SMS and voice capture, escalation, calendar feeds and more.
 
 ## Features
 - **Plain language:** `tomorrow at 5pm`, `in 2 hours`, `next friday at 10am`, `on Nov 1`, `tonight`, `at noon`
@@ -41,8 +41,14 @@ maestro run          # fires reminders as they come due
 ```bash
 git clone https://github.com/sachin-chandani/maestro-orchestrator.git
 cd maestro-orchestrator
-cp .env.example .env     # set MAESTRO_API_TOKEN and any channel keys
+cp .env.example .env     # set MAESTRO_API_TOKEN, MAESTRO_TIMEZONE and any channel keys
 docker compose up -d
+```
+
+Or run the published image directly (amd64 and arm64, so it works on a Raspberry Pi):
+```bash
+docker run -d --name maestro --env-file .env -p 127.0.0.1:8000:8000 \
+  -v maestro-data:/data ghcr.io/sachin-chandani/maestro-orchestrator:latest
 ```
 
 Then capture from anything that can make an HTTP request (Apple Shortcuts, Tasker, curl):
