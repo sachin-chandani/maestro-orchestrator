@@ -68,6 +68,13 @@ All settings come from environment variables or a `.env` file. See [.env.example
 | `NTFY_URL`, `NTFY_TOPIC` | ntfy server and topic |
 | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER`, `MAESTRO_SMS_TO` | SMS to your own phone |
 
+### Checking your setup
+```bash
+maestro doctor              # timezone, database, API token, every configured channel
+maestro doctor --send-test  # also delivers a test message on each channel
+```
+It exits non-zero if anything fails, so you can run it before a deploy (`docker compose run --rm maestro maestro doctor`).
+
 ### Monitoring
 `GET /metrics` serves Prometheus metrics (same bearer token as the API): captures by source, deliveries by channel and result, reminders fired, scheduler ticks and lag, and item counts by kind and status. Alert on `time() - maestro_scheduler_last_tick_timestamp_seconds > 120` to catch a stuck scheduler.
 
@@ -88,6 +95,7 @@ maestro done <id>
 maestro rm <id>
 maestro run [--once]          # scheduler only
 maestro serve [--host --port] # API + scheduler (needs the [server] extra)
+maestro doctor [--send-test]  # check configuration and channels
 ```
 
 ## Using it as a library
