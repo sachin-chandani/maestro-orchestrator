@@ -77,7 +77,8 @@ Estimates are rough working hours. Status is tracked in GitHub issues.
 - [ ] Channel plugin API via entry points, with a cookiecutter template for new channels
 
 ## v0.5: Web UI and companion apps (~20h)
-- [ ] Web UI: capture box, timeline, notes, search, settings (HTMX, works on mobile)
+- [x] Minimal web UI at `/`: capture box, reminders and notes, search, done/snooze/delete, auto-refresh (single page, no build step)
+- [ ] Fuller web UI: timeline view, editing, settings and channel status
 - [ ] Installable PWA with web push notifications
 - [ ] Calendar feed: subscribe to your reminders as an iCalendar (`.ics`) URL from any calendar app
 - [ ] CalDAV sync (two-way) for people who live in their calendar

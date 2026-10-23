@@ -25,7 +25,7 @@ Saved: 3  📝 —                 My passport is in the blue drawer
 - **Recurring:** `every day at 8am`, `every weekday at 9:30am`, `every monday`, `on the 1st of every month`, `every 2 hours`
 - **Notes:** anything without a time is kept and searchable
 - **Channels:** console, macOS notifications, [ntfy](https://ntfy.sh) push, Twilio SMS
-- **Self-hosted:** one Docker container, one SQLite file, token-protected REST API
+- **Self-hosted:** one Docker container, one SQLite file, token-protected REST API and a built-in web UI
 - **Reliable:** delivery is tracked per channel; a failing channel is retried with backoff (up to 5 attempts) without re-sending on the ones that worked. After downtime, recurring reminders fire once and skip ahead instead of flooding you
 
 ## Quick start (CLI)
@@ -50,7 +50,7 @@ curl -X POST localhost:8000/items \
   -H "Content-Type: application/json" \
   -d '{"text": "dentist next tuesday at 3pm"}'
 ```
-Interactive API docs are at `http://localhost:8000/docs`.
+Open `http://localhost:8000` for the web UI (capture, browse, search, done/snooze/delete). Interactive API docs are at `http://localhost:8000/docs`.
 
 ### Configuration
 All settings come from environment variables or a `.env` file. See [.env.example](.env.example).

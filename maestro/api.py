@@ -9,8 +9,10 @@ import asyncio
 import hmac
 from contextlib import asynccontextmanager
 from datetime import datetime
+from importlib.resources import files
 
 from fastapi import Depends, FastAPI, Header, HTTPException, status
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 from maestro import __version__, recurrence
@@ -19,6 +21,8 @@ from maestro.notifier import Notifier
 from maestro.parser import parse, parse_duration
 from maestro.scheduler import fire_due
 from maestro.store import Store
+
+WEB_UI = files("maestro").joinpath("web/index.html").read_text(encoding="utf-8")
 
 
 async def _scheduler_loop(store: Store, notifier: Notifier, interval: float) -> None:
@@ -82,6 +86,11 @@ def create_app(store: Store, api_token: str | None = None, notifier: Notifier | 
         if (item := store.get(item_id)) is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, f"No item #{item_id}")
         return item
+
+    @app.get("/", include_in_schema=False)
+    async def web_ui() -> HTMLResponse:
+        # The page itself holds no data; it calls the token-protected API from the browser.
+        return HTMLResponse(WEB_UI)
 
     @app.get("/health")
     async def health() -> dict:

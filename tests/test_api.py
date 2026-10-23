@@ -22,6 +22,15 @@ def test_health_is_public(client):
     assert body["schema"] == len(MIGRATIONS)
 
 
+def test_web_ui_is_public_and_holds_no_data(client):
+    client.post("/items", json={"text": "remember the gate code is 4321"}, headers=AUTH)
+    page = client.get("/")
+    assert page.status_code == 200
+    assert page.headers["content-type"].startswith("text/html")
+    assert "<title>Maestro</title>" in page.text
+    assert "4321" not in page.text  # data only comes through the authenticated API
+
+
 def test_requires_token(client):
     assert client.get("/items").status_code == 401
     assert client.get("/items", headers={"Authorization": "Bearer wrong"}).status_code == 401

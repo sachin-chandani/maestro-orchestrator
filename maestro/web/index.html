@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Maestro</title>
+<style>
+  :root {
+    --bg: #f7f7f5; --panel: #ffffff; --text: #1d1d1f; --muted: #6e6e73; --line: #e3e3e0;
+    --accent: #3b5bdb; --accent-text: #ffffff; --danger: #c92a2a; --ok: #2b8a3e; --warn: #e67700;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #141416; --panel: #1e1e21; --text: #ececf0; --muted: #9a9aa2; --line: #2e2e33;
+      --accent: #748ffc; --accent-text: #0b0b0d; --danger: #ff8787; --ok: #69db7c; --warn: #ffa94d;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 24px 16px 64px; }
+  header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+  h1 { font-size: 22px; margin: 0; letter-spacing: -0.01em; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 28px 0 8px; }
+  .muted { color: var(--muted); font-size: 13px; }
+  form.capture { display: flex; gap: 8px; }
+  input[type=text], input[type=password], input[type=search] {
+    flex: 1; min-width: 0; padding: 12px 14px; font: inherit; color: var(--text); background: var(--panel);
+    border: 1px solid var(--line); border-radius: 10px; outline: none; }
+  input:focus { border-color: var(--accent); }
+  button { font: inherit; cursor: pointer; border-radius: 8px; border: 1px solid var(--line);
+           background: var(--panel); color: var(--text); padding: 6px 10px; }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); padding: 12px 18px; }
+  button.link { border: none; background: none; color: var(--accent); padding: 0; }
+  button.danger { color: var(--danger); }
+  .hints { margin: 8px 2px 0; }
+  .hints button { border: none; background: none; color: var(--muted); padding: 2px 6px 2px 0;
+                  font-size: 13px; text-decoration: underline dotted; }
+  .toolbar { display: flex; gap: 12px; align-items: center; margin-top: 20px; }
+  .toolbar label { white-space: nowrap; }
+  ul { list-style: none; margin: 0; padding: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; }
+  li { display: flex; gap: 12px; align-items: flex-start; padding: 12px 14px; border-top: 1px solid var(--line); }
+  li:first-child { border-top: none; }
+  .body { flex: 1; min-width: 0; }
+  .text { overflow-wrap: anywhere; }
+  .meta { color: var(--muted); font-size: 13px; margin-top: 2px; display: flex; flex-wrap: wrap; gap: 4px 10px; }
+  .badge { font-size: 12px; padding: 1px 7px; border-radius: 999px; border: 1px solid currentColor; }
+  .overdue { color: var(--warn); } .fired { color: var(--ok); } .done .text { text-decoration: line-through; color: var(--muted); }
+  .actions { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
+  .actions button { font-size: 13px; padding: 4px 8px; }
+  .empty { padding: 16px 14px; color: var(--muted); }
+  #toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--text); color: var(--bg);
+           padding: 10px 16px; border-radius: 10px; font-size: 14px; opacity: 0; transition: opacity .2s; pointer-events: none;
+           max-width: calc(100% - 32px); }
+  #toast.show { opacity: 1; }
+  #auth { display: none; margin-top: 12px; padding: 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; }
+  #auth form { display: flex; gap: 8px; margin-top: 8px; }
+  @media (max-width: 520px) { li { flex-direction: column; } .actions { justify-content: flex-start; } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Maestro</h1>
+    <span class="muted" id="status">connecting…</span>
+  </header>
+
+  <div id="auth">
+    <strong>API token required</strong>
+    <div class="muted">This server has <code>MAESTRO_API_TOKEN</code> set. It's stored only in this browser.</div>
+    <form id="auth-form"><input type="password" id="token" placeholder="Paste token" autocomplete="off"><button class="primary">Save</button></form>
+  </div>
+
+  <form class="capture" id="capture">
+    <input type="text" id="text" placeholder="Remind me to call mom tomorrow at 5pm…" autocomplete="off" autofocus>
+    <button class="primary" type="submit">Add</button>
+  </form>
+  <div class="hints muted">Try:
+    <button type="button">pay rent on the 1st of every month</button>
+    <button type="button">stand-up every weekday at 9:30am</button>
+    <button type="button">check the oven in 1 minute</button>
+    <button type="button">remember the wifi password is on the router</button>
+  </div>
+
+  <div class="toolbar">
+    <input type="search" id="search" placeholder="Search">
+    <label class="muted"><input type="checkbox" id="show-done"> Show completed</label>
+  </div>
+
+  <h2>Reminders</h2>
+  <ul id="reminders"></ul>
+  <h2>Notes</h2>
+  <ul id="notes"></ul>
+</main>
+<div id="toast" role="status"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const TOKEN_KEY = "maestro.token";
+const readToken = () => { try { return localStorage.getItem(TOKEN_KEY); } catch { return null; } };
+const writeToken = (t) => { try { localStorage.setItem(TOKEN_KEY, t); } catch {} };
+
+async function api(path, options = {}) {
+  const headers = { "Content-Type": "application/json" };
+  const token = readToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const res = await fetch(path, { ...options, headers });
+  if (res.status === 401) { $("auth").style.display = "block"; throw new Error("unauthorized"); }
+  $("auth").style.display = "none";
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(typeof body.detail === "string" ? body.detail : `HTTP ${res.status}`);
+  }
+  return res.status === 204 ? null : res.json();
+}
+
+let toastTimer;
+function toast(message) {
+  $("toast").textContent = message;
+  $("toast").classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => $("toast").classList.remove("show"), 3500);
+}
+
+function relative(date) {
+  const mins = Math.round((date - Date.now()) / 60000);
+  const abs = Math.abs(mins);
+  const span = abs < 60 ? `${abs}m` : abs < 1440 ? `${Math.round(abs / 60)}h` : `${Math.round(abs / 1440)}d`;
+  return abs < 1 ? "now" : mins > 0 ? `in ${span}` : `${span} ago`;
+}
+
+function when(item) {
+  const d = new Date(item.due_at);
+  return d.toLocaleString(undefined, { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+}
+
+function el(tag, props = {}, children = []) {
+  const node = Object.assign(document.createElement(tag), props);
+  for (const child of children) node.append(child);
+  return node;
+}
+
+function action(label, handler, cls = "") {
+  return el("button", { type: "button", textContent: label, className: cls, onclick: handler });
+}
+
+async function act(promise, message) {
+  try { await promise; if (message) toast(message); } catch (e) { if (e.message !== "unauthorized") toast(e.message); }
+  refresh();
+}
+
+function row(item) {
+  const meta = el("div", { className: "meta" });
+  if (item.due_at) {
+    const due = new Date(item.due_at);
+    meta.append(el("span", { textContent: when(item) }), el("span", { textContent: relative(due) }));
+    if (item.status === "pending" && due < Date.now()) meta.append(el("span", { className: "badge overdue", textContent: "due" }));
+  }
+  if (item.recurrence_label) meta.append(el("span", { textContent: `↻ ${item.recurrence_label}` }));
+  if (item.status === "fired") meta.append(el("span", { className: "badge fired", textContent: "sent" }));
+  if (item.status === "done") meta.append(el("span", { className: "badge", textContent: "done" }));
+
+  const actions = el("div", { className: "actions" });
+  if (item.status !== "done") {
+    actions.append(action("Done", () => act(api(`/items/${item.id}/done`, { method: "POST" }), "Marked done")));
+    if (item.kind === "reminder") {
+      for (const d of ["10m", "1h", "1d"]) {
+        actions.append(action(`+${d}`, () => act(
+          api(`/items/${item.id}/snooze`, { method: "POST", body: JSON.stringify({ duration: d }) }), `Snoozed ${d}`)));
+      }
+    }
+  }
+  actions.append(action("Delete", () => {
+    if (confirm(`Delete "${item.text}"?`)) act(api(`/items/${item.id}`, { method: "DELETE" }), "Deleted");
+  }, "danger"));
+
+  return el("li", { className: item.status }, [
+    el("div", { className: "body" }, [el("div", { className: "text", textContent: item.text }), meta]),
+    actions,
+  ]);
+}
+
+function fill(list, items, emptyText) {
+  list.replaceChildren(...(items.length ? items.map(row) : [el("li", { className: "empty", textContent: emptyText })]));
+}
+
+async function refresh() {
+  const q = $("search").value.trim();
+  const params = new URLSearchParams();
+  if (q) params.set("q", q); else if ($("show-done").checked) params.set("include_done", "true");
+  try {
+    const items = await api(`/items?${params}`);
+    fill($("reminders"), items.filter((i) => i.kind === "reminder"), q ? "No matching reminders." : "Nothing scheduled.");
+    fill($("notes"), items.filter((i) => i.kind === "note"), q ? "No matching notes." : "No notes yet.");
+    $("status").textContent = `updated ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`;
+  } catch (e) {
+    $("status").textContent = e.message === "unauthorized" ? "locked" : "offline";
+  }
+}
+
+$("capture").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const text = $("text").value.trim();
+  if (!text) return;
+  try {
+    const item = await api("/items", { method: "POST", body: JSON.stringify({ text }) });
+    $("text").value = "";
+    toast(item.due_at ? `⏰ ${item.text}: ${when(item)}${item.recurrence_label ? `, ${item.recurrence_label}` : ""}`
+                      : `📝 Saved note: ${item.text}`);
+  } catch (err) { if (err.message !== "unauthorized") toast(err.message); }
+  refresh();
+});
+
+for (const hint of document.querySelectorAll(".hints button")) {
+  hint.addEventListener("click", () => { $("text").value = hint.textContent; $("text").focus(); });
+}
+
+$("auth-form").addEventListener("submit", (e) => { e.preventDefault(); writeToken($("token").value.trim()); refresh(); });
+let searchTimer;
+$("search").addEventListener("input", () => { clearTimeout(searchTimer); searchTimer = setTimeout(refresh, 200); });
+$("show-done").addEventListener("change", refresh);
+
+refresh();
+setInterval(refresh, 10000);
+</script>
+</body>
+</html>
