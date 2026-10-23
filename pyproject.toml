@@ -1,0 +1,25 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "maestro-orchestrator"
+version = "0.1.0"
+description = "A personal second brain: capture things to remember in plain language and get reminded at the right time."
+readme = "README.md"
+license = "MIT"
+authors = [{ name = "Sachin Chandani" }]
+requires-python = ">=3.11"
+dependencies = ["dateparser>=1.2"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+maestro = "maestro.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["maestro"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
