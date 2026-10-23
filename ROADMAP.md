@@ -4,7 +4,7 @@
 
 It runs on your machine, a Raspberry Pi or a $5 VPS. You bring your own keys (Twilio, Telegram, SMTP, ntfy), and your data stays in a database you own.
 
-Estimates are rough working hours. Status is tracked in GitHub issues.
+Dates are targets, not promises. Work is tracked in [GitHub issues](https://github.com/sachin-chandani/maestro-orchestrator/issues) and [milestones](https://github.com/sachin-chandani/maestro-orchestrator/milestones).
 
 ---
 
@@ -48,60 +48,63 @@ Estimates are rough working hours. Status is tracked in GitHub issues.
 - [x] SQLite store and CLI (`add`, `list`, `search`, `done`, `rm`, `run`)
 - [x] Scheduler with console and macOS notifications
 
-## v0.2: Self-hostable server (in progress)
+## v0.2: Self-hostable server (target Nov 1, 2026)
 - [x] Recurring reminders: daily, weekdays, weekly, monthly, every N hours
 - [x] Snooze (`maestro snooze 3 10m`, `POST /items/{id}/snooze`)
 - [x] Versioned schema migrations, safe under concurrent startup
 - [x] REST API with bearer-token auth; refuses to bind publicly without a token
 - [x] Env-based config with `.env` support; channels: ntfy, Twilio SMS
 - [x] Dockerfile, docker-compose, CI (ruff, pytest on 3.11–3.13, Docker build)
-- [x] Timezone-aware storage: UTC in the DB, `MAESTRO_TIMEZONE` for parsing and display, DST-safe recurrences
-- [x] Per-channel delivery tracking with retry backoff, so a failing channel doesn't re-send on the others
-- [ ] Structured JSON logs and a `/metrics` endpoint (Prometheus) (~2h)
-- [ ] First PyPI release and GHCR image on tag (~2h)
+- [x] Timezone-aware storage: UTC in the DB, `MAESTRO_TIMEZONE` for parsing and display, DST-safe recurrences (#1)
+- [x] Per-channel delivery tracking with retry backoff (#2)
+- [ ] Structured JSON logs and a `/metrics` endpoint (#3)
+- [ ] `maestro doctor` to validate config and test each channel (#15)
+- [ ] PyPI release and GHCR image on tag (#4)
 
-## v0.3: Capture from anywhere (~16h)
-- [x] **Telegram bot**: capture, list, snooze and done from chat, plus a delivery channel with action buttons (bring your own bot token)
-- [ ] **Inbound SMS**: text your Twilio number "dentist next tue 3pm" (webhook + signature validation)
-- [ ] **Inbound voice**: call your Twilio number and say the reminder (Twilio speech gather → parser)
-- [ ] **Email-in**: forward an email to capture it (IMAP poller)
-- [ ] **Apple Shortcuts / Android Tasker** recipes against the REST API, documented
-- [ ] Reply-to-act: reply "done" or "snooze 1h" to an SMS or Telegram reminder
+## v0.3: Capture from anywhere (target Nov 15, 2026)
+- [x] Telegram bot: capture, list, snooze and done from chat, plus a delivery channel with action buttons (#5)
+- [ ] Inbound SMS to your Twilio number, with signature validation (#6)
+- [ ] Inbound voice: call your number and say the reminder (#7)
+- [ ] Reply-to-act: "done" or "snooze 1h" in reply to a reminder (#8)
+- [ ] Email-in via IMAP (#9)
+- [ ] Apple Shortcuts and Android Tasker recipes (#10)
+- [ ] More phrases: `in 3 days at 5pm`, `next month`, `every other week`… (#16)
 
-## v0.4: More ways out (~12h)
-- [ ] **Voice-call reminders** to your own phone for things that must not be missed (Twilio)
-- [ ] Email (SMTP), Telegram, Matrix, generic webhook (Slack, Discord, Home Assistant)
-- [ ] Per-item channel choice in plain language: "text me", "call me", "email me"
-- [ ] Escalation policies: push first, SMS after 10 minutes unacknowledged, call after 30
-- [ ] Quiet hours and do-not-disturb windows
-- [ ] Channel plugin API via entry points, with a cookiecutter template for new channels
+## v0.4: More ways out (target Nov 29, 2026)
+- [ ] Voice-call reminders to your own phone (#11)
+- [ ] Email (SMTP) channel (#17) and a generic webhook channel for Slack, Discord, Home Assistant (#18)
+- [ ] Acknowledgement tracking (#19), then escalation policies: push, then SMS, then a call (#12)
+- [ ] Quiet hours (#13)
+- [ ] Per-item channel choice: "text me", "call me", "email me" (#20)
+- [ ] Channel plugins via entry points (#14)
 
-## v0.5: Web UI and companion apps (~20h)
-- [x] Minimal web UI at `/`: capture box, reminders and notes, search, done/snooze/delete, auto-refresh (single page, no build step)
-- [ ] Fuller web UI: timeline view, editing, settings and channel status
-- [ ] Installable PWA with web push notifications
-- [ ] Calendar feed: subscribe to your reminders as an iCalendar (`.ics`) URL from any calendar app
-- [ ] CalDAV sync (two-way) for people who live in their calendar
-- [ ] Companion mobile app (Expo / React Native, iOS + Android) that points at your own server: quick capture, widgets, native notifications
+## v0.5: Web UI and companion apps (target Dec 20, 2026)
+- [x] Minimal web UI at `/`: capture, reminders and notes, search, done/snooze/delete, auto-refresh
+- [ ] Edit items (#21) and a timeline view with keyboard shortcuts (#22)
+- [ ] End-to-end tests for the web UI (#23)
+- [ ] Installable PWA with web push (#24)
+- [ ] iCalendar (`.ics`) feed (#25) and two-way CalDAV sync (#26)
+- [ ] Companion mobile app spike (#27)
 
-## v0.6: Second brain (~16h)
-- [ ] Full-text search with SQLite FTS5 (and `tsvector` on Postgres)
-- [ ] Tags, people and places as first-class fields (#home, @alex, at the pharmacy)
-- [ ] Questions over your notes: "where is my passport?" with an optional, pluggable language-model provider (off by default; rules-only mode keeps working offline)
-- [ ] Daily and weekly digest ("here's what's coming up")
-- [ ] Import from Apple Reminders, Google Tasks, Todoist exports; export to JSON and Markdown
+## v0.6: Second brain (target Jan 17, 2027)
+- [ ] Full-text search with SQLite FTS5 (#28)
+- [ ] Tags, people and places (#29)
+- [ ] Daily and weekly digest (#30)
+- [ ] Import from Apple Reminders, Google Tasks, Todoist (#31); export to JSON and Markdown (#32)
+- [ ] Ask questions over your notes, offline-first (#33)
 
-## v0.7: Production-grade self-hosting (~14h)
-- [ ] PostgreSQL backend behind the store interface, with migration tooling
-- [ ] Multi-user per instance (household accounts), per-user API tokens, OIDC login for the web UI
-- [ ] Encrypted backups to S3-compatible storage; `maestro backup` / `maestro restore`
-- [ ] Deployment guides: Docker Compose, Raspberry Pi, Fly.io, Railway, systemd, Kubernetes (Helm chart)
-- [ ] Rate limiting and audit log on the API
+## v0.7: Production-grade self-hosting (target Feb 7, 2027)
+- [ ] Storage interface and PostgreSQL backend (#34)
+- [ ] Multi-user per instance (#35) and OIDC login for the web UI (#36)
+- [ ] Encrypted backups to S3-compatible storage (#37)
+- [ ] Deployment guides: Raspberry Pi, Fly.io, Railway, systemd, Caddy (#38) and a Helm chart (#39)
+- [ ] API rate limiting and audit log (#40)
 
-## v1.0: Stable (~8h)
-- [ ] Stable library and REST API with a deprecation policy
-- [ ] Docs site: quickstart, self-hosting, channel setup per provider, API reference, plugin guide
-- [ ] Security review, threat model and `SECURITY.md` disclosure process
+## v1.0: Stable (target Feb 28, 2027)
+- [ ] Documentation site (#41)
+- [ ] API stability and deprecation policy (#42)
+- [ ] Security review and threat model (#43)
+- [ ] Performance at 10k items (#44)
 
 ## Later / ideas
 - Delegated reminders: ask someone you trust to nudge you. This involves other people's contact details, so it would be strictly opt-in with explicit consent from the other person.
