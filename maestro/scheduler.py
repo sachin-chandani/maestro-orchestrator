@@ -1,26 +1,71 @@
-"""Polls the store and fires reminders that have come due."""
+"""Polls the store and fires reminders that have come due.
+
+Delivery is tracked per channel for each occurrence. A channel that fails is retried with
+exponential backoff on later ticks without re-sending on channels that already succeeded.
+After MAX_ATTEMPTS a channel is given up on so one broken integration can't block a reminder forever.
+"""
 
 import logging
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from maestro import recurrence
-from maestro.models import Item, Status
-from maestro.notifier import Notifier
+from maestro.models import Delivery, Item, Status
+from maestro.notifier import MultiNotifier, Notifier
 from maestro.store import Store
 
 log = logging.getLogger(__name__)
 
+MAX_ATTEMPTS = 5
+MAX_BACKOFF = timedelta(minutes=30)
+
+
+def _backoff(attempts: int) -> timedelta:
+    return min(timedelta(minutes=2 ** (attempts - 1)), MAX_BACKOFF)
+
+
+def _channels(notifier: Notifier) -> dict[str, Notifier]:
+    return notifier.channels if isinstance(notifier, MultiNotifier) else {"default": notifier}
+
+
+def _deliver(store: Store, item: Item, channels: dict[str, Notifier], now: datetime) -> bool:
+    """Try every channel that still needs this occurrence. True once none are left to retry."""
+    state = store.deliveries(item.id, item.due_at)
+    waiting = False
+    for name, channel in channels.items():
+        delivery = state.get(name) or Delivery(channel=name)
+        if delivery.delivered_at or delivery.attempts >= MAX_ATTEMPTS:
+            continue
+        if delivery.next_attempt_at and delivery.next_attempt_at > now:
+            waiting = True
+            continue
+        delivery.attempts += 1
+        try:
+            channel.send(item)
+        except Exception as e:
+            delivery.last_error = f"{type(e).__name__}: {e}"[:500]
+            if delivery.attempts >= MAX_ATTEMPTS:
+                log.error("Giving up on reminder #%s via %s after %d attempts: %s",
+                          item.id, name, delivery.attempts, delivery.last_error)
+            else:
+                delivery.next_attempt_at = now + _backoff(delivery.attempts)
+                waiting = True
+                log.warning("Reminder #%s via %s failed (attempt %d), retrying at %s: %s", item.id, name,
+                            delivery.attempts, delivery.next_attempt_at, delivery.last_error)
+        else:
+            delivery.delivered_at = now
+            delivery.next_attempt_at = None
+        store.record_delivery(item.id, item.due_at, delivery)
+    return not waiting
+
 
 def fire_due(store: Store, notifier: Notifier, now: datetime | None = None) -> list[Item]:
+    """Deliver due reminders. Returns the items whose occurrence is finished this tick."""
     now = now or datetime.now()
-    fired = []
+    channels = _channels(notifier)
+    finished = []
     for item in store.due(now):
-        try:
-            notifier.send(item)
-        except Exception:
-            # Leave it pending so the next tick retries; one broken channel shouldn't stop the loop.
-            log.exception("Failed to deliver reminder #%s", item.id)
+        if not _deliver(store, item, channels, now):
             continue
         if item.recurrence:
             # Schedule from now, not the old due time, so a long outage fires once rather than catching up.
@@ -28,8 +73,8 @@ def fire_due(store: Store, notifier: Notifier, now: datetime | None = None) -> l
             store.reschedule(item.id, next_due)
         else:
             store.set_status(item.id, Status.FIRED)
-        fired.append(item)
-    return fired
+        finished.append(item)
+    return finished
 
 
 def run_forever(store: Store, notifier: Notifier, interval: float = 30.0) -> None:

@@ -11,7 +11,7 @@ import sqlite3
 from datetime import datetime
 from pathlib import Path
 
-from maestro.models import Item, Kind, Status
+from maestro.models import Delivery, Item, Kind, Status
 
 MIGRATIONS: list[list[str]] = [
     # 1: initial schema
@@ -29,11 +29,28 @@ MIGRATIONS: list[list[str]] = [
     ],
     # 2: recurring reminders
     ["ALTER TABLE items ADD COLUMN recurrence TEXT"],
+    # 3: per-channel delivery tracking, keyed by occurrence so each repeat of a recurring item starts fresh
+    [
+        """CREATE TABLE IF NOT EXISTS deliveries (
+            item_id         INTEGER NOT NULL,
+            occurrence      TEXT NOT NULL,
+            channel         TEXT NOT NULL,
+            attempts        INTEGER NOT NULL DEFAULT 0,
+            delivered_at    TEXT,
+            next_attempt_at TEXT,
+            last_error      TEXT,
+            PRIMARY KEY (item_id, occurrence, channel)
+        )""",
+    ],
 ]
 
 
 def _to_iso(dt: datetime | None) -> str | None:
     return dt.isoformat(timespec="seconds") if dt else None
+
+
+def _from_iso(value: str | None) -> datetime | None:
+    return datetime.fromisoformat(value) if value else None
 
 
 def _from_row(row: sqlite3.Row) -> Item:
@@ -42,7 +59,7 @@ def _from_row(row: sqlite3.Row) -> Item:
         text=row["text"],
         kind=Kind(row["kind"]),
         status=Status(row["status"]),
-        due_at=datetime.fromisoformat(row["due_at"]) if row["due_at"] else None,
+        due_at=_from_iso(row["due_at"]),
         created_at=datetime.fromisoformat(row["created_at"]),
         source_text=row["source_text"],
         recurrence=row["recurrence"],
@@ -130,6 +147,34 @@ class Store:
         return cur.rowcount > 0
 
     def delete(self, item_id: int) -> bool:
+        self.conn.execute("DELETE FROM deliveries WHERE item_id = ?", (item_id,))
         cur = self.conn.execute("DELETE FROM items WHERE id = ?", (item_id,))
         self.conn.commit()
         return cur.rowcount > 0
+
+    def deliveries(self, item_id: int, occurrence: datetime) -> dict[str, Delivery]:
+        rows = self.conn.execute(
+            "SELECT * FROM deliveries WHERE item_id = ? AND occurrence = ?", (item_id, _to_iso(occurrence))
+        )
+        return {
+            r["channel"]: Delivery(
+                channel=r["channel"],
+                attempts=r["attempts"],
+                delivered_at=_from_iso(r["delivered_at"]),
+                next_attempt_at=_from_iso(r["next_attempt_at"]),
+                last_error=r["last_error"],
+            )
+            for r in rows
+        }
+
+    def record_delivery(self, item_id: int, occurrence: datetime, delivery: Delivery) -> None:
+        self.conn.execute(
+            "INSERT INTO deliveries (item_id, occurrence, channel, attempts, delivered_at, next_attempt_at,"
+            " last_error) VALUES (?, ?, ?, ?, ?, ?, ?)"
+            " ON CONFLICT (item_id, occurrence, channel) DO UPDATE SET attempts = excluded.attempts,"
+            " delivered_at = excluded.delivered_at, next_attempt_at = excluded.next_attempt_at,"
+            " last_error = excluded.last_error",
+            (item_id, _to_iso(occurrence), delivery.channel, delivery.attempts,
+             _to_iso(delivery.delivered_at), _to_iso(delivery.next_attempt_at), delivery.last_error),
+        )
+        self.conn.commit()

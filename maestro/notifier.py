@@ -92,11 +92,13 @@ class TwilioSMSNotifier:
 
 
 class MultiNotifier:
-    def __init__(self, *notifiers: Notifier):
-        self.notifiers = notifiers
+    """Named channels. The scheduler delivers to each separately so one failure doesn't re-send the rest."""
+
+    def __init__(self, channels: dict[str, Notifier]):
+        self.channels = channels
 
     def send(self, item: Item) -> None:
-        for notifier in self.notifiers:
+        for notifier in self.channels.values():
             notifier.send(item)
 
 
@@ -131,7 +133,7 @@ def build_notifier(config: Config) -> MultiNotifier:
     unknown = [name for name in config.channels if name not in CHANNELS]
     if unknown:
         raise ConfigError(f"Unknown channel(s): {', '.join(unknown)}. Available: {', '.join(CHANNELS)}")
-    return MultiNotifier(*(CHANNELS[name](config) for name in config.channels))
+    return MultiNotifier({name: CHANNELS[name](config) for name in config.channels})
 
 
 def default_channels() -> list[str]:

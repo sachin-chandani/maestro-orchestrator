@@ -9,7 +9,7 @@ from maestro.config import Config
 from maestro.models import Item, Kind, Status
 from maestro.notifier import ConfigError, NtfyNotifier, TwilioSMSNotifier, build_notifier
 from maestro.scheduler import fire_due
-from maestro.store import Store
+from maestro.store import MIGRATIONS, Store
 
 ITEM = Item(id=7, text="Call mom", kind=Kind.REMINDER, created_at=datetime(2026, 10, 23))
 
@@ -50,7 +50,7 @@ def test_config_from_env():
     })
     assert config.channels == ["console", "ntfy"]
     assert config.ntfy_url == "https://push.example.com"
-    assert len(build_notifier(config).notifiers) == 2
+    assert list(build_notifier(config).channels) == ["console", "ntfy"]
 
 
 def test_missing_twilio_keys_are_named():
@@ -90,7 +90,7 @@ def test_migrates_v1_database(tmp_path):
     conn.close()
 
     store = Store(path)
-    assert store.schema_version == 2
+    assert store.schema_version == len(MIGRATIONS)
     assert store.get(1).text == "old note"
     assert store.get(1).recurrence is None
 
@@ -103,4 +103,4 @@ def test_concurrent_opens_of_fresh_database_migrate_once(tmp_path):
         path = tmp_path / f"race{attempt}.db"
         with ThreadPoolExecutor(8) as pool:
             versions = list(pool.map(lambda p: Store(p).schema_version, [path] * 8))
-        assert versions == [2] * 8
+        assert versions == [len(MIGRATIONS)] * 8

@@ -56,7 +56,7 @@ Estimates are rough working hours. Status is tracked in GitHub issues.
 - [x] Env-based config with `.env` support; channels: ntfy, Twilio SMS
 - [x] Dockerfile, docker-compose, CI (ruff, pytest on 3.11–3.13, Docker build)
 - [ ] Timezone-aware storage (UTC in the DB, user timezone in config) (~3h)
-- [ ] Per-channel delivery tracking so a failing channel doesn't re-send on the others (~3h)
+- [x] Per-channel delivery tracking with retry backoff, so a failing channel doesn't re-send on the others
 - [ ] Structured JSON logs and a `/metrics` endpoint (Prometheus) (~2h)
 - [ ] First PyPI release and GHCR image on tag (~2h)
 

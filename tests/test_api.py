@@ -5,7 +5,7 @@ pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient  # noqa: E402
 
 from maestro.api import create_app  # noqa: E402
-from maestro.store import Store  # noqa: E402
+from maestro.store import MIGRATIONS, Store  # noqa: E402
 
 AUTH = {"Authorization": "Bearer t0ken"}
 
@@ -19,7 +19,7 @@ def client():
 def test_health_is_public(client):
     body = client.get("/health").json()
     assert body["status"] == "ok"
-    assert body["schema"] == 2
+    assert body["schema"] == len(MIGRATIONS)
 
 
 def test_requires_token(client):

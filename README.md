@@ -26,7 +26,7 @@ Saved: 3  📝 —                 My passport is in the blue drawer
 - **Notes:** anything without a time is kept and searchable
 - **Channels:** console, macOS notifications, [ntfy](https://ntfy.sh) push, Twilio SMS
 - **Self-hosted:** one Docker container, one SQLite file, token-protected REST API
-- **Reliable:** failed deliveries are retried; after downtime, recurring reminders fire once and skip ahead instead of flooding you
+- **Reliable:** delivery is tracked per channel; a failing channel is retried with backoff (up to 5 attempts) without re-sending on the ones that worked. After downtime, recurring reminders fire once and skip ahead instead of flooding you
 
 ## Quick start (CLI)
 ```bash

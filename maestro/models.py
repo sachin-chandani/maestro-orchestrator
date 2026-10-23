@@ -24,3 +24,14 @@ class Item:
     source_text: str = ""
     recurrence: str | None = None  # see maestro.recurrence for the rule format
     id: int | None = None
+
+
+@dataclass
+class Delivery:
+    """Delivery state of one occurrence of an item on one channel."""
+
+    channel: str
+    attempts: int = 0
+    delivered_at: datetime | None = None
+    next_attempt_at: datetime | None = None
+    last_error: str | None = None
