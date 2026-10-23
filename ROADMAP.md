@@ -59,7 +59,7 @@ Dates are targets, not promises. Work is tracked in [GitHub issues](https://gith
 - [x] Per-channel delivery tracking with retry backoff (#2)
 - [x] Structured JSON logs and a `/metrics` endpoint (#3)
 - [x] `maestro doctor` to validate config and test each channel (#15)
-- [ ] PyPI release and GHCR image on tag (#4)
+- [x] Release workflow on tags: GitHub release from the changelog, multi-arch GHCR image, PyPI once enabled (#4)
 
 ## v0.3: Capture from anywhere (target Nov 15, 2026)
 - [x] Telegram bot: capture, list, snooze and done from chat, plus a delivery channel with action buttons (#5)
