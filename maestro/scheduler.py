@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 from maestro import recurrence
 from maestro.models import Delivery, Item, Status
 from maestro.notifier import MultiNotifier, Notifier
+from maestro.observability import METRICS
 from maestro.store import Store
 from maestro.tz import UTC, localize
 
@@ -47,14 +48,17 @@ def _deliver(store: Store, item: Item, channels: dict[str, Notifier], now: datet
         except Exception as e:
             delivery.last_error = f"{type(e).__name__}: {e}"[:500]
             if delivery.attempts >= MAX_ATTEMPTS:
+                METRICS.inc("maestro_deliveries_total", channel=name, result="gave_up")
                 log.error("Giving up on reminder #%s via %s after %d attempts: %s",
                           item.id, name, delivery.attempts, delivery.last_error)
             else:
+                METRICS.inc("maestro_deliveries_total", channel=name, result="error")
                 delivery.next_attempt_at = now + _backoff(delivery.attempts)
                 waiting = True
                 log.warning("Reminder #%s via %s failed (attempt %d), retrying at %s: %s", item.id, name,
                             delivery.attempts, delivery.next_attempt_at, delivery.last_error)
         else:
+            METRICS.inc("maestro_deliveries_total", channel=name, result="ok")
             delivery.delivered_at = now
             delivery.next_attempt_at = None
         store.record_delivery(item.id, item.due_at, delivery)
@@ -66,9 +70,15 @@ def fire_due(store: Store, notifier: Notifier, now: datetime | None = None) -> l
     now = localize(now, store.tz) if now else datetime.now(UTC)
     channels = _channels(notifier)
     finished = []
-    for item in store.due(now):
+    due = store.due(now)
+    METRICS.inc("maestro_scheduler_ticks_total")
+    METRICS.set("maestro_scheduler_last_tick_timestamp_seconds", now.timestamp())
+    lag = max((now - item.due_at).total_seconds() for item in due) if due else 0
+    METRICS.set("maestro_scheduler_lag_seconds", lag)
+    for item in due:
         if not _deliver(store, item, channels, now):
             continue
+        METRICS.inc("maestro_reminders_fired_total")
         if item.recurrence:
             # Schedule from now, not the old due time, so a long outage fires once rather than catching up.
             # Work in the item's timezone so the next occurrence keeps its wall-clock time.

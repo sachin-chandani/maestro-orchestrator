@@ -57,7 +57,7 @@ Dates are targets, not promises. Work is tracked in [GitHub issues](https://gith
 - [x] Dockerfile, docker-compose, CI (ruff, pytest on 3.11–3.13, Docker build)
 - [x] Timezone-aware storage: UTC in the DB, `MAESTRO_TIMEZONE` for parsing and display, DST-safe recurrences (#1)
 - [x] Per-channel delivery tracking with retry backoff (#2)
-- [ ] Structured JSON logs and a `/metrics` endpoint (#3)
+- [x] Structured JSON logs and a `/metrics` endpoint (#3)
 - [ ] `maestro doctor` to validate config and test each channel (#15)
 - [ ] PyPI release and GHCR image on tag (#4)
 

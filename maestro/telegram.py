@@ -16,6 +16,7 @@ from datetime import datetime
 
 from maestro import recurrence
 from maestro.models import Item, Kind, Status
+from maestro.observability import METRICS
 from maestro.parser import parse, parse_duration
 from maestro.store import Store
 from maestro.tz import add_elapsed
@@ -163,6 +164,7 @@ class TelegramBot:
             return
 
         if not text.startswith("/"):
+            METRICS.inc("maestro_captures_total", source="telegram")
             item = self.store.add(parse(text, tz=self.store.tz))
             buttons = _action_buttons(item) if item.kind == Kind.REMINDER else None
             self.client.send(chat_id, f"Saved {_line(item)}", buttons)
