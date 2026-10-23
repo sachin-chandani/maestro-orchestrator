@@ -13,12 +13,13 @@ from datetime import datetime
 from importlib.resources import files
 
 from fastapi import Depends, FastAPI, Header, HTTPException, status
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
 from maestro import __version__, recurrence
 from maestro.models import Item, Status
 from maestro.notifier import Notifier
+from maestro.observability import METRICS
 from maestro.parser import parse, parse_duration
 from maestro.scheduler import fire_due
 from maestro.store import Store
@@ -119,8 +120,15 @@ def create_app(store: Store, api_token: str | None = None, notifier: Notifier | 
         return {"status": "ok", "version": __version__, "schema": store.schema_version,
                 "timezone": store.tz.key}
 
+    @app.get("/metrics", response_class=PlainTextResponse, dependencies=[Depends(require_token)])
+    async def metrics() -> PlainTextResponse:
+        items = {(("kind", kind), ("status", status)): n for (kind, status), n in store.counts().items()}
+        return PlainTextResponse(METRICS.render(extra={"maestro_items": items}),
+                                 media_type="text/plain; version=0.0.4")
+
     @app.post("/items", status_code=201, dependencies=[Depends(require_token)])
     async def capture(body: CaptureIn) -> ItemOut:
+        METRICS.inc("maestro_captures_total", source="api")
         return ItemOut.of(store.add(parse(body.text, tz=store.tz)))
 
     @app.get("/items", dependencies=[Depends(require_token)])

@@ -33,6 +33,8 @@ class Config:
     channels: list[str] = field(default_factory=lambda: ["console"])
     api_token: str | None = None
     timezone: str | None = None  # IANA name; None means the system timezone
+    log_format: str = "text"  # or "json"
+    log_level: str = "INFO"
 
     twilio_account_sid: str | None = None
     twilio_auth_token: str | None = None
@@ -53,6 +55,8 @@ class Config:
             channels=_csv(env.get("MAESTRO_CHANNELS", "console")),
             api_token=env.get("MAESTRO_API_TOKEN") or None,
             timezone=env.get("MAESTRO_TIMEZONE") or None,
+            log_format=(env.get("MAESTRO_LOG_FORMAT") or "text").lower(),
+            log_level=(env.get("MAESTRO_LOG_LEVEL") or "INFO").upper(),
             twilio_account_sid=env.get("TWILIO_ACCOUNT_SID") or None,
             twilio_auth_token=env.get("TWILIO_AUTH_TOKEN") or None,
             twilio_from=env.get("TWILIO_FROM_NUMBER") or None,

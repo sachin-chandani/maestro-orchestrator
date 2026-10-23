@@ -146,6 +146,11 @@ class Store:
         sql += " ORDER BY due_at IS NULL, due_at, created_at"
         return [self._item(r) for r in self.conn.execute(sql)]
 
+    def counts(self) -> dict[tuple[str, str], int]:
+        """Number of items per (kind, status)."""
+        rows = self.conn.execute("SELECT kind, status, COUNT(*) FROM items GROUP BY kind, status")
+        return {(kind, status): n for kind, status, n in rows}
+
     def search(self, query: str) -> list[Item]:
         rows = self.conn.execute(
             "SELECT * FROM items WHERE text LIKE ? ORDER BY created_at DESC",

@@ -62,10 +62,14 @@ All settings come from environment variables or a `.env` file. See [.env.example
 | `MAESTRO_DB` | SQLite path (default `~/.maestro/maestro.db`) |
 | `MAESTRO_TIMEZONE` | Your IANA timezone, e.g. `Europe/London`. Defaults to the system zone, which is UTC in Docker, so set it when self-hosting |
 | `MAESTRO_API_TOKEN` | Bearer token for the API; required unless bound to localhost |
+| `MAESTRO_LOG_FORMAT`, `MAESTRO_LOG_LEVEL` | `text` (default) or `json` (one object per line, for log shippers); `INFO` by default |
 | `MAESTRO_CHANNELS` | Comma-separated: `console`, `macos`, `ntfy`, `twilio_sms`, `telegram` |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | Your bot and the only chat it will talk to (see below) |
 | `NTFY_URL`, `NTFY_TOPIC` | ntfy server and topic |
 | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER`, `MAESTRO_SMS_TO` | SMS to your own phone |
+
+### Monitoring
+`GET /metrics` serves Prometheus metrics (same bearer token as the API): captures by source, deliveries by channel and result, reminders fired, scheduler ticks and lag, and item counts by kind and status. Alert on `time() - maestro_scheduler_last_tick_timestamp_seconds > 120` to catch a stuck scheduler.
 
 ### Telegram
 1. Create a bot with [@BotFather](https://t.me/BotFather) and set `TELEGRAM_BOT_TOKEN`.

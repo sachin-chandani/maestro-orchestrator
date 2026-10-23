@@ -11,6 +11,7 @@ from maestro import recurrence
 from maestro.config import Config, load_dotenv
 from maestro.models import Item, Kind, Status
 from maestro.notifier import ConfigError, build_notifier, default_channels
+from maestro.observability import configure_logging
 from maestro.parser import parse, parse_duration
 from maestro.scheduler import fire_due, run_forever
 from maestro.store import Store
@@ -99,10 +100,10 @@ def main(argv: list[str] | None = None) -> int:
             store.reschedule(args.id, add_elapsed(datetime.now(tz).replace(microsecond=0), delta))
             print(f"Snoozed: {_format(store.get(args.id)).strip()}")
     elif args.command in ("run", "serve"):
-        logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
         try:
+            configure_logging(config.log_format, config.log_level)
             notifier = build_notifier(config)
-        except ConfigError as e:
+        except (ConfigError, ValueError) as e:
             print(f"Config error: {e}", file=sys.stderr)
             return 2
         bot = _build_bot(config, store)
@@ -156,7 +157,8 @@ def _serve(store: Store, config: Config, notifier, args, bot=None) -> int:
         print("Refusing to listen on a public interface without MAESTRO_API_TOKEN set.", file=sys.stderr)
         return 2
     app = create_app(store, api_token=config.api_token, notifier=notifier, interval=args.interval, bot=bot)
-    uvicorn.run(app, host=args.host, port=args.port)
+    # log_config=None keeps uvicorn on our root handler, so MAESTRO_LOG_FORMAT=json covers access logs too.
+    uvicorn.run(app, host=args.host, port=args.port, log_config=None)
     return 0
 
 
