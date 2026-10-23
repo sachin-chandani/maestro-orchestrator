@@ -23,6 +23,7 @@ Saved: 3  📝 —                 My passport is in the blue drawer
 ## Features
 - **Plain language:** `tomorrow at 5pm`, `in 2 hours`, `next friday at 10am`, `on Nov 1`, `tonight`, `at noon`
 - **Recurring:** `every day at 8am`, `every weekday at 9:30am`, `every monday`, `on the 1st of every month`, `every 2 hours`
+- **Timezone-aware:** stored in UTC, shown in your timezone; "8am every day" stays 8am across DST changes
 - **Notes:** anything without a time is kept and searchable
 - **Channels:** console, macOS notifications, [ntfy](https://ntfy.sh) push, Twilio SMS
 - **Self-hosted:** one Docker container, one SQLite file, token-protected REST API and a built-in web UI
@@ -58,6 +59,7 @@ All settings come from environment variables or a `.env` file. See [.env.example
 | Variable | Purpose |
 | --- | --- |
 | `MAESTRO_DB` | SQLite path (default `~/.maestro/maestro.db`) |
+| `MAESTRO_TIMEZONE` | Your IANA timezone, e.g. `Europe/London`. Defaults to the system zone, which is UTC in Docker, so set it when self-hosting |
 | `MAESTRO_API_TOKEN` | Bearer token for the API; required unless bound to localhost |
 | `MAESTRO_CHANNELS` | Comma-separated: `console`, `macos`, `ntfy`, `twilio_sms` |
 | `NTFY_URL`, `NTFY_TOPIC` | ntfy server and topic |

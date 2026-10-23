@@ -13,6 +13,7 @@ from maestro.notifier import ConfigError, build_notifier, default_channels
 from maestro.parser import parse, parse_duration
 from maestro.scheduler import fire_due, run_forever
 from maestro.store import Store
+from maestro.tz import add_elapsed, get_timezone
 
 
 def _format(item: Item) -> str:
@@ -62,10 +63,15 @@ def main(argv: list[str] | None = None) -> int:
     if "MAESTRO_CHANNELS" not in os.environ:
         config.channels = default_channels()
     args = _build_parser(config).parse_args(argv)
-    store = Store(args.db)
+    try:
+        tz = get_timezone(config.timezone)
+    except ValueError as e:
+        print(f"Config error: {e}", file=sys.stderr)
+        return 2
+    store = Store(args.db, tz=tz)
 
     if args.command == "add":
-        item = store.add(parse(" ".join(args.text)))
+        item = store.add(parse(" ".join(args.text), tz=tz))
         print(f"Saved: {_format(item).strip()}")
     elif args.command == "list":
         items = store.list(include_done=args.all)
@@ -89,7 +95,7 @@ def main(argv: list[str] | None = None) -> int:
             except ValueError as e:
                 print(e, file=sys.stderr)
                 return 2
-            store.reschedule(args.id, datetime.now().replace(microsecond=0) + delta)
+            store.reschedule(args.id, add_elapsed(datetime.now(tz).replace(microsecond=0), delta))
             print(f"Snoozed: {_format(store.get(args.id)).strip()}")
     elif args.command in ("run", "serve"):
         logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")

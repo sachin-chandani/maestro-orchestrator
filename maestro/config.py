@@ -32,6 +32,7 @@ class Config:
     db_path: str = str(DEFAULT_DB)
     channels: list[str] = field(default_factory=lambda: ["console"])
     api_token: str | None = None
+    timezone: str | None = None  # IANA name; None means the system timezone
 
     twilio_account_sid: str | None = None
     twilio_auth_token: str | None = None
@@ -48,6 +49,7 @@ class Config:
             db_path=env.get("MAESTRO_DB", str(DEFAULT_DB)),
             channels=_csv(env.get("MAESTRO_CHANNELS", "console")),
             api_token=env.get("MAESTRO_API_TOKEN") or None,
+            timezone=env.get("MAESTRO_TIMEZONE") or None,
             twilio_account_sid=env.get("TWILIO_ACCOUNT_SID") or None,
             twilio_auth_token=env.get("TWILIO_AUTH_TOKEN") or None,
             twilio_from=env.get("TWILIO_FROM_NUMBER") or None,

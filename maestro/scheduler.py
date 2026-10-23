@@ -13,6 +13,7 @@ from maestro import recurrence
 from maestro.models import Delivery, Item, Status
 from maestro.notifier import MultiNotifier, Notifier
 from maestro.store import Store
+from maestro.tz import UTC, localize
 
 log = logging.getLogger(__name__)
 
@@ -61,7 +62,7 @@ def _deliver(store: Store, item: Item, channels: dict[str, Notifier], now: datet
 
 def fire_due(store: Store, notifier: Notifier, now: datetime | None = None) -> list[Item]:
     """Deliver due reminders. Returns the items whose occurrence is finished this tick."""
-    now = now or datetime.now()
+    now = localize(now, store.tz) if now else datetime.now(UTC)
     channels = _channels(notifier)
     finished = []
     for item in store.due(now):
@@ -69,7 +70,9 @@ def fire_due(store: Store, notifier: Notifier, now: datetime | None = None) -> l
             continue
         if item.recurrence:
             # Schedule from now, not the old due time, so a long outage fires once rather than catching up.
-            next_due = recurrence.next_occurrence(item.recurrence, max(now, item.due_at), item.due_at.time())
+            # Work in the item's timezone so the next occurrence keeps its wall-clock time.
+            after = max(now, item.due_at).astimezone(item.due_at.tzinfo)
+            next_due = recurrence.next_occurrence(item.recurrence, after, item.due_at.time())
             store.reschedule(item.id, next_due)
         else:
             store.set_status(item.id, Status.FIRED)

@@ -21,6 +21,7 @@ from maestro.notifier import Notifier
 from maestro.parser import parse, parse_duration
 from maestro.scheduler import fire_due
 from maestro.store import Store
+from maestro.tz import add_elapsed
 
 WEB_UI = files("maestro").joinpath("web/index.html").read_text(encoding="utf-8")
 
@@ -94,11 +95,12 @@ def create_app(store: Store, api_token: str | None = None, notifier: Notifier | 
 
     @app.get("/health")
     async def health() -> dict:
-        return {"status": "ok", "version": __version__, "schema": store.schema_version}
+        return {"status": "ok", "version": __version__, "schema": store.schema_version,
+                "timezone": store.tz.key}
 
     @app.post("/items", status_code=201, dependencies=[Depends(require_token)])
     async def capture(body: CaptureIn) -> ItemOut:
-        return ItemOut.of(store.add(parse(body.text)))
+        return ItemOut.of(store.add(parse(body.text, tz=store.tz)))
 
     @app.get("/items", dependencies=[Depends(require_token)])
     async def list_items(include_done: bool = False, q: str | None = None) -> list[ItemOut]:
@@ -122,7 +124,7 @@ def create_app(store: Store, api_token: str | None = None, notifier: Notifier | 
             delta = parse_duration(body.duration)
         except ValueError as e:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(e)) from e
-        store.reschedule(item_id, datetime.now().replace(microsecond=0) + delta)
+        store.reschedule(item_id, add_elapsed(datetime.now(store.tz).replace(microsecond=0), delta))
         return ItemOut.of(store.get(item_id))
 
     @app.delete("/items/{item_id}", status_code=204, dependencies=[Depends(require_token)])

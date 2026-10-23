@@ -1,4 +1,6 @@
-from datetime import datetime, timedelta
+from datetime import timedelta
+
+from conftest import dt
 
 from maestro.models import Item, Kind, Status
 from maestro.notifier import MultiNotifier
@@ -6,7 +8,7 @@ from maestro.parser import parse
 from maestro.scheduler import MAX_ATTEMPTS, fire_due
 from maestro.store import Store
 
-DUE = datetime(2026, 10, 23, 9, 0)
+DUE = dt(2026, 10, 23, 9, 0)
 
 
 class Recorder:
@@ -79,12 +81,12 @@ def test_backoff_grows_between_attempts():
 
 def test_each_recurrence_is_delivered_separately():
     store = Store()
-    item = store.add(parse("take vitamins every day at 8am", now=datetime(2026, 10, 23, 7, 0)))
+    item = store.add(parse("take vitamins every day at 8am", now=dt(2026, 10, 23, 7, 0)))
     push = Recorder()
     notifier = MultiNotifier({"push": push})
 
-    fire_due(store, notifier, now=datetime(2026, 10, 23, 8, 0))
-    fire_due(store, notifier, now=datetime(2026, 10, 24, 8, 0))
+    fire_due(store, notifier, now=dt(2026, 10, 23, 8, 0))
+    fire_due(store, notifier, now=dt(2026, 10, 24, 8, 0))
     assert push.sent == [item.id, item.id]
 
 

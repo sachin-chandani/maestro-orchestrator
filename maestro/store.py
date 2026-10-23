@@ -1,19 +1,45 @@
 """SQLite persistence for captured items.
 
-Datetimes are stored as naive local-time ISO strings (timezone support is on the roadmap).
+Timestamps are stored as UTC ISO-8601 strings (`2026-10-24T21:00:00+00:00`), so string order is
+time order. They come back out as aware datetimes in the store's timezone. Naive datetimes passed
+in are taken to be wall-clock time in that timezone.
+
 Schema changes go through MIGRATIONS; the applied version is tracked in PRAGMA user_version.
+A migration is either a list of SQL statements or a function `(conn, tz) -> None` for data changes.
 """
 
 # Store.list shadows the builtin in the class body; deferred annotations keep `list[Item]` valid on <3.14.
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from maestro.models import Delivery, Item, Kind, Status
+from maestro.tz import UTC, get_timezone, localize
 
-MIGRATIONS: list[list[str]] = [
+
+def _utc_iso(dt: datetime | None, tz: ZoneInfo) -> str | None:
+    return localize(dt, tz).astimezone(UTC).isoformat(timespec="seconds") if dt else None
+
+
+def _naive_local_to_utc(conn: sqlite3.Connection, tz: ZoneInfo) -> None:
+    """Migration 4: rows written before timezone support hold naive local time; convert them to UTC."""
+    columns = {
+        "items": ["due_at", "created_at"],
+        "deliveries": ["occurrence", "delivered_at", "next_attempt_at"],
+    }
+    for table, cols in columns.items():
+        for col in cols:
+            rows = conn.execute(f"SELECT DISTINCT {col} FROM {table} WHERE {col} IS NOT NULL").fetchall()
+            for (value,) in rows:
+                converted = _utc_iso(datetime.fromisoformat(value), tz)
+                conn.execute(f"UPDATE {table} SET {col} = ? WHERE {col} = ?", (converted, value))
+
+
+MIGRATIONS: list[list[str] | Callable[[sqlite3.Connection, ZoneInfo], None]] = [
     # 1: initial schema
     [
         """CREATE TABLE IF NOT EXISTS items (
@@ -42,32 +68,14 @@ MIGRATIONS: list[list[str]] = [
             PRIMARY KEY (item_id, occurrence, channel)
         )""",
     ],
+    # 4: store UTC instead of naive local time
+    _naive_local_to_utc,
 ]
 
 
-def _to_iso(dt: datetime | None) -> str | None:
-    return dt.isoformat(timespec="seconds") if dt else None
-
-
-def _from_iso(value: str | None) -> datetime | None:
-    return datetime.fromisoformat(value) if value else None
-
-
-def _from_row(row: sqlite3.Row) -> Item:
-    return Item(
-        id=row["id"],
-        text=row["text"],
-        kind=Kind(row["kind"]),
-        status=Status(row["status"]),
-        due_at=_from_iso(row["due_at"]),
-        created_at=datetime.fromisoformat(row["created_at"]),
-        source_text=row["source_text"],
-        recurrence=row["recurrence"],
-    )
-
-
 class Store:
-    def __init__(self, path: str | Path = ":memory:"):
+    def __init__(self, path: str | Path = ":memory:", tz: ZoneInfo | None = None):
+        self.tz = tz or get_timezone()
         if str(path) != ":memory:":
             Path(path).parent.mkdir(parents=True, exist_ok=True)
         # The API server touches the connection from its event-loop thread, not the creating thread.
@@ -81,14 +89,35 @@ class Store:
         self.conn.execute("BEGIN IMMEDIATE")
         try:
             version = self.conn.execute("PRAGMA user_version").fetchone()[0]
-            for number, statements in enumerate(MIGRATIONS[version:], start=version + 1):
-                for sql in statements:
-                    self.conn.execute(sql)
+            for number, migration in enumerate(MIGRATIONS[version:], start=version + 1):
+                if callable(migration):
+                    migration(self.conn, self.tz)
+                else:
+                    for sql in migration:
+                        self.conn.execute(sql)
                 self.conn.execute(f"PRAGMA user_version = {number}")
             self.conn.commit()
         except BaseException:
             self.conn.rollback()
             raise
+
+    def _to_db(self, dt: datetime | None) -> str | None:
+        return _utc_iso(dt, self.tz)
+
+    def _from_db(self, value: str | None) -> datetime | None:
+        return datetime.fromisoformat(value).astimezone(self.tz) if value else None
+
+    def _item(self, row: sqlite3.Row) -> Item:
+        return Item(
+            id=row["id"],
+            text=row["text"],
+            kind=Kind(row["kind"]),
+            status=Status(row["status"]),
+            due_at=self._from_db(row["due_at"]),
+            created_at=self._from_db(row["created_at"]),
+            source_text=row["source_text"],
+            recurrence=row["recurrence"],
+        )
 
     @property
     def schema_version(self) -> int:
@@ -98,8 +127,8 @@ class Store:
         cur = self.conn.execute(
             "INSERT INTO items (text, kind, status, due_at, created_at, source_text, recurrence)"
             " VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (item.text, item.kind, item.status, _to_iso(item.due_at),
-             _to_iso(item.created_at), item.source_text, item.recurrence),
+            (item.text, item.kind, item.status, self._to_db(item.due_at),
+             self._to_db(item.created_at), item.source_text, item.recurrence),
         )
         self.conn.commit()
         item.id = cur.lastrowid
@@ -107,7 +136,7 @@ class Store:
 
     def get(self, item_id: int) -> Item | None:
         row = self.conn.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
-        return _from_row(row) if row else None
+        return self._item(row) if row else None
 
     def list(self, include_done: bool = False) -> list[Item]:
         sql = "SELECT * FROM items"
@@ -115,22 +144,22 @@ class Store:
             sql += f" WHERE status != '{Status.DONE}'"
         # Reminders by due time first, then notes by creation time.
         sql += " ORDER BY due_at IS NULL, due_at, created_at"
-        return [_from_row(r) for r in self.conn.execute(sql)]
+        return [self._item(r) for r in self.conn.execute(sql)]
 
     def search(self, query: str) -> list[Item]:
         rows = self.conn.execute(
             "SELECT * FROM items WHERE text LIKE ? ORDER BY created_at DESC",
             (f"%{query}%",),
         )
-        return [_from_row(r) for r in rows]
+        return [self._item(r) for r in rows]
 
     def due(self, now: datetime) -> list[Item]:
         rows = self.conn.execute(
             "SELECT * FROM items WHERE status = ? AND due_at IS NOT NULL AND due_at <= ?"
             " ORDER BY due_at",
-            (Status.PENDING, _to_iso(now)),
+            (Status.PENDING, self._to_db(now)),
         )
-        return [_from_row(r) for r in rows]
+        return [self._item(r) for r in rows]
 
     def set_status(self, item_id: int, status: Status) -> bool:
         cur = self.conn.execute("UPDATE items SET status = ? WHERE id = ?", (status, item_id))
@@ -141,7 +170,7 @@ class Store:
         """Move an item to a new due time and make it pending again (snooze, next recurrence)."""
         cur = self.conn.execute(
             "UPDATE items SET due_at = ?, status = ?, kind = ? WHERE id = ?",
-            (_to_iso(due_at), Status.PENDING, Kind.REMINDER, item_id),
+            (self._to_db(due_at), Status.PENDING, Kind.REMINDER, item_id),
         )
         self.conn.commit()
         return cur.rowcount > 0
@@ -154,14 +183,15 @@ class Store:
 
     def deliveries(self, item_id: int, occurrence: datetime) -> dict[str, Delivery]:
         rows = self.conn.execute(
-            "SELECT * FROM deliveries WHERE item_id = ? AND occurrence = ?", (item_id, _to_iso(occurrence))
+            "SELECT * FROM deliveries WHERE item_id = ? AND occurrence = ?",
+            (item_id, self._to_db(occurrence)),
         )
         return {
             r["channel"]: Delivery(
                 channel=r["channel"],
                 attempts=r["attempts"],
-                delivered_at=_from_iso(r["delivered_at"]),
-                next_attempt_at=_from_iso(r["next_attempt_at"]),
+                delivered_at=self._from_db(r["delivered_at"]),
+                next_attempt_at=self._from_db(r["next_attempt_at"]),
                 last_error=r["last_error"],
             )
             for r in rows
@@ -174,7 +204,7 @@ class Store:
             " ON CONFLICT (item_id, occurrence, channel) DO UPDATE SET attempts = excluded.attempts,"
             " delivered_at = excluded.delivered_at, next_attempt_at = excluded.next_attempt_at,"
             " last_error = excluded.last_error",
-            (item_id, _to_iso(occurrence), delivery.channel, delivery.attempts,
-             _to_iso(delivery.delivered_at), _to_iso(delivery.next_attempt_at), delivery.last_error),
+            (item_id, self._to_db(occurrence), delivery.channel, delivery.attempts,
+             self._to_db(delivery.delivered_at), self._to_db(delivery.next_attempt_at), delivery.last_error),
         )
         self.conn.commit()

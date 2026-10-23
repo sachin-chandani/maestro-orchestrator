@@ -1,9 +1,9 @@
 import base64
 import sqlite3
 import urllib.parse
-from datetime import datetime
 
 import pytest
+from conftest import dt
 
 from maestro.config import Config
 from maestro.models import Item, Kind, Status
@@ -11,7 +11,7 @@ from maestro.notifier import ConfigError, NtfyNotifier, TwilioSMSNotifier, build
 from maestro.scheduler import fire_due
 from maestro.store import MIGRATIONS, Store
 
-ITEM = Item(id=7, text="Call mom", kind=Kind.REMINDER, created_at=datetime(2026, 10, 23))
+ITEM = Item(id=7, text="Call mom", kind=Kind.REMINDER, created_at=dt(2026, 10, 23))
 
 
 class FakeOpener:
@@ -66,14 +66,14 @@ def test_unknown_channel():
 
 def test_failed_delivery_stays_pending_for_retry():
     store = Store()
-    item = store.add(Item(text="Call mom", kind=Kind.REMINDER, created_at=datetime(2026, 10, 23),
-                          due_at=datetime(2026, 10, 23, 9, 0)))
+    item = store.add(Item(text="Call mom", kind=Kind.REMINDER, created_at=dt(2026, 10, 23),
+                          due_at=dt(2026, 10, 23, 9, 0)))
 
     class Broken:
         def send(self, _):
             raise ConnectionError("network down")
 
-    assert fire_due(store, Broken(), now=datetime(2026, 10, 23, 10, 0)) == []
+    assert fire_due(store, Broken(), now=dt(2026, 10, 23, 10, 0)) == []
     assert store.get(item.id).status == Status.PENDING
 
 

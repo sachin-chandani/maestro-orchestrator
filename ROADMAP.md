@@ -55,7 +55,7 @@ Estimates are rough working hours. Status is tracked in GitHub issues.
 - [x] REST API with bearer-token auth; refuses to bind publicly without a token
 - [x] Env-based config with `.env` support; channels: ntfy, Twilio SMS
 - [x] Dockerfile, docker-compose, CI (ruff, pytest on 3.11–3.13, Docker build)
-- [ ] Timezone-aware storage (UTC in the DB, user timezone in config) (~3h)
+- [x] Timezone-aware storage: UTC in the DB, `MAESTRO_TIMEZONE` for parsing and display, DST-safe recurrences
 - [x] Per-channel delivery tracking with retry backoff, so a failing channel doesn't re-send on the others
 - [ ] Structured JSON logs and a `/metrics` endpoint (Prometheus) (~2h)
 - [ ] First PyPI release and GHCR image on tag (~2h)

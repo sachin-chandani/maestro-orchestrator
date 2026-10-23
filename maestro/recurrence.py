@@ -13,6 +13,8 @@ import calendar
 import re
 from datetime import date, datetime, time, timedelta
 
+from maestro.tz import add_elapsed
+
 WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
 
 _INTERVAL_RE = re.compile(r"\bevery\s+(\d+)\s+(minute|min|hour|hr)s?\b", re.I)
@@ -56,17 +58,22 @@ def _month_day(year: int, month: int, day: int) -> date:
 
 
 def next_occurrence(rule: str, after: datetime, at: time) -> datetime:
-    """The first occurrence of `rule` at time `at` strictly after `after`."""
+    """The first occurrence of `rule` at wall-clock time `at` strictly after `after`.
+
+    Calendar rules are evaluated in after's timezone, so "every day at 8am" stays at 8am across
+    DST changes. Interval rules add real elapsed time.
+    """
     kind, _, arg = rule.partition(":")
+    tz = after.tzinfo
     if kind == "interval":
-        return (after + timedelta(minutes=int(arg))).replace(second=0, microsecond=0)
+        return add_elapsed(after, timedelta(minutes=int(arg))).replace(second=0, microsecond=0)
 
     if kind == "monthly":
         day = int(arg)
-        candidate = datetime.combine(_month_day(after.year, after.month, day), at)
+        candidate = datetime.combine(_month_day(after.year, after.month, day), at, tzinfo=tz)
         if candidate <= after:
             year, month = (after.year + 1, 1) if after.month == 12 else (after.year, after.month + 1)
-            candidate = datetime.combine(_month_day(year, month, day), at)
+            candidate = datetime.combine(_month_day(year, month, day), at, tzinfo=tz)
         return candidate
 
     def matches(d: date) -> bool:
@@ -80,7 +87,7 @@ def next_occurrence(rule: str, after: datetime, at: time) -> datetime:
 
     for offset in range(8):
         d = after.date() + timedelta(days=offset)
-        candidate = datetime.combine(d, at)
+        candidate = datetime.combine(d, at, tzinfo=tz)
         if candidate > after and matches(d):
             return candidate
     raise ValueError(f"No occurrence found for {rule!r}")

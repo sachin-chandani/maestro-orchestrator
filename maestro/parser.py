@@ -8,11 +8,13 @@ dateparser is only used for calendar dates such as "Nov 1" or "2027-03-15".
 import re
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
+from zoneinfo import ZoneInfo
 
 from dateparser.search import search_dates
 
 from maestro import recurrence
 from maestro.models import Item, Kind
+from maestro.tz import add_elapsed, get_timezone, localize
 
 DEFAULT_TIME = time(9, 0)
 TONIGHT_TIME = time(20, 0)
@@ -73,11 +75,10 @@ def _extract_relative(parts: _Parts, now: datetime) -> None:
         return
     count = 1 if m[1].lower() in ("a", "an", "one") else int(m[1])
     unit = m[2].lower()
-    target = now + count * UNIT_DELTAS[unit]
     if unit in ("day", "week"):
-        parts.when_date = target.date()
+        parts.when_date = (now + count * UNIT_DELTAS[unit]).date()
     else:
-        parts.exact = target.replace(second=0, microsecond=0)
+        parts.exact = add_elapsed(now, count * UNIT_DELTAS[unit]).replace(second=0, microsecond=0)
     _cut(parts, m)
 
 
@@ -99,7 +100,7 @@ def _extract_day(parts: _Parts, now: datetime) -> None:
             languages=["en"],
             settings={
                 "PREFER_DATES_FROM": "future",
-                "RELATIVE_BASE": now,
+                "RELATIVE_BASE": now.replace(tzinfo=None),
                 "REQUIRE_PARTS": ["day", "month"],
             },
         )
@@ -127,9 +128,14 @@ def parse_duration(text: str) -> timedelta:
     return timedelta(**{{"m": "minutes", "h": "hours", "d": "days"}[unit]: int(m[1])})
 
 
-def parse(source: str, now: datetime | None = None) -> Item:
-    """Parse a capture like "remind me to call mom tomorrow at 5pm" into an Item."""
-    now = now or datetime.now()
+def parse(source: str, now: datetime | None = None, tz: ZoneInfo | None = None) -> Item:
+    """Parse a capture like "remind me to call mom tomorrow at 5pm" into an Item.
+
+    Times are read as wall-clock time in `tz` (default: the configured user timezone) and the
+    resulting datetimes are timezone-aware. A naive `now` is taken to be in `tz`.
+    """
+    tz = tz or (now.tzinfo if now and now.tzinfo else None) or get_timezone()
+    now = localize(now, tz) if now else datetime.now(tz)
     parts = _Parts(text=PREFIX_RE.sub("", source, count=1))
 
     rule, m = recurrence.extract(parts.text, now.date())
@@ -146,7 +152,7 @@ def parse(source: str, now: datetime | None = None) -> Item:
 
     due_at = parts.exact
     if due_at is None and (parts.when_date or parts.when_time):
-        due_at = datetime.combine(parts.when_date or now.date(), parts.when_time or DEFAULT_TIME)
+        due_at = datetime.combine(parts.when_date or now.date(), parts.when_time or DEFAULT_TIME, tzinfo=tz)
         # A bare time that has already passed today means tomorrow.
         if parts.when_date is None and due_at <= now:
             due_at += timedelta(days=1)
