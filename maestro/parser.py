@@ -11,6 +11,7 @@ from datetime import date, datetime, time, timedelta
 
 from dateparser.search import search_dates
 
+from maestro import recurrence
 from maestro.models import Item, Kind
 
 DEFAULT_TIME = time(9, 0)
@@ -115,15 +116,33 @@ def _clean(text: str) -> str:
     return text.strip(" ,.;:-")
 
 
+DURATION_RE = re.compile(r"^\s*(\d+)\s*(m|min|mins|minutes?|h|hr|hrs|hours?|d|days?)\s*$", re.I)
+
+
+def parse_duration(text: str) -> timedelta:
+    """Parse a snooze length like "10m", "2h" or "1 day"."""
+    if not (m := DURATION_RE.match(text)):
+        raise ValueError(f"Can't read duration {text!r}; try 10m, 2h or 1d")
+    unit = m[2][0].lower()
+    return timedelta(**{{"m": "minutes", "h": "hours", "d": "days"}[unit]: int(m[1])})
+
+
 def parse(source: str, now: datetime | None = None) -> Item:
     """Parse a capture like "remind me to call mom tomorrow at 5pm" into an Item."""
     now = now or datetime.now()
     parts = _Parts(text=PREFIX_RE.sub("", source, count=1))
 
-    _extract_relative(parts, now)
-    _extract_time(parts)
-    if parts.exact is None:
-        _extract_day(parts, now)
+    rule, m = recurrence.extract(parts.text, now.date())
+    if m:
+        _cut(parts, m)
+        _extract_time(parts)
+        at = parts.when_time or DEFAULT_TIME
+        parts.exact = recurrence.next_occurrence(rule, now, at)
+    else:
+        _extract_relative(parts, now)
+        _extract_time(parts)
+        if parts.exact is None:
+            _extract_day(parts, now)
 
     due_at = parts.exact
     if due_at is None and (parts.when_date or parts.when_time):
@@ -139,4 +158,5 @@ def parse(source: str, now: datetime | None = None) -> Item:
         created_at=now.replace(microsecond=0),
         due_at=due_at,
         source_text=source,
+        recurrence=rule,
     )

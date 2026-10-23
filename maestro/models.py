@@ -22,4 +22,5 @@ class Item:
     due_at: datetime | None = None
     status: Status = Status.PENDING
     source_text: str = ""
+    recurrence: str | None = None  # see maestro.recurrence for the rule format
     id: int | None = None
