@@ -61,7 +61,7 @@ Estimates are rough working hours. Status is tracked in GitHub issues.
 - [ ] First PyPI release and GHCR image on tag (~2h)
 
 ## v0.3: Capture from anywhere (~16h)
-- [ ] **Telegram bot**: capture, list, snooze and done from chat (bring your own bot token)
+- [x] **Telegram bot**: capture, list, snooze and done from chat, plus a delivery channel with action buttons (bring your own bot token)
 - [ ] **Inbound SMS**: text your Twilio number "dentist next tue 3pm" (webhook + signature validation)
 - [ ] **Inbound voice**: call your Twilio number and say the reminder (Twilio speech gather → parser)
 - [ ] **Email-in**: forward an email to capture it (IMAP poller)

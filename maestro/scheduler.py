@@ -7,6 +7,7 @@ After MAX_ATTEMPTS a channel is given up on so one broken integration can't bloc
 
 import logging
 import time
+from collections.abc import Callable
 from datetime import datetime, timedelta
 
 from maestro import recurrence
@@ -80,7 +81,10 @@ def fire_due(store: Store, notifier: Notifier, now: datetime | None = None) -> l
     return finished
 
 
-def run_forever(store: Store, notifier: Notifier, interval: float = 30.0) -> None:
+def run_forever(store: Store, notifier: Notifier, interval: float = 30.0,
+                wait: Callable[[float], None] = time.sleep) -> None:
+    """Fire due reminders every `interval` seconds. `wait` can do useful work while it waits,
+    e.g. long-poll a chat bot for new messages."""
     while True:
         fire_due(store, notifier)
-        time.sleep(interval)
+        wait(interval)

@@ -7,6 +7,7 @@ connection is never used from two threads at once.
 
 import asyncio
 import hmac
+import logging
 from contextlib import asynccontextmanager
 from datetime import datetime
 from importlib.resources import files
@@ -23,6 +24,8 @@ from maestro.scheduler import fire_due
 from maestro.store import Store
 from maestro.tz import add_elapsed
 
+log = logging.getLogger(__name__)
+
 WEB_UI = files("maestro").joinpath("web/index.html").read_text(encoding="utf-8")
 
 
@@ -31,6 +34,19 @@ async def _scheduler_loop(store: Store, notifier: Notifier, interval: float) -> 
     while True:
         fire_due(store, notifier)
         await asyncio.sleep(interval)
+
+
+async def _bot_loop(bot) -> None:
+    # The long poll runs in a worker thread; handling (which touches SQLite) stays on the event loop.
+    while True:
+        try:
+            updates = await asyncio.to_thread(bot.fetch)
+        except Exception:
+            log.exception("Telegram polling failed; retrying in 10s")
+            await asyncio.sleep(10)
+            continue
+        for update in updates:
+            bot.handle(update)
 
 
 class CaptureIn(BaseModel):
@@ -63,14 +79,19 @@ class ItemOut(BaseModel):
 
 
 def create_app(store: Store, api_token: str | None = None, notifier: Notifier | None = None,
-               interval: float = 30.0) -> FastAPI:
-    """Build the app. With a notifier, due reminders are also fired from a background task."""
+               interval: float = 30.0, bot=None) -> FastAPI:
+    """Build the app. With a notifier, due reminders are also fired from a background task;
+    with a bot (maestro.telegram.TelegramBot), chat messages are handled from another."""
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
-        task = asyncio.create_task(_scheduler_loop(store, notifier, interval)) if notifier else None
+        tasks = []
+        if notifier:
+            tasks.append(asyncio.create_task(_scheduler_loop(store, notifier, interval)))
+        if bot:
+            tasks.append(asyncio.create_task(_bot_loop(bot)))
         yield
-        if task:
+        for task in tasks:
             task.cancel()
 
     app = FastAPI(title="Maestro", version=__version__, lifespan=lifespan,

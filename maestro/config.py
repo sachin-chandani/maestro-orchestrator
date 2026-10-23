@@ -42,6 +42,9 @@ class Config:
     ntfy_url: str = "https://ntfy.sh"
     ntfy_topic: str | None = None
 
+    telegram_bot_token: str | None = None
+    telegram_chat_id: str | None = None
+
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> "Config":
         env = os.environ if env is None else env
@@ -56,4 +59,6 @@ class Config:
             sms_to=env.get("MAESTRO_SMS_TO") or None,
             ntfy_url=env.get("NTFY_URL", "https://ntfy.sh").rstrip("/"),
             ntfy_topic=env.get("NTFY_TOPIC") or None,
+            telegram_bot_token=env.get("TELEGRAM_BOT_TOKEN") or None,
+            telegram_chat_id=env.get("TELEGRAM_CHAT_ID") or None,
         )

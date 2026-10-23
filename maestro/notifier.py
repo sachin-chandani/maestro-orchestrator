@@ -121,11 +121,21 @@ def _twilio_sms(config: Config) -> Notifier:
                              config.twilio_from, config.sms_to)
 
 
+def _telegram(config: Config) -> Notifier:
+    from maestro.telegram import TelegramClient, TelegramNotifier
+
+    required = {"TELEGRAM_BOT_TOKEN": config.telegram_bot_token, "TELEGRAM_CHAT_ID": config.telegram_chat_id}
+    if missing := [name for name, value in required.items() if not value]:
+        raise ConfigError(f"telegram channel needs {', '.join(missing)}")
+    return TelegramNotifier(TelegramClient.for_token(config.telegram_bot_token), config.telegram_chat_id)
+
+
 CHANNELS: dict[str, Callable[[Config], Notifier]] = {
     "console": lambda _: ConsoleNotifier(),
     "macos": lambda _: MacNotifier(),
     "ntfy": _ntfy,
     "twilio_sms": _twilio_sms,
+    "telegram": _telegram,
 }
 
 

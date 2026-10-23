@@ -25,7 +25,8 @@ Saved: 3  📝 —                 My passport is in the blue drawer
 - **Recurring:** `every day at 8am`, `every weekday at 9:30am`, `every monday`, `on the 1st of every month`, `every 2 hours`
 - **Timezone-aware:** stored in UTC, shown in your timezone; "8am every day" stays 8am across DST changes
 - **Notes:** anything without a time is kept and searchable
-- **Channels:** console, macOS notifications, [ntfy](https://ntfy.sh) push, Twilio SMS
+- **Channels:** console, macOS notifications, [ntfy](https://ntfy.sh) push, Twilio SMS, Telegram (with Done/snooze buttons)
+- **Telegram bot:** text your own bot "dentist next tue 3pm" to capture; `/list`, `/done`, `/snooze`, `/rm`
 - **Self-hosted:** one Docker container, one SQLite file, token-protected REST API and a built-in web UI
 - **Reliable:** delivery is tracked per channel; a failing channel is retried with backoff (up to 5 attempts) without re-sending on the ones that worked. After downtime, recurring reminders fire once and skip ahead instead of flooding you
 
@@ -61,9 +62,17 @@ All settings come from environment variables or a `.env` file. See [.env.example
 | `MAESTRO_DB` | SQLite path (default `~/.maestro/maestro.db`) |
 | `MAESTRO_TIMEZONE` | Your IANA timezone, e.g. `Europe/London`. Defaults to the system zone, which is UTC in Docker, so set it when self-hosting |
 | `MAESTRO_API_TOKEN` | Bearer token for the API; required unless bound to localhost |
-| `MAESTRO_CHANNELS` | Comma-separated: `console`, `macos`, `ntfy`, `twilio_sms` |
+| `MAESTRO_CHANNELS` | Comma-separated: `console`, `macos`, `ntfy`, `twilio_sms`, `telegram` |
+| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | Your bot and the only chat it will talk to (see below) |
 | `NTFY_URL`, `NTFY_TOPIC` | ntfy server and topic |
 | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER`, `MAESTRO_SMS_TO` | SMS to your own phone |
+
+### Telegram
+1. Create a bot with [@BotFather](https://t.me/BotFather) and set `TELEGRAM_BOT_TOKEN`.
+2. Start Maestro (`maestro run` or `maestro serve`) and send `/start` to your bot. It replies with your chat id.
+3. Set `TELEGRAM_CHAT_ID` to that id, add `telegram` to `MAESTRO_CHANNELS`, and restart.
+
+Now anything you text the bot is captured, reminders arrive in the chat with ✅ Done / +10m / +1h / +1d buttons, and messages from any other chat are ignored. The bot long-polls Telegram, so it needs no public URL.
 
 ## CLI reference
 ```bash

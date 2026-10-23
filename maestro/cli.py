@@ -4,6 +4,7 @@ import argparse
 import logging
 import os
 import sys
+import time
 from datetime import datetime
 
 from maestro import recurrence
@@ -104,21 +105,46 @@ def main(argv: list[str] | None = None) -> int:
         except ConfigError as e:
             print(f"Config error: {e}", file=sys.stderr)
             return 2
+        bot = _build_bot(config, store)
         if args.command == "serve":
-            return _serve(store, config, notifier, args)
+            return _serve(store, config, notifier, args, bot)
         if args.once:
             fire_due(store, notifier)
         else:
-            print(f"Watching for due reminders every {args.interval:g}s via {', '.join(config.channels)}. "
-                  "Ctrl+C to stop.")
+            extra = " and listening on Telegram" if bot else ""
+            print(f"Watching for due reminders every {args.interval:g}s via {', '.join(config.channels)}"
+                  f"{extra}. Ctrl+C to stop.")
             try:
-                run_forever(store, notifier, args.interval)
+                run_forever(store, notifier, args.interval, wait=_bot_wait(bot) if bot else time.sleep)
             except KeyboardInterrupt:
                 pass
     return 0
 
 
-def _serve(store: Store, config: Config, notifier, args) -> int:
+def _build_bot(config: Config, store: Store):
+    if not config.telegram_bot_token:
+        return None
+    from maestro.telegram import TelegramBot, TelegramClient
+
+    if not config.telegram_chat_id:
+        logging.warning("TELEGRAM_CHAT_ID is not set: send /start to your bot to get it")
+    return TelegramBot(TelegramClient.for_token(config.telegram_bot_token), store, config.telegram_chat_id)
+
+
+def _bot_wait(bot):
+    """Use the wait between scheduler ticks to long-poll Telegram, so messages are answered right away."""
+
+    def wait(seconds: float) -> None:
+        try:
+            bot.poll_once(timeout=max(1, int(seconds)))
+        except Exception:
+            logging.exception("Telegram polling failed; retrying after the next tick")
+            time.sleep(seconds)
+
+    return wait
+
+
+def _serve(store: Store, config: Config, notifier, args, bot=None) -> int:
     try:
         import uvicorn
 
@@ -129,7 +155,7 @@ def _serve(store: Store, config: Config, notifier, args) -> int:
     if config.api_token is None and args.host not in ("127.0.0.1", "localhost"):
         print("Refusing to listen on a public interface without MAESTRO_API_TOKEN set.", file=sys.stderr)
         return 2
-    app = create_app(store, api_token=config.api_token, notifier=notifier, interval=args.interval)
+    app = create_app(store, api_token=config.api_token, notifier=notifier, interval=args.interval, bot=bot)
     uvicorn.run(app, host=args.host, port=args.port)
     return 0
 
