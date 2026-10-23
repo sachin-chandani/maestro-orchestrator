@@ -4,6 +4,9 @@ Datetimes are stored as naive local-time ISO strings (timezone support is on the
 Schema changes go through MIGRATIONS; the applied version is tracked in PRAGMA user_version.
 """
 
+# Store.list shadows the builtin in the class body; deferred annotations keep `list[Item]` valid on <3.14.
+from __future__ import annotations
+
 import sqlite3
 from datetime import datetime
 from pathlib import Path
