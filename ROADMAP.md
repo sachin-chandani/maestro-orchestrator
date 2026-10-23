@@ -48,7 +48,7 @@ Dates are targets, not promises. Work is tracked in [GitHub issues](https://gith
 - [x] SQLite store and CLI (`add`, `list`, `search`, `done`, `rm`, `run`)
 - [x] Scheduler with console and macOS notifications
 
-## v0.2: Self-hostable server (target Nov 1, 2026)
+## v0.2: Self-hostable server (released Oct 24, 2026)
 - [x] Recurring reminders: daily, weekdays, weekly, monthly, every N hours
 - [x] Snooze (`maestro snooze 3 10m`, `POST /items/{id}/snooze`)
 - [x] Versioned schema migrations, safe under concurrent startup
