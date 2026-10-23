@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "maestro-orchestrator"
-version = "0.1.0"
+dynamic = ["version"]
 description = "A personal second brain: capture things to remember in plain language and get reminded at the right time."
 readme = "README.md"
 license = "MIT"
@@ -18,6 +18,14 @@ dev = ["maestro-orchestrator[server]", "pytest>=8", "httpx>=0.27", "ruff>=0.6"]
 
 [project.scripts]
 maestro = "maestro.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/sachin-chandani/maestro-orchestrator"
+Changelog = "https://github.com/sachin-chandani/maestro-orchestrator/blob/main/CHANGELOG.md"
+Issues = "https://github.com/sachin-chandani/maestro-orchestrator/issues"
+
+[tool.hatch.version]
+path = "maestro/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["maestro"]
