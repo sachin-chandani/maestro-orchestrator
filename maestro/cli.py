@@ -56,6 +56,9 @@ def _build_parser(config: Config) -> argparse.ArgumentParser:
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8000)
     serve.add_argument("--interval", type=float, default=30.0, help="seconds between checks")
+
+    doctor = sub.add_parser("doctor", help="check configuration and channels before deploying")
+    doctor.add_argument("--send-test", action="store_true", help="deliver a test message on every channel")
     return p
 
 
@@ -65,6 +68,12 @@ def main(argv: list[str] | None = None) -> int:
     if "MAESTRO_CHANNELS" not in os.environ:
         config.channels = default_channels()
     args = _build_parser(config).parse_args(argv)
+    if args.command == "doctor":
+        # Runs before the normal setup below, because checking that setup is its job.
+        from maestro import doctor
+
+        config.db_path = args.db
+        return 0 if doctor.run(config, send_test=args.send_test) else 1
     try:
         tz = get_timezone(config.timezone)
     except ValueError as e:
