@@ -99,3 +99,13 @@ def test_unwritable_database(path):
     ok, lines = run(Config(db_path=path, channels=["console"], api_token="t"))
     assert not ok
     assert lines[1].startswith(f"✗ database: {path}")
+
+
+def test_database_not_in_wal_is_a_warning(tmp_path, monkeypatch):
+    from maestro.store import Store
+
+    monkeypatch.setattr(Store, "_enable_wal", lambda self: "delete")
+    monkeypatch.setattr(Store, "journal_mode", property(lambda self: "delete"))
+    ok, lines = run(Config(db_path=str(tmp_path / "m.db"), channels=["console"], api_token="t"))
+    assert ok  # a warning, not a failure
+    assert lines[1].startswith("! database:") and "not in WAL mode" in lines[1]

@@ -12,6 +12,7 @@ A migration is either a list of SQL statements or a function `(conn, tz) -> None
 from __future__ import annotations
 
 import builtins
+import logging
 import sqlite3
 import time
 from collections.abc import Callable
@@ -21,6 +22,8 @@ from zoneinfo import ZoneInfo
 
 from maestro.models import Delivery, Item, Kind, Status
 from maestro.tz import UTC, get_timezone, localize
+
+log = logging.getLogger(__name__)
 
 # Wait this long for another process's lock instead of failing with "database is locked".
 BUSY_TIMEOUT_SECONDS = 5.0
@@ -81,37 +84,51 @@ MIGRATIONS: list[list[str] | Callable[[sqlite3.Connection, ZoneInfo], None]] = [
 class Store:
     def __init__(self, path: str | Path = ":memory:", tz: ZoneInfo | None = None):
         self.tz = tz or get_timezone()
-        if str(path) != ":memory:":
+        self.path = str(path)
+        on_disk = str(path) not in ("", ":memory:")  # "" is a private temporary database
+        if on_disk:
             Path(path).parent.mkdir(parents=True, exist_ok=True)
         # The API server touches the connection from its event-loop thread, not the creating thread.
         self.conn = sqlite3.connect(str(path), check_same_thread=False, timeout=BUSY_TIMEOUT_SECONDS)
         self.conn.row_factory = sqlite3.Row
-        if str(path) != ":memory:":
-            # WAL: readers (API, web UI) never block the writer (scheduler) and vice versa.
-            # synchronous=NORMAL is crash-safe with WAL and much faster than FULL.
-            # See docs/adr/0006-sqlite-wal.md for the trade-offs (no network filesystems).
-            self._enable_wal()
-            self.conn.execute("PRAGMA synchronous=NORMAL")
         self.closed = False
         try:
+            if on_disk:
+                self._configure_durability()
             self._migrate()
         except BaseException:
             self.close()  # the caller never gets the object, so it can't close it
             raise
 
-    def _enable_wal(self) -> None:
-        # Switching a fresh file to WAL needs exclusive access, and SQLite fails that pragma at once
-        # instead of waiting like it does for normal locks. Retry so processes starting together
-        # (serve + add on a new database) don't crash. Once set, WAL persists and this is a no-op.
+    def _configure_durability(self) -> None:
+        """WAL so other processes' reads and writes don't block each other; see ADR 0006."""
+        if self._enable_wal() == "wal":
+            # Crash-safe with WAL and much faster than FULL. Without WAL it is not, so keep the default.
+            self.conn.execute("PRAGMA synchronous=NORMAL")
+        else:
+            log.warning("Could not enable WAL for %s (journal mode %r); is it on a network filesystem? "
+                        "Keeping synchronous=FULL.", self.path, self.journal_mode)
+
+    def _enable_wal(self) -> str:
+        """Switch to WAL and return the resulting journal mode. SQLite doesn't raise when it can't
+        switch, it reports the mode it is still in, so callers must check the result.
+
+        Switching a fresh file needs exclusive access, and that pragma fails at once instead of
+        waiting like normal locks. Retry with short busy waits so processes starting together (serve
+        + add on a new database) don't crash, staying within BUSY_TIMEOUT_SECONDS overall.
+        """
         deadline = time.monotonic() + BUSY_TIMEOUT_SECONDS
-        while True:
-            try:
-                self.conn.execute("PRAGMA journal_mode=WAL")
-                return
-            except sqlite3.OperationalError as e:
-                if "locked" not in str(e) or time.monotonic() > deadline:
-                    raise
-                time.sleep(0.02)
+        self.conn.execute("PRAGMA busy_timeout = 50")
+        try:
+            while True:
+                try:
+                    return str(self.conn.execute("PRAGMA journal_mode=WAL").fetchone()[0]).lower()
+                except sqlite3.OperationalError as e:
+                    if "locked" not in str(e) or time.monotonic() >= deadline:
+                        raise
+                    time.sleep(0.02)
+        finally:
+            self.conn.execute(f"PRAGMA busy_timeout = {int(BUSY_TIMEOUT_SECONDS * 1000)}")
 
     def close(self) -> None:
         self.conn.close()

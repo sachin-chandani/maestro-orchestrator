@@ -41,6 +41,8 @@ def _timezone(config: Config) -> Check:
 
 
 def _database(config: Config) -> Check:
+    # Opening the store migrates it and switches it to WAL, exactly as the server would at startup;
+    # doctor is a pre-deploy check, so it deliberately validates the database in its final state.
     path = config.db_path
     try:
         store = Store(path, tz=get_timezone(config.timezone))
@@ -55,7 +57,11 @@ def _database(config: Config) -> Check:
         return Check(FAIL, "database", f"schema {version}, expected {len(MIGRATIONS)}")
     where = "in memory" if path == ":memory:" else str(Path(path).expanduser())
     items = f"{total} item{'' if total == 1 else 's'}"
-    return Check(OK, "database", f"{where}, schema {version}, {journal} journal, {items}")
+    detail = f"{where}, schema {version}, {journal} journal, {items}"
+    if path != ":memory:" and journal != "wal":
+        return Check(WARN, "database", f"{detail}: not in WAL mode; keep MAESTRO_DB on a local disk "
+                                       "or Docker volume, not a network share")
+    return Check(OK, "database", detail)
 
 
 def _api_token(config: Config) -> Check:

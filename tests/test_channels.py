@@ -150,3 +150,53 @@ def test_file_databases_use_wal_and_readers_are_not_blocked_by_a_writer(tmp_path
 def test_in_memory_databases_are_left_alone():
     with Store() as store:
         assert store.journal_mode == "memory"
+
+
+def test_without_wal_synchronous_stays_full_and_a_warning_is_logged(tmp_path, monkeypatch, caplog):
+    import logging
+
+    monkeypatch.setattr(Store, "_enable_wal", lambda self: "delete")  # e.g. a network filesystem
+    with caplog.at_level(logging.WARNING), Store(tmp_path / "m.db") as store:
+        assert store.conn.execute("PRAGMA synchronous").fetchone()[0] == 2  # FULL, not NORMAL (1)
+    assert "Could not enable WAL" in caplog.text
+
+
+def test_failed_wal_switch_closes_the_connection(tmp_path, monkeypatch):
+    def readonly(self):
+        raise sqlite3.OperationalError("attempt to write a readonly database")
+
+    closed = []
+    real_close = Store.close
+    monkeypatch.setattr(Store, "_enable_wal", readonly)
+    monkeypatch.setattr(Store, "close", lambda self: (closed.append(True), real_close(self)))
+    with pytest.raises(sqlite3.OperationalError, match="readonly"):
+        Store(tmp_path / "m.db")
+    assert closed == [True]
+
+
+def test_wal_switch_gives_up_within_the_busy_timeout(tmp_path, monkeypatch):
+    import time
+
+    import maestro.store as store_module
+
+    monkeypatch.setattr(store_module, "BUSY_TIMEOUT_SECONDS", 0.3)
+    path = tmp_path / "m.db"
+    holder = sqlite3.connect(path, timeout=0)
+    holder.execute("CREATE TABLE t (x)")
+    holder.execute("BEGIN EXCLUSIVE")  # a fresh, non-WAL file locked by someone else
+    started = time.monotonic()
+    try:
+        with pytest.raises(sqlite3.OperationalError, match="locked"):
+            Store(path)
+    finally:
+        holder.rollback()
+        holder.close()
+    assert time.monotonic() - started < 1.0
+
+
+def test_empty_path_is_a_temporary_database(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    with Store("") as store:
+        store.add(Item(text="Call mom", kind=Kind.REMINDER, created_at=dt(2026, 10, 23)))
+        assert store.journal_mode != "wal"
+    assert list(tmp_path.iterdir()) == []
