@@ -69,7 +69,7 @@ Dates are targets, not promises. Work is tracked in [GitHub issues](https://gith
 - [ ] Email-in via IMAP (#9)
 - [ ] Apple Shortcuts and Android Tasker recipes (#10)
 - [ ] Exactly-once scheduling when more than one process runs (#52)
-- [ ] SQLite durability: WAL and busy timeout (#53)
+- [x] SQLite durability: WAL and busy timeout (#53)
 - [ ] Rate limits on public endpoints (#54)
 - [ ] Parser accuracy corpus, target >= 95% (#55)
 - [ ] Property-based tests for recurrence and timezones (#56)

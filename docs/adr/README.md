@@ -10,3 +10,4 @@ Add a new numbered file for each decision; supersede rather than edit old ones.
 | [0003](0003-single-threaded-sqlite.md) | One SQLite connection, used from one thread | Accepted |
 | [0004](0004-webhooks-authenticated-by-provider-signatures.md) | Authenticate webhooks by provider signatures, not the API token | Accepted |
 | [0005](0005-capture-by-default.md) | Anything that isn't exactly a command is captured | Accepted |
+| [0006](0006-sqlite-wal.md) | SQLite in WAL mode with a busy timeout | Accepted |
