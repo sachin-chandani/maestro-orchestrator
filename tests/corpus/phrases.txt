@@ -1,0 +1,242 @@
+# Parser accuracy corpus (#55). Each line: input | expected text | expected due (local, or -) | rule (or -)
+# Expectations are what a person means, written before checking the parser.
+# "Now" is Tuesday 2026-10-27 08:00 America/New_York (US DST ends Sun Nov 1). Default time is 09:00.
+# Made-up data only.
+
+# --- times today and tomorrow
+call mom at 5pm | Call mom | 2026-10-27T17:00 | -
+call mom at 5 pm | Call mom | 2026-10-27T17:00 | -
+call mom at 5:30pm | Call mom | 2026-10-27T17:30 | -
+standup at 9:15am | Standup | 2026-10-27T09:15 | -
+take pills at 7am | Take pills | 2026-10-28T07:00 | -
+call the bank at noon | Call the bank | 2026-10-27T12:00 | -
+lock up at midnight | Lock up | 2026-10-28T00:00 | -
+meeting at 14:30 | Meeting | 2026-10-27T14:30 | -
+gym at 18:00 | Gym | 2026-10-27T18:00 | -
+remind me to call mom tomorrow at 5pm | Call mom | 2026-10-28T17:00 | -
+dentist tomorrow at 10:30am | Dentist | 2026-10-28T10:30 | -
+call grandma tomorrow | Call grandma | 2026-10-28T09:00 | -
+submit taxes today | Submit taxes | 2026-10-27T09:00 | -
+water plants today at 7pm | Water plants | 2026-10-27T19:00 | -
+take out the trash tonight | Take out the trash | 2026-10-27T20:00 | -
+call dad tonight at 9pm | Call dad | 2026-10-27T21:00 | -
+Call Mom Tomorrow At 5PM | Call Mom | 2026-10-28T17:00 | -
+email the landlord at 4pm, | Email the landlord | 2026-10-27T16:00 | -
+pick up kids at 3pm. | Pick up kids | 2026-10-27T15:00 | -
+buy milk at 6am | Buy milk | 2026-10-28T06:00 | -
+yoga at 7:00am tomorrow | Yoga | 2026-10-28T07:00 | -
+reply to sarah at 11am | Reply to sarah | 2026-10-27T11:00 | -
+book flights tomorrow at noon | Book flights | 2026-10-28T12:00 | -
+check the oven at 8:30am | Check the oven | 2026-10-27T08:30 | -
+call the plumber at 12pm | Call the plumber | 2026-10-27T12:00 | -
+
+# --- relative
+check the oven in 10 minutes | Check the oven | 2026-10-27T08:10 | -
+call back in 2 hours | Call back | 2026-10-27T10:00 | -
+stretch in an hour | Stretch | 2026-10-27T09:00 | -
+follow up in 3 days | Follow up | 2026-10-30T09:00 | -
+renew passport in 2 weeks | Renew passport | 2026-11-10T09:00 | -
+call mom in 3 days at 5pm | Call mom | 2026-10-30T17:00 | -
+move the car in 30 mins | Move the car | 2026-10-27T08:30 | -
+take medicine in 4 hours | Take medicine | 2026-10-27T12:00 | -
+check email in 1 hour | Check email | 2026-10-27T09:00 | -
+water the lawn in a day | Water the lawn | 2026-10-28T09:00 | -
+pay the invoice in one week | Pay the invoice | 2026-11-03T09:00 | -
+drink water in 45 minutes | Drink water | 2026-10-27T08:45 | -
+cancel the trial in 5 days | Cancel the trial | 2026-11-01T09:00 | -
+remind me to stand up in 20 min | Stand up | 2026-10-27T08:20 | -
+call back in 90 minutes | Call back | 2026-10-27T09:30 | -
+renew the domain in 2 months | Renew the domain | 2026-12-27T09:00 | -
+dentist checkup in 6 months | Dentist checkup | 2027-04-27T09:00 | -
+book a hotel next month | Book a hotel | 2026-11-27T09:00 | -
+plan the sprint next week | Plan the sprint | 2026-11-03T09:00 | -
+check results in 2 days at 9am | Check results | 2026-10-29T09:00 | -
+
+# --- weekdays
+gym on monday | Gym | 2026-11-02T09:00 | -
+gym monday at 7am | Gym | 2026-11-02T07:00 | -
+call mom on friday at 6pm | Call mom | 2026-10-30T18:00 | -
+submit the report friday | Submit the report | 2026-10-30T09:00 | -
+team lunch on thursday at noon | Team lunch | 2026-10-29T12:00 | -
+haircut saturday at 11am | Haircut | 2026-10-31T11:00 | -
+church sunday at 10am | Church | 2026-11-01T10:00 | -
+review the pr next tuesday | Review the pr | 2026-11-03T09:00 | -
+# Decision (ambiguous English): "next <weekday>" is the coming one, so on a Tuesday "next wednesday" is tomorrow.
+dentist next wednesday at 3pm | Dentist | 2026-10-28T15:00 | -
+call the bank this thursday | Call the bank | 2026-10-29T09:00 | -
+water plants on wednesday evening | Water plants | 2026-10-28T18:00 | -
+pay rent on friday morning | Pay rent | 2026-10-30T09:00 | -
+movie night saturday at 8pm | Movie night | 2026-10-31T20:00 | -
+call the landlord on tuesday | Call the landlord | 2026-11-03T09:00 | -
+meeting with alex thursday at 2:30pm | Meeting with alex | 2026-10-29T14:30 | -
+grocery run sunday afternoon | Grocery run | 2026-11-01T14:00 | -
+send the invoice monday 9am | Send the invoice | 2026-11-02T09:00 | -
+renew the parking permit friday at 5pm | Renew the parking permit | 2026-10-30T17:00 | -
+book a massage saturday morning | Book a massage | 2026-10-31T09:00 | -
+Gym On Friday | Gym | 2026-10-30T09:00 | -
+
+# --- calendar dates
+pay rent on nov 1 | Pay rent | 2026-11-01T09:00 | -
+pay rent on Nov 1st | Pay rent | 2026-11-01T09:00 | -
+renew passport on 1 December | Renew passport | 2026-12-01T09:00 | -
+file taxes on 2027-03-15 | File taxes | 2027-03-15T09:00 | -
+dentist on the 5th | Dentist | 2026-11-05T09:00 | -
+pay the bill by the 28th | Pay the bill | 2026-10-28T09:00 | -
+pay the bill on the 27th | Pay the bill | 2026-11-27T09:00 | -
+anniversary dinner on december 12 at 7pm | Anniversary dinner | 2026-12-12T19:00 | -
+vote on november 3 | Vote | 2026-11-03T09:00 | -
+send the card on dec 25 | Send the card | 2026-12-25T09:00 | -
+car service on 15 january | Car service | 2027-01-15T09:00 | -
+conference on march 3rd | Conference | 2027-03-03T09:00 | -
+call grandma on the 31st | Call grandma | 2026-10-31T09:00 | -
+pay the credit card on the 2nd | Pay the credit card | 2026-11-02T09:00 | -
+renew the lease on june 30 at noon | Renew the lease | 2027-06-30T12:00 | -
+book tickets on oct 30 | Book tickets | 2026-10-30T09:00 | -
+mom's birthday on nov 14 | Mom's birthday | 2026-11-14T09:00 | -
+tax deadline on april 15 | Tax deadline | 2027-04-15T09:00 | -
+check the visa on 2026-12-01 | Check the visa | 2026-12-01T09:00 | -
+meeting on the 10th at 3pm | Meeting | 2026-11-10T15:00 | -
+
+# --- parts of the day, deadlines, weekends
+call the bank tomorrow morning | Call the bank | 2026-10-28T09:00 | -
+gym tomorrow evening | Gym | 2026-10-28T18:00 | -
+read tomorrow night | Read | 2026-10-28T21:00 | -
+water plants this afternoon | Water plants | 2026-10-27T14:00 | -
+call dad this evening | Call dad | 2026-10-27T18:00 | -
+lock the door at night | Lock the door | 2026-10-27T21:00 | -
+send the report by end of day | Send the report | 2026-10-27T17:00 | -
+submit the timesheet eod | Submit the timesheet | 2026-10-27T17:00 | -
+finish the deck by end of week | Finish the deck | 2026-10-30T17:00 | -
+wrap up the project eow | Wrap up the project | 2026-10-30T17:00 | -
+clean the garage this weekend | Clean the garage | 2026-10-31T10:00 | -
+hike on the weekend | Hike | 2026-10-31T10:00 | -
+call mom this weekend at 4pm | Call mom | 2026-10-31T16:00 | -
+stretch this morning | Stretch | 2026-10-27T09:00 | -
+plan the week tomorrow afternoon | Plan the week | 2026-10-28T14:00 | -
+meditate in the morning | Meditate | 2026-10-27T09:00 | -
+laundry this evening at 7pm | Laundry | 2026-10-27T19:00 | -
+review the budget friday evening | Review the budget | 2026-10-30T18:00 | -
+send the invoice by eod tomorrow | Send the invoice | 2026-10-28T17:00 | -
+pay the bills tomorrow eod | Pay the bills | 2026-10-28T17:00 | -
+
+# --- recurring
+take vitamins every day at 8am | Take vitamins | 2026-10-28T08:00 | daily
+journal daily at 9pm | Journal | 2026-10-27T21:00 | daily
+standup every weekday at 9:30am | Standup | 2026-10-27T09:30 | weekdays
+gym every monday at 7am | Gym | 2026-11-02T07:00 | weekly:0
+team sync every tuesday at 10am | Team sync | 2026-10-27T10:00 | weekly:1
+pay rent on the 1st of every month | Pay rent | 2026-11-01T09:00 | monthly:1
+pay rent every month on the 1st | Pay rent | 2026-11-01T09:00 | monthly:1
+review finances every 15th of the month | Review finances | 2026-11-15T09:00 | monthly:15
+drink water every 2 hours | Drink water | 2026-10-27T10:00 | interval:120
+stretch every 30 minutes | Stretch | 2026-10-27T08:30 | interval:30
+water plants every other week | Water plants | 2026-10-27T09:00 | weeks:2:1
+backup every 3 days | Backup | 2026-10-27T09:00 | days:3
+stretch every other day at 7am | Stretch | 2026-10-28T07:00 | days:2
+standup every other friday at 9am | Standup | 2026-10-30T09:00 | weeks:2:4
+sync biweekly on thursday | Sync | 2026-10-29T09:00 | weeks:2:3
+payroll fortnightly | Payroll | 2026-10-27T09:00 | weeks:2:1
+review every 2 weeks on monday | Review | 2026-11-02T09:00 | weeks:2:0
+meditate every night | Meditate | 2026-10-27T21:00 | daily
+walk the dog every morning | Walk the dog | 2026-10-27T09:00 | daily
+read every evening at 9:30pm | Read | 2026-10-27T21:30 | daily
+team lunch every week on thursday at noon | Team lunch | 2026-10-29T12:00 | weekly:3
+call mom every sunday at 6pm | Call mom | 2026-11-01T18:00 | weekly:6
+laundry every saturday | Laundry | 2026-10-31T09:00 | weekly:5
+clean the litter box every 2 days | Clean the litter box | 2026-10-27T09:00 | days:2
+check the mail every weekday | Check the mail | 2026-10-27T09:00 | weekdays
+newsletter monthly | Newsletter | 2026-10-27T09:00 | monthly:27
+pay the credit card monthly on the 5th | Pay the credit card | 2026-11-05T09:00 | monthly:5
+take the trash out every thursday night | Take the trash out | 2026-10-29T21:00 | weekly:3
+water plants every 3 days at 6pm | Water plants | 2026-10-27T18:00 | days:3
+vitamins daily | Vitamins | 2026-10-27T09:00 | daily
+standup on weekdays at 9am | Standup | 2026-10-27T09:00 | weekdays
+call grandma every other sunday | Call grandma | 2026-11-01T09:00 | weeks:2:6
+change the filter every 4 weeks | Change the filter | 2026-10-27T09:00 | weeks:4:1
+piano practice every day at 5:30pm | Piano practice | 2026-10-27T17:30 | daily
+check in with the team every monday morning | Check in with the team | 2026-11-02T09:00 | weekly:0
+
+# --- notes
+remember that my passport is in the blue drawer | My passport is in the blue drawer | - | -
+remember the wifi password is on the router | The wifi password is on the router | - | -
+the gate code is 4321 | The gate code is 4321 | - | -
+spare key is under the mat | Spare key is under the mat | - | -
+the weekly report template is in drive | The weekly report template is in drive | - | -
+my daily standup notes are in notion | My daily standup notes are in notion | - | -
+the 5th element is a good film | The 5th element is a good film | - | -
+alex's shoe size is 42 | Alex's shoe size is 42 | - | -
+the parking spot is level 3 row b | The parking spot is level 3 row b | - | -
+remember mom likes lilies | Mom likes lilies | - | -
+book recommendation: project hail mary | Book recommendation: project hail mary | - | -
+the plumber's number is in contacts | The plumber's number is in contacts | - | -
+car insurance policy number is in the glovebox | Car insurance policy number is in the glovebox | - | -
+our monthly budget sheet lives on the nas | Our monthly budget sheet lives on the nas | - | -
+idea: build a birdhouse | Idea: build a birdhouse | - | -
+don't forget that sam is allergic to peanuts | Sam is allergic to peanuts | - | -
+the router admin page is 192.168.1.1 | The router admin page is 192.168.1.1 | - | -
+bike lock code 0815 | Bike lock code 0815 | - | -
+lily's birthday is in march | Lily's birthday is in march | - | -
+my favourite pizza place is luigi's on 5th avenue | My favourite pizza place is luigi's on 5th avenue | - | -
+grandma's recipe uses 2 cups of flour | Grandma's recipe uses 2 cups of flour | - | -
+the meeting notes are in the shared folder | The meeting notes are in the shared folder | - | -
+my locker is number 27 | My locker is number 27 | - | -
+remember the dentist is on main street | The dentist is on main street | - | -
+the printer toner model is tn-660 | The printer toner model is tn-660 | - | -
+the best time to call dad is after dinner | The best time to call dad is after dinner | - | -
+song stuck in my head: september | Song stuck in my head: september | - | -
+tyre pressure should be 35 psi | Tyre pressure should be 35 psi | - | -
+remember my blood type is o positive | My blood type is o positive | - | -
+the hotel confirmation number is ab12345 | The hotel confirmation number is ab12345 | - | -
+
+# --- prefixes and word order
+please remind me to call mom tomorrow at 5pm | Call mom | 2026-10-28T17:00 | -
+remind me about the dentist tomorrow | The dentist | 2026-10-28T09:00 | -
+remind me that the car needs oil on friday | The car needs oil | 2026-10-30T09:00 | -
+don't forget to buy milk tonight | Buy milk | 2026-10-27T20:00 | -
+dont forget to call sam at 6pm | Call sam | 2026-10-27T18:00 | -
+remember to water the plants on saturday | Water the plants | 2026-10-31T09:00 | -
+Remind me to Call the Vet at 3pm | Call the Vet | 2026-10-27T15:00 | -
+remind me to pay rent on the 1st of every month | Pay rent | 2026-11-01T09:00 | monthly:1
+remind me to take pills every day at 9pm | Take pills | 2026-10-27T21:00 | daily
+remind me in 15 minutes to check the oven | Check the oven | 2026-10-27T08:15 | -
+tomorrow at 9am call the bank | Call the bank | 2026-10-28T09:00 | -
+at 5pm call mom | Call mom | 2026-10-27T17:00 | -
+on friday submit the report | Submit the report | 2026-10-30T09:00 | -
+next monday book the venue | Book the venue | 2026-11-02T09:00 | -
+call mom at 5pm tomorrow | Call mom | 2026-10-28T17:00 | -
+buy flowers for mom on nov 14 at 10am | Buy flowers for mom | 2026-11-14T10:00 | -
+email the boss about the q4 plan tomorrow at 9 | Email the boss about the q4 plan | 2026-10-28T09:00 | -
+call mom at 6 | Call mom | 2026-10-27T18:00 | -
+meeting at 10 tomorrow | Meeting | 2026-10-28T10:00 | -
+lunch with jo at 1 | Lunch with jo | 2026-10-27T13:00 | -
+
+# --- everyday clutter
+call mom in the morning tomorrow | Call mom | 2026-10-28T09:00 | -
+pay back alex 20 dollars on friday | Pay back alex 20 dollars | 2026-10-30T09:00 | -
+order 2 pizzas at 7pm | Order 2 pizzas | 2026-10-27T19:00 | -
+buy a 4k monitor tomorrow | Buy a 4k monitor | 2026-10-28T09:00 | -
+read chapter 5 tonight | Read chapter 5 | 2026-10-27T20:00 | -
+submit form 1040 by april 15 | Submit form 1040 | 2027-04-15T09:00 | -
+call +1 555 0100 tomorrow | Call +1 555 0100 | 2026-10-28T09:00 | -
+renew the license (expires soon) on dec 1 | Renew the license (expires soon) | 2026-12-01T09:00 | -
+send the report to team@example.com at 4pm | Send the report to team@example.com | 2026-10-27T16:00 | -
+call mom around 5pm | Call mom | 2026-10-27T17:00 | -
+pick up dry cleaning thursday after 5pm | Pick up dry cleaning | 2026-10-29T17:00 | -
+
+# --- added from the PR #68 review: phrases the first corpus missed
+call mom at 8 tonight | Call mom | 2026-10-27T20:00 | -
+dinner at 7 in the evening | Dinner | 2026-10-27T19:00 | -
+call the gym at 6 tomorrow morning | Call the gym | 2026-10-28T06:00 | -
+movie night every friday | Movie night | 2026-10-30T09:00 | weekly:4
+game night every thursday at 8pm | Game night | 2026-10-29T20:00 | weekly:3
+the morning standup every monday | The morning standup | 2026-11-02T09:00 | weekly:0
+remind me about that email tomorrow | That email | 2026-10-28T09:00 | -
+the dentist is at 5 main street | The dentist is at 5 main street | - | -
+meet sam at 3 oclock | Meet sam | 2026-10-27T15:00 | -
+dinner at 6:30 | Dinner | 2026-10-27T18:30 | -
+call bob monday at 6:30 | Call bob | 2026-11-02T18:30 | -
+submit form 1999 by april 15 | Submit form 1999 | 2027-04-15T09:00 | -
+pay the monthly on the 1st | Pay the monthly | 2026-11-01T09:00 | -
+work from 9am to 5pm | Work | 2026-10-27T09:00 | -
+pick up the kids before 3pm | Pick up the kids | 2026-10-27T14:30 | -
+call mom morning | Call mom | 2026-10-27T09:00 | -

@@ -13,7 +13,7 @@ These are the promises a self-hosted instance should keep. Each one has a metric
 | Durable data | Nothing acknowledged to the user is lost across restarts or upgrades | Migrations tested from every previous schema; WAL (#53); backups (#59) |
 | Loops keep running | One corrupt item, failed tick or malformed chat update is logged, counted and skipped; it never stops the scheduler or the bot | `maestro_scheduler_errors_total`; `tests/test_resilience.py` |
 | Correct times | Wall-clock times survive DST and server timezones | `tests/test_timezones.py`, property tests (#56) |
-| Understands people | At least 95% of the parser corpus parses exactly as expected | Corpus test (#55) |
+| Understands people | At least 95% of the parser corpus parses exactly as expected, and no miss goes unlisted | `tests/test_corpus.py` over `tests/corpus/phrases.txt`; add every real-world misparse to the corpus |
 | Safe to expose | Every non-public route needs the API token; webhooks need a valid provider signature; wrong tokens and forged webhooks are rate limited per client, atomically, without ever throttling genuine provider callbacks | `tests/test_api.py`, `tests/test_sms.py`, `tests/test_ratelimit.py`; `maestro_rate_limited_total` |
 
 ## Definition of done
@@ -39,7 +39,7 @@ A change is done when all of these hold:
 - **Unit and integration tests** with fakes for every external service: each integration takes an injectable transport or opener.
 - **Signed-request tests** for webhooks, with signatures cross-checked against the provider's official SDK.
 - **Property-based tests** (Hypothesis, `tests/test_properties.py`) for invariants in recurrence, time handling, storage and the parser, across awkward zones (30-minute DST, 45-minute offsets, southern-hemisphere DST).
-- **Parser corpus** of realistic phrases with an accuracy target (planned, #55).
+- **Parser corpus** (`tests/corpus/phrases.txt`, 200+ phrases with what a person means) with a 95% floor; any miss not listed in `KNOWN_GAPS` fails. When a real phrase is misparsed, add it to the corpus first.
 - **No leaked connections:** a `Store` opened by product code and not closed fails the test that opened it.
 - **Live checks** only through `maestro doctor --send-test`, run by a person with real credentials.
 

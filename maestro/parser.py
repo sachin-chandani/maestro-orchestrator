@@ -26,8 +26,30 @@ PREFIX_RE = re.compile(
     r"|don'?t forget(?:\s+(?:to|that))?)\s+",
     re.I,
 )
-TIME_12H_RE = re.compile(r"\b(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b", re.I)
-TIME_24H_RE = re.compile(r"\bat\s+([01]?\d|2[0-3]):([0-5]\d)\b", re.I)
+# "at", "around", "after", "by" lead a time and leave the text with it. ("from" and "before" are not
+# here: ranges and lead times aren't modelled, see KNOWN_GAPS in tests/test_corpus.py.)
+_TIME_LEAD = r"(?:(?:at|around|about|after|by)\s+)"
+TIME_12H_RE = re.compile(rf"\b{_TIME_LEAD}?(\d{{1,2}})(?::(\d{{2}}))?\s*(am|pm)\b", re.I)
+TIME_24H_RE = re.compile(rf"\b{_TIME_LEAD}([01]?\d|2[0-3]):([0-5]\d)\b", re.I)
+# "at 6" with no am/pm. Needs "at", and must be followed by the end of the text, punctuation or a
+# word that continues a time phrase, so "at 5 main street" and "2 cups" stay text.
+_TIME_FOLLOWERS = "|".join(["today", "tomorrow", "tonight", "on", "this", "next", "in", "every", "and",
+                            "then", "for", "with", "morning", "afternoon", "evening", "night", *WEEKDAYS])
+TIME_BARE_RE = re.compile(
+    rf"\b{_TIME_LEAD}(1[0-2]|[1-9])(?:\s*o'?clock)?(?=\s*(?:$|[,.;!?)]|(?:{_TIME_FOLLOWERS})\b))", re.I
+)
+_PM_CONTEXT_RE = re.compile(r"\b(?:tonight|evening|night|afternoon|pm)\b", re.I)
+_AM_CONTEXT_RE = re.compile(r"\b(?:morning|am)\b", re.I)
+
+
+def _conversational_hour(hour: int, text: str) -> int:
+    """An hour said without am/pm. Context wins ("8 tonight", "6 in the morning"); otherwise 7-11 is
+    morning, 12 is noon and 1-6 is afternoon/evening, the way people use it in conversation."""
+    if _PM_CONTEXT_RE.search(text):
+        return hour % 12 + 12
+    if _AM_CONTEXT_RE.search(text):
+        return hour % 12
+    return hour if 7 <= hour <= 12 else hour + 12
 NOON_RE = re.compile(r"\b(?:at\s+)?(noon|midnight)\b", re.I)
 RELATIVE_RE = re.compile(
     r"\bin\s+(\d+|an?|one)\s+(minute|min|hour|hr|day|week)s?\b", re.I
@@ -35,7 +57,18 @@ RELATIVE_RE = re.compile(
 DAY_WORD_RE = re.compile(r"\b(today|tonight|tomorrow)\b", re.I)
 WEEKDAY_RE = re.compile(r"\b(?:(?:next|this|on)\s+)?(" + "|".join(WEEKDAYS) + r")\b", re.I)
 PART_OF_DAY = {"morning": time(9, 0), "afternoon": time(14, 0), "evening": time(18, 0), "night": time(21, 0)}
-PART_OF_DAY_RE = re.compile(r"\b(?:this\s+|in\s+the\s+|at\s+)?(morning|afternoon|evening|night)\b", re.I)
+_PARTS = "morning|afternoon|evening|night"
+_DAY_WORDS = "|".join(["today", "tomorrow", "tonight", "weekend", *WEEKDAYS])
+# Only as a time when the phrase says so, so "movie night saturday" keeps its name:
+#   "this evening", "in the morning", "at night"  -> the whole phrase is removed
+#   "tomorrow night", "friday morning"           -> only the part of day; the day word stays for later
+# In a recurrence, a part of the day right after the rule counts: "every night", "every thursday night".
+PART_OF_DAY_RE = re.compile(
+    rf"\b(?:(?:this|in\s+the|at)\s+(?P<qualified>{_PARTS})"
+    rf"|(?:{_DAY_WORDS})\s+(?P<after_day>{_PARTS}))\b",
+    re.I,
+)
+_PART_RIGHT_AFTER_RE = re.compile(rf"\s+({_PARTS})\b", re.I)
 END_OF_DAY_RE = re.compile(r"\b(?:by\s+)?(?:the\s+)?(?:end\s+of\s+(?:the\s+)?day|eod)\b", re.I)
 END_OF_WEEK_RE = re.compile(r"\b(?:by\s+)?(?:the\s+)?(?:end\s+of\s+(?:the\s+)?week|eow)\b", re.I)
 END_OF_DAY = time(17, 0)
@@ -72,15 +105,29 @@ def _extract_time(parts: _Parts) -> None:
             parts.when_time = time(hour, minute)
             _cut(parts, m)
     elif m := TIME_24H_RE.search(parts.text):
-        parts.when_time = time(int(m[1]), int(m[2]))
+        hour = int(m[1])
+        # 13:00-23:59 and 00:xx are unambiguous; "6:30" is read like "at 6" (so it isn't 12 h off).
+        if 1 <= hour <= 12:
+            hour = _conversational_hour(hour, parts.text)
+        parts.when_time = time(hour, int(m[2]))
         _cut(parts, m)
     elif m := NOON_RE.search(parts.text):
         parts.when_time = time(12, 0) if m[1].lower() == "noon" else time(0, 0)
         _cut(parts, m)
-    # "tomorrow morning" sets a time; "tomorrow morning at 8am" keeps 8am but still drops the word.
-    if m := PART_OF_DAY_RE.search(parts.text):
-        parts.when_time = parts.when_time or PART_OF_DAY[m[1].lower()]
+    elif m := TIME_BARE_RE.search(parts.text):
+        parts.when_time = time(_conversational_hour(int(m[1]), parts.text), 0)
         _cut(parts, m)
+    _extract_part_of_day(parts)
+
+
+def _extract_part_of_day(parts: _Parts) -> None:
+    """"tomorrow morning" sets a time; "tomorrow morning at 8am" keeps 8am but still drops the word."""
+    if not (m := PART_OF_DAY_RE.search(parts.text)):
+        return
+    name = next(group for group, value in m.groupdict().items() if value)
+    parts.when_time = parts.when_time or PART_OF_DAY[m[name].lower()]
+    start = m.start(name) if name == "after_day" else m.start()
+    parts.text = parts.text[:start] + " " + parts.text[m.end(name):]
 
 
 def _extract_deadline(parts: _Parts, now: datetime) -> None:
@@ -138,20 +185,53 @@ def _extract_day(parts: _Parts, now: datetime) -> None:
         parts.when_date = date(year, month, min(day, calendar.monthrange(year, month)[1]))
         _cut(parts, m)
     else:
-        found = search_dates(
-            parts.text,
-            languages=["en"],
-            settings={
-                "PREFER_DATES_FROM": "future",
-                "RELATIVE_BASE": now.replace(tzinfo=None),
-                "REQUIRE_PARTS": ["day", "month"],
-            },
-        )
-        if found:
-            phrase, dt = found[0]
-            parts.when_date = dt.date()
-            start = parts.text.index(phrase)
-            parts.text = parts.text[:start] + " " + parts.text[start + len(phrase):]
+        _extract_calendar_date(parts, now)
+
+
+def _mask_non_year_numbers(text: str) -> str:
+    """Hide long numbers that can't be a year ("form 1040", "0100") from dateparser, which would
+    otherwise read them as one. Same length, so positions still line up with the original."""
+    return re.sub(r"\b\d{3,}\b", lambda m: m[0] if 1900 <= int(m[0]) <= 2099 else "#" * len(m[0]), text)
+
+
+def _extract_calendar_date(parts: _Parts, now: datetime) -> None:
+    masked = _mask_non_year_numbers(parts.text)
+    for _ in range(3):  # each retry hides one more number that was mistaken for a year
+        retry = _find_calendar_date(parts, masked, now)
+        if retry is None:
+            return
+        masked = retry
+
+
+def _find_calendar_date(parts: _Parts, masked: str, now: datetime) -> str | None:
+    """Apply the first plausible date found in `masked`. Returns a new mask to retry with when the
+    only candidates had implausible years ("form 1999 by april 15"), otherwise None."""
+    found = search_dates(
+        masked,
+        languages=["en"],
+        settings={
+            "PREFER_DATES_FROM": "future",
+            "RELATIVE_BASE": now.replace(tzinfo=None),
+            "REQUIRE_PARTS": ["day", "month"],
+        },
+    )
+    retry = None
+    for phrase, dt in found or []:
+        if not now.year - 1 <= dt.year <= now.year + 50:
+            # A number was read as the year: hide it and try again.
+            year = re.search(rf"\b0*{dt.year}\b", masked)
+            if year and retry is None:
+                retry = masked[:year.start()] + "#" * len(year[0]) + masked[year.end():]
+            continue
+        # dateparser can return the phrase with its whitespace normalised (tabs, form feeds), so
+        # locate it with flexible whitespace rather than an exact substring search.
+        pattern = r"\s+".join(re.escape(word) for word in phrase.split())
+        if not pattern or not (m := re.search(pattern, masked)):
+            continue
+        parts.when_date = dt.date()
+        parts.text = parts.text[:m.start()] + " " + parts.text[m.end():]
+        return None
+    return retry
 
 
 def _clean(text: str) -> str:
@@ -180,13 +260,22 @@ def parse(source: str, now: datetime | None = None, tz: tzinfo | None = None) ->
     """
     zone: tzinfo = tz or (now.tzinfo if now and now.tzinfo else None) or get_timezone()
     now = localize(now, zone) if now else datetime.now(zone)
+    prefix = PREFIX_RE.match(source)
+    # "remind me in 15 minutes to check the oven": the prefix had no connector, so once the time is
+    # removed a leading "to" is left over. ("remind me about that email" keeps "that".)
+    strip_connector = prefix is not None and not re.search(r"\b(?:to|that|about)\s*$", prefix[0], re.I)
     parts = _Parts(text=PREFIX_RE.sub("", source, count=1))
 
     rule, matches = recurrence.extract(parts.text, now.date())
     if rule:
-        # Cut from the end so earlier match positions stay valid.
-        for m in sorted(matches, key=lambda m: m.start(), reverse=True):
-            _cut(parts, m)
+        spans = [(m.start(), m.end()) for m in matches]
+        for m in matches:
+            if after := _PART_RIGHT_AFTER_RE.match(parts.text, m.end()):
+                parts.when_time = PART_OF_DAY[after[1].lower()]
+                spans.append((after.start(), after.end()))
+        # Cut from the end so earlier positions stay valid.
+        for start, end in sorted(spans, reverse=True):
+            parts.text = parts.text[:start] + " " + parts.text[end:]
         _extract_time(parts)
         at = parts.when_time or DEFAULT_TIME
         parts.exact = recurrence.next_occurrence(rule, now, at)
@@ -205,7 +294,10 @@ def parse(source: str, now: datetime | None = None, tz: tzinfo | None = None) ->
         if due_at <= now and (parts.when_date is None or parts.when_date == now.date()):
             due_at += timedelta(days=1)
 
-    text = _clean(parts.text) or source.strip()
+    text = _clean(parts.text)
+    if strip_connector:
+        text = re.sub(r"^(?:to|that|about)\s+", "", text, flags=re.I)
+    text = text or source.strip()
     return Item(
         text=text[0].upper() + text[1:],
         kind=Kind.REMINDER if due_at else Kind.NOTE,

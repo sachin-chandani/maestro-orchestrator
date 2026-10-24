@@ -150,3 +150,10 @@ def test_wall_clock_check_flags_nonexistent_times():
     # Sanity check for the helper above: 02:30 didn't exist in New York on 2026-03-08.
     assert not exists(datetime.combine(date(2026, 3, 8), time(2, 30), tzinfo=ZoneInfo("America/New_York")))
     assert exists(datetime(2026, 3, 8, 3, 30, tzinfo=ZoneInfo("America/New_York")))
+
+
+def test_dateparser_whitespace_normalisation_does_not_crash():
+    # Found by test_parse_never_crashes_and_keeps_the_text: dateparser returned the phrase with a
+    # form feed normalised, so an exact substring search raised ValueError.
+    for source in ["0\x0cH", "pay rent on\tnov 1", "pay rent on nov\x0b1"]:
+        assert parse(source, now=datetime(2026, 10, 27, 8, 0, tzinfo=UTC)).text

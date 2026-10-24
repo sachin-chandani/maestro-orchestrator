@@ -71,7 +71,7 @@ Dates are targets, not promises. Work is tracked in [GitHub issues](https://gith
 - [x] Exactly-once scheduling when more than one process runs (#52)
 - [x] SQLite durability: WAL and busy timeout (#53)
 - [x] Rate limits on public endpoints (#54)
-- [ ] Parser accuracy corpus, target >= 95% (#55)
+- [x] Parser accuracy corpus, target >= 95% (#55); 201/201 at introduction
 - [x] Property-based tests for recurrence and timezones (#56)
 - [x] mypy clean in CI (#57); engineering standards, ADRs, coverage and audit gates (#58)
 
