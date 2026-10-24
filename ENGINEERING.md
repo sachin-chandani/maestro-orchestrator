@@ -11,6 +11,7 @@ These are the promises a self-hosted instance should keep. Each one has a metric
 | Delivery guarantee | At least once per channel; never silently dropped. A crash between sending and recording can repeat one message. | Delivery tests in `tests/test_delivery.py`; give-ups are logged and counted (`result="gave_up"`) |
 | No double delivery | One scheduler fires at a time, even with several processes on one database | #52 |
 | Durable data | Nothing acknowledged to the user is lost across restarts or upgrades | Migrations tested from every previous schema; WAL (#53); backups (#59) |
+| Loops keep running | One corrupt item, failed tick or malformed chat update is logged, counted and skipped; it never stops the scheduler or the bot | `maestro_scheduler_errors_total`; `tests/test_resilience.py` |
 | Correct times | Wall-clock times survive DST and server timezones | `tests/test_timezones.py`, property tests (#56) |
 | Understands people | At least 95% of the parser corpus parses exactly as expected | Corpus test (#55) |
 | Safe to expose | Every non-public route needs the API token; webhooks need a valid provider signature; public routes are rate limited | `tests/test_api.py`, `tests/test_sms.py`, #54 |
@@ -19,7 +20,7 @@ These are the promises a self-hosted instance should keep. Each one has a metric
 A change is done when all of these hold:
 
 1. **Behaviour is tested.** New behaviour has tests, every bug fix has a regression test that fails without the fix, and nothing in the test suite touches the network.
-2. **CI is green.** Lint (ruff), types (mypy with `check_untyped_defs`, no blanket ignores), tests on Python 3.11–3.13, coverage at or above the gate (93%, only ever raised), dependency audit, and Docker build.
+2. **CI is green.** Lint (ruff), types (mypy with `check_untyped_defs`, no blanket ignores), tests on Python 3.11–3.13, coverage at or above the gate (94%, only ever raised), dependency audit, and Docker build.
 3. **Docs match.** README for anything user-visible, `.env.example` for new settings, `CHANGELOG.md` under `[Unreleased]`, `ROADMAP.md` checkbox.
 4. **Operable.** New background behaviour logs failures and has a metric if it can silently stop working.
 5. **Decisions are written down.** A choice that constrains future work gets an ADR in `docs/adr/`.

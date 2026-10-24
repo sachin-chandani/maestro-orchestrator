@@ -116,8 +116,10 @@ def _dispatch(args: argparse.Namespace, config: Config, store: Store, tz: ZoneIn
                 print(e, file=sys.stderr)
                 return 2
             store.reschedule(args.id, add_elapsed(datetime.now(tz).replace(microsecond=0), delta))
-            snoozed = store.get(args.id)
-            print(f"Snoozed: {_format(snoozed).strip()}" if snoozed else f"No item #{args.id}")
+            if (snoozed := store.get(args.id)) is None:
+                print(f"No item #{args.id}", file=sys.stderr)
+                return 1
+            print(f"Snoozed: {_format(snoozed).strip()}")
     elif args.command in ("run", "serve"):
         try:
             configure_logging(config.log_format, config.log_level)

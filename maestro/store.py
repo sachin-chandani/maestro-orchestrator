@@ -124,7 +124,7 @@ class Store:
         return datetime.fromisoformat(value).astimezone(self.tz)
 
     def _from_db(self, value: str | None) -> datetime | None:
-        return datetime.fromisoformat(value).astimezone(self.tz) if value else None
+        return self._required_from_db(value) if value else None
 
     def _item(self, row: sqlite3.Row) -> Item:
         return Item(

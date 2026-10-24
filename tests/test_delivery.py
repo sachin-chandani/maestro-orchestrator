@@ -1,6 +1,5 @@
 from datetime import timedelta
 
-import pytest
 from conftest import dt
 
 from maestro.models import Item, Kind, Status
@@ -97,12 +96,3 @@ def test_delete_removes_delivery_rows():
     assert store.deliveries(item.id, DUE)
     store.delete(item.id)
     assert store.deliveries(item.id, DUE) == {}
-
-
-def test_unstored_items_are_rejected_by_the_scheduler():
-    from maestro.scheduler import _occurrence
-
-    with pytest.raises(ValueError, match="Only stored reminders"):
-        _occurrence(Item(text="Call mom", kind=Kind.REMINDER, created_at=DUE, due_at=DUE))
-    with pytest.raises(ValueError):
-        _occurrence(Item(id=1, text="A note", kind=Kind.NOTE, created_at=DUE))

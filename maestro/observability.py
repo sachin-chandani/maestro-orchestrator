@@ -104,6 +104,8 @@ METRICS.describe("maestro_deliveries_total", "counter",
                  "Delivery attempts, by channel and result (ok, error, gave_up).")
 METRICS.describe("maestro_reminders_fired_total", "counter", "Reminder occurrences fully delivered.")
 METRICS.describe("maestro_scheduler_ticks_total", "counter", "Scheduler ticks run.")
+METRICS.describe("maestro_scheduler_errors_total", "counter",
+                 "Items skipped or ticks failed because of an unexpected error; alert if it rises.")
 METRICS.describe("maestro_scheduler_last_tick_timestamp_seconds", "gauge",
                  "Unix time of the last scheduler tick.")
 METRICS.describe("maestro_scheduler_lag_seconds", "gauge",
