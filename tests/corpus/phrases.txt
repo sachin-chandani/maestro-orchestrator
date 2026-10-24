@@ -61,6 +61,7 @@ team lunch on thursday at noon | Team lunch | 2026-10-29T12:00 | -
 haircut saturday at 11am | Haircut | 2026-10-31T11:00 | -
 church sunday at 10am | Church | 2026-11-01T10:00 | -
 review the pr next tuesday | Review the pr | 2026-11-03T09:00 | -
+# Decision (ambiguous English): "next <weekday>" is the coming one, so on a Tuesday "next wednesday" is tomorrow.
 dentist next wednesday at 3pm | Dentist | 2026-10-28T15:00 | -
 call the bank this thursday | Call the bank | 2026-10-29T09:00 | -
 water plants on wednesday evening | Water plants | 2026-10-28T18:00 | -
@@ -221,3 +222,21 @@ renew the license (expires soon) on dec 1 | Renew the license (expires soon) | 2
 send the report to team@example.com at 4pm | Send the report to team@example.com | 2026-10-27T16:00 | -
 call mom around 5pm | Call mom | 2026-10-27T17:00 | -
 pick up dry cleaning thursday after 5pm | Pick up dry cleaning | 2026-10-29T17:00 | -
+
+# --- added from the PR #68 review: phrases the first corpus missed
+call mom at 8 tonight | Call mom | 2026-10-27T20:00 | -
+dinner at 7 in the evening | Dinner | 2026-10-27T19:00 | -
+call the gym at 6 tomorrow morning | Call the gym | 2026-10-28T06:00 | -
+movie night every friday | Movie night | 2026-10-30T09:00 | weekly:4
+game night every thursday at 8pm | Game night | 2026-10-29T20:00 | weekly:3
+the morning standup every monday | The morning standup | 2026-11-02T09:00 | weekly:0
+remind me about that email tomorrow | That email | 2026-10-28T09:00 | -
+the dentist is at 5 main street | The dentist is at 5 main street | - | -
+meet sam at 3 oclock | Meet sam | 2026-10-27T15:00 | -
+dinner at 6:30 | Dinner | 2026-10-27T18:30 | -
+call bob monday at 6:30 | Call bob | 2026-11-02T18:30 | -
+submit form 1999 by april 15 | Submit form 1999 | 2027-04-15T09:00 | -
+pay the monthly on the 1st | Pay the monthly | 2026-11-01T09:00 | -
+work from 9am to 5pm | Work | 2026-10-27T09:00 | -
+pick up the kids before 3pm | Pick up the kids | 2026-10-27T14:30 | -
+call mom morning | Call mom | 2026-10-27T09:00 | -

@@ -18,7 +18,12 @@ CORPUS = Path(__file__).parent / "corpus" / "phrases.txt"
 TARGET = 0.95
 
 # input -> reason. Counted as misses in the score; listed so they're decided, not forgotten.
-KNOWN_GAPS: dict[str, str] = {}
+KNOWN_GAPS: dict[str, str] = {
+    "work from 9am to 5pm": "time ranges aren't modelled; the reminder would be at the start",
+    "pick up the kids before 3pm": "'before X' should fire ahead of X; needs a lead-time rule",
+    "call mom morning": "a lone part-of-day word after a task is ambiguous with names like 'movie night';"
+                        " 'in the morning' or 'tomorrow morning' work",
+}
 
 
 @dataclass

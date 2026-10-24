@@ -34,7 +34,7 @@ _WEEKDAYS_RE = re.compile(r"\b(?:every|on)\s+weekdays?\b", re.I)
 _WEEKLY_RE = re.compile(r"\bevery\s+(" + "|".join(WEEKDAYS) + r")\b", re.I)
 _EVERY_WEEK_RE = re.compile(rf"\b(?:every\s+week|{_NOT_ADJECTIVE}weekly)\b", re.I)
 _MONTHLY_RE = re.compile(
-    r"\b(?:(?:every\s+month|monthly)\s+on\s+the\s+(\d{1,2})(?:st|nd|rd|th)?"
+    rf"\b(?:(?:every\s+month|{_NOT_ADJECTIVE}monthly)\s+on\s+the\s+(\d{{1,2}})(?:st|nd|rd|th)?"
     r"|on\s+the\s+(\d{1,2})(?:st|nd|rd|th)?\s+of\s+every\s+month"
     r"|every\s+(\d{1,2})(?:st|nd|rd|th)?\s+of\s+the\s+month)\b",
     re.I,
