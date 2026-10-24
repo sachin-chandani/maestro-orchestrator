@@ -109,26 +109,30 @@ def _ntfy(config: Config) -> Notifier:
     return NtfyNotifier(config.ntfy_url, config.ntfy_topic)
 
 
+def _require(channel: str, settings: dict[str, str | None]) -> dict[str, str]:
+    """The settings a channel needs, all present, or a ConfigError naming every missing one."""
+    if missing := [name for name, value in settings.items() if not value]:
+        raise ConfigError(f"{channel} channel needs {', '.join(missing)}")
+    return {name: value for name, value in settings.items() if value}
+
+
 def _twilio_sms(config: Config) -> Notifier:
-    required = {
+    s = _require("twilio_sms", {
         "TWILIO_ACCOUNT_SID": config.twilio_account_sid,
         "TWILIO_AUTH_TOKEN": config.twilio_auth_token,
         "TWILIO_FROM_NUMBER": config.twilio_from,
         "MAESTRO_SMS_TO": config.sms_to,
-    }
-    if missing := [name for name, value in required.items() if not value]:
-        raise ConfigError(f"twilio_sms channel needs {', '.join(missing)}")
-    return TwilioSMSNotifier(config.twilio_account_sid, config.twilio_auth_token,
-                             config.twilio_from, config.sms_to)
+    })
+    return TwilioSMSNotifier(s["TWILIO_ACCOUNT_SID"], s["TWILIO_AUTH_TOKEN"],
+                             s["TWILIO_FROM_NUMBER"], s["MAESTRO_SMS_TO"])
 
 
 def _telegram(config: Config) -> Notifier:
     from maestro.telegram import TelegramClient, TelegramNotifier
 
-    required = {"TELEGRAM_BOT_TOKEN": config.telegram_bot_token, "TELEGRAM_CHAT_ID": config.telegram_chat_id}
-    if missing := [name for name, value in required.items() if not value]:
-        raise ConfigError(f"telegram channel needs {', '.join(missing)}")
-    return TelegramNotifier(TelegramClient.for_token(config.telegram_bot_token), config.telegram_chat_id)
+    s = _require("telegram", {"TELEGRAM_BOT_TOKEN": config.telegram_bot_token,
+                              "TELEGRAM_CHAT_ID": config.telegram_chat_id})
+    return TelegramNotifier(TelegramClient.for_token(s["TELEGRAM_BOT_TOKEN"]), s["TELEGRAM_CHAT_ID"])
 
 
 CHANNELS: dict[str, Callable[[Config], Notifier]] = {

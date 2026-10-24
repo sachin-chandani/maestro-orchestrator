@@ -31,9 +31,17 @@ def _channels(notifier: Notifier) -> dict[str, Notifier]:
     return notifier.channels if isinstance(notifier, MultiNotifier) else {"default": notifier}
 
 
+def _occurrence(item: Item) -> tuple[int, datetime]:
+    """The (id, due time) of a stored, scheduled item; anything else here is a programming error."""
+    if item.id is None or item.due_at is None:
+        raise ValueError(f"Only stored reminders with a due time can be delivered, got {item!r}")
+    return item.id, item.due_at
+
+
 def _deliver(store: Store, item: Item, channels: dict[str, Notifier], now: datetime) -> bool:
     """Try every channel that still needs this occurrence. True once none are left to retry."""
-    state = store.deliveries(item.id, item.due_at)
+    item_id, due_at = _occurrence(item)
+    state = store.deliveries(item_id, due_at)
     waiting = False
     for name, channel in channels.items():
         delivery = state.get(name) or Delivery(channel=name)
@@ -61,7 +69,7 @@ def _deliver(store: Store, item: Item, channels: dict[str, Notifier], now: datet
             METRICS.inc("maestro_deliveries_total", channel=name, result="ok")
             delivery.delivered_at = now
             delivery.next_attempt_at = None
-        store.record_delivery(item.id, item.due_at, delivery)
+        store.record_delivery(item_id, due_at, delivery)
     return not waiting
 
 
@@ -73,21 +81,21 @@ def fire_due(store: Store, notifier: Notifier, now: datetime | None = None) -> l
     due = store.due(now)
     METRICS.inc("maestro_scheduler_ticks_total")
     METRICS.set("maestro_scheduler_last_tick_timestamp_seconds", now.timestamp())
-    lag = max((now - item.due_at).total_seconds() for item in due) if due else 0
+    lag = max((now - _occurrence(item)[1]).total_seconds() for item in due) if due else 0
     METRICS.set("maestro_scheduler_lag_seconds", lag)
     for item in due:
+        item_id, due_at = _occurrence(item)
         if not _deliver(store, item, channels, now):
             continue
         METRICS.inc("maestro_reminders_fired_total")
         if item.recurrence:
             # Schedule from now, not the old due time, so a long outage fires once rather than catching up.
             # Work in the item's timezone so the next occurrence keeps its wall-clock time.
-            after = max(now, item.due_at).astimezone(item.due_at.tzinfo)
-            next_due = recurrence.next_occurrence(item.recurrence, after, item.due_at.time(),
-                                                  anchor=item.due_at)
-            store.reschedule(item.id, next_due)
+            after = max(now, due_at).astimezone(due_at.tzinfo)
+            next_due = recurrence.next_occurrence(item.recurrence, after, due_at.time(), anchor=due_at)
+            store.reschedule(item_id, next_due)
         else:
-            store.set_status(item.id, Status.FIRED)
+            store.set_status(item_id, Status.FIRED)
         finished.append(item)
     return finished
 

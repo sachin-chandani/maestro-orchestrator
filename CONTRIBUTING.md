@@ -6,7 +6,7 @@ Thanks for your interest! Issues and pull requests are welcome.
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e '.[dev]'
-pytest && ruff check .
+ruff check . && mypy && pytest --cov
 ```
 
 ## Guidelines

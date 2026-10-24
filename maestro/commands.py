@@ -97,7 +97,7 @@ def act(store: Store, action: str, args: list[str], prefix: str = "") -> str:
     except ValueError as e:
         return str(e)
     store.reschedule(item_id, add_elapsed(datetime.now(store.tz).replace(microsecond=0), delta))
-    return f"😴 Snoozed: {line(store.get(item_id))}"
+    return f"😴 Snoozed: {line(store.get(item_id) or item)}"
 
 
 def run(store: Store, command: Command, channel: str | None = None, prefix: str = "") -> str:

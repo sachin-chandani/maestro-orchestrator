@@ -72,8 +72,9 @@ def extract(text: str, today: date) -> tuple[str | None, list[re.Match]]:
         return f"weeks:2:{WEEKDAYS.index(m[1].lower())}", [m]
     if (m := _EVERY_N_WEEKS_RE.search(text)) and (m[2] or _count(m[1]) >= 1):
         n = 2 if m[2] else _count(m[1])
+        extra: list[re.Match[str]] = []
         if m[3]:
-            weekday, extra = WEEKDAYS.index(m[3].lower()), []
+            weekday = WEEKDAYS.index(m[3].lower())
         else:
             weekday, extra = _weekday_elsewhere(text, m, today)
         return (f"weekly:{weekday}" if n == 1 else f"weeks:{n}:{weekday}"), [m, *extra]

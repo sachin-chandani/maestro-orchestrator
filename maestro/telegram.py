@@ -104,6 +104,8 @@ class TelegramBot:
             {"offset": self.offset, "timeout": timeout, "allowed_updates": ["message", "callback_query"]},
             http_timeout=timeout + 10,  # must outlast the server-side long poll
         )
+        if not isinstance(updates, list):
+            raise TelegramError(f"getUpdates returned {type(updates).__name__}, expected a list")
         if updates:
             self.offset = updates[-1]["update_id"] + 1
         return updates

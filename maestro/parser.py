@@ -8,8 +8,7 @@ dateparser is only used for calendar dates such as "Nov 1" or "2027-03-15".
 import calendar
 import re
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta
-from zoneinfo import ZoneInfo
+from datetime import date, datetime, time, timedelta, tzinfo
 
 from dateparser.search import search_dates
 
@@ -170,14 +169,14 @@ def parse_duration(text: str) -> timedelta:
     return timedelta(**{{"m": "minutes", "h": "hours", "d": "days"}[unit]: int(m[1])})
 
 
-def parse(source: str, now: datetime | None = None, tz: ZoneInfo | None = None) -> Item:
+def parse(source: str, now: datetime | None = None, tz: tzinfo | None = None) -> Item:
     """Parse a capture like "remind me to call mom tomorrow at 5pm" into an Item.
 
     Times are read as wall-clock time in `tz` (default: the configured user timezone) and the
     resulting datetimes are timezone-aware. A naive `now` is taken to be in `tz`.
     """
-    tz = tz or (now.tzinfo if now and now.tzinfo else None) or get_timezone()
-    now = localize(now, tz) if now else datetime.now(tz)
+    zone: tzinfo = tz or (now.tzinfo if now and now.tzinfo else None) or get_timezone()
+    now = localize(now, zone) if now else datetime.now(zone)
     parts = _Parts(text=PREFIX_RE.sub("", source, count=1))
 
     rule, matches = recurrence.extract(parts.text, now.date())
@@ -197,7 +196,7 @@ def parse(source: str, now: datetime | None = None, tz: ZoneInfo | None = None) 
 
     due_at = parts.exact
     if due_at is None and (parts.when_date or parts.when_time):
-        due_at = datetime.combine(parts.when_date or now.date(), parts.when_time or DEFAULT_TIME, tzinfo=tz)
+        due_at = datetime.combine(parts.when_date or now.date(), parts.when_time or DEFAULT_TIME, tzinfo=zone)
         # A bare time that has already passed today means tomorrow.
         if parts.when_date is None and due_at <= now:
             due_at += timedelta(days=1)

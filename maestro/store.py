@@ -8,9 +8,10 @@ Schema changes go through MIGRATIONS; the applied version is tracked in PRAGMA u
 A migration is either a list of SQL statements or a function `(conn, tz) -> None` for data changes.
 """
 
-# Store.list shadows the builtin in the class body; deferred annotations keep `list[Item]` valid on <3.14.
+# Store.list shadows the builtin inside the class body, so annotations there say builtins.list.
 from __future__ import annotations
 
+import builtins
 import sqlite3
 from collections.abc import Callable
 from datetime import datetime
@@ -119,6 +120,9 @@ class Store:
     def _to_db(self, dt: datetime | None) -> str | None:
         return _utc_iso(dt, self.tz)
 
+    def _required_from_db(self, value: str) -> datetime:
+        return datetime.fromisoformat(value).astimezone(self.tz)
+
     def _from_db(self, value: str | None) -> datetime | None:
         return datetime.fromisoformat(value).astimezone(self.tz) if value else None
 
@@ -129,7 +133,7 @@ class Store:
             kind=Kind(row["kind"]),
             status=Status(row["status"]),
             due_at=self._from_db(row["due_at"]),
-            created_at=self._from_db(row["created_at"]),
+            created_at=self._required_from_db(row["created_at"]),
             source_text=row["source_text"],
             recurrence=row["recurrence"],
         )
@@ -153,7 +157,7 @@ class Store:
         row = self.conn.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
         return self._item(row) if row else None
 
-    def list(self, include_done: bool = False) -> list[Item]:
+    def list(self, include_done: bool = False) -> builtins.list[Item]:
         sql = "SELECT * FROM items"
         if not include_done:
             sql += f" WHERE status != '{Status.DONE}'"
@@ -166,14 +170,14 @@ class Store:
         rows = self.conn.execute("SELECT kind, status, COUNT(*) FROM items GROUP BY kind, status")
         return {(kind, status): n for kind, status, n in rows}
 
-    def search(self, query: str) -> list[Item]:
+    def search(self, query: str) -> builtins.list[Item]:
         rows = self.conn.execute(
             "SELECT * FROM items WHERE text LIKE ? ORDER BY created_at DESC",
             (f"%{query}%",),
         )
         return [self._item(r) for r in rows]
 
-    def due(self, now: datetime) -> list[Item]:
+    def due(self, now: datetime) -> builtins.list[Item]:
         rows = self.conn.execute(
             "SELECT * FROM items WHERE status = ? AND due_at IS NOT NULL AND due_at <= ?"
             " ORDER BY due_at",

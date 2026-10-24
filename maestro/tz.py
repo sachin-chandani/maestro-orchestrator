@@ -6,7 +6,7 @@ server running in UTC (e.g. Docker) still fires "5pm" at the user's 5pm.
 """
 
 import os
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, tzinfo
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -32,7 +32,7 @@ def get_timezone(name: str | None = None) -> ZoneInfo:
         raise ValueError(f"Unknown timezone {name!r}; use an IANA name like 'Europe/London'") from e
 
 
-def localize(dt: datetime, tz: ZoneInfo) -> datetime:
+def localize(dt: datetime, tz: tzinfo) -> datetime:
     """Express dt in tz. Naive datetimes are taken to already be wall-clock time in tz."""
     return dt.replace(tzinfo=tz) if dt.tzinfo is None else dt.astimezone(tz)
 
