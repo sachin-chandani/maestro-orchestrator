@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import builtins
 import sqlite3
+import time
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
@@ -20,6 +21,9 @@ from zoneinfo import ZoneInfo
 
 from maestro.models import Delivery, Item, Kind, Status
 from maestro.tz import UTC, get_timezone, localize
+
+# Wait this long for another process's lock instead of failing with "database is locked".
+BUSY_TIMEOUT_SECONDS = 5.0
 
 
 def _utc_iso(dt: datetime | None, tz: ZoneInfo) -> str | None:
@@ -80,14 +84,34 @@ class Store:
         if str(path) != ":memory:":
             Path(path).parent.mkdir(parents=True, exist_ok=True)
         # The API server touches the connection from its event-loop thread, not the creating thread.
-        self.conn = sqlite3.connect(str(path), check_same_thread=False)
+        self.conn = sqlite3.connect(str(path), check_same_thread=False, timeout=BUSY_TIMEOUT_SECONDS)
         self.conn.row_factory = sqlite3.Row
+        if str(path) != ":memory:":
+            # WAL: readers (API, web UI) never block the writer (scheduler) and vice versa.
+            # synchronous=NORMAL is crash-safe with WAL and much faster than FULL.
+            # See docs/adr/0006-sqlite-wal.md for the trade-offs (no network filesystems).
+            self._enable_wal()
+            self.conn.execute("PRAGMA synchronous=NORMAL")
         self.closed = False
         try:
             self._migrate()
         except BaseException:
             self.close()  # the caller never gets the object, so it can't close it
             raise
+
+    def _enable_wal(self) -> None:
+        # Switching a fresh file to WAL needs exclusive access, and SQLite fails that pragma at once
+        # instead of waiting like it does for normal locks. Retry so processes starting together
+        # (serve + add on a new database) don't crash. Once set, WAL persists and this is a no-op.
+        deadline = time.monotonic() + BUSY_TIMEOUT_SECONDS
+        while True:
+            try:
+                self.conn.execute("PRAGMA journal_mode=WAL")
+                return
+            except sqlite3.OperationalError as e:
+                if "locked" not in str(e) or time.monotonic() > deadline:
+                    raise
+                time.sleep(0.02)
 
     def close(self) -> None:
         self.conn.close()
@@ -137,6 +161,10 @@ class Store:
             source_text=row["source_text"],
             recurrence=row["recurrence"],
         )
+
+    @property
+    def journal_mode(self) -> str:
+        return str(self.conn.execute("PRAGMA journal_mode").fetchone()[0])
 
     @property
     def schema_version(self) -> int:

@@ -126,3 +126,27 @@ def test_concurrent_opens_of_fresh_database_migrate_once(tmp_path):
         with ThreadPoolExecutor(8) as pool:
             versions = list(pool.map(lambda p: Store(p).schema_version, [path] * 8))
         assert versions == [len(MIGRATIONS)] * 8
+
+
+def test_file_databases_use_wal_and_readers_are_not_blocked_by_a_writer(tmp_path):
+    path = tmp_path / "m.db"
+    with Store(path) as store:
+        assert store.journal_mode == "wal"
+        store.add(Item(text="Call mom", kind=Kind.REMINDER, created_at=dt(2026, 10, 23)))
+
+        # Another process holds the write lock in the middle of a transaction...
+        writer = sqlite3.connect(path, timeout=0)
+        writer.execute("BEGIN EXCLUSIVE")
+        writer.execute("INSERT INTO items (text, kind, status, created_at)"
+                       " VALUES ('x', 'note', 'pending', '2026-10-23T00:00:00+00:00')")
+        try:
+            # ...and reads still answer immediately from the last committed snapshot.
+            assert [i.text for i in store.list()] == ["Call mom"]
+        finally:
+            writer.rollback()
+            writer.close()
+
+
+def test_in_memory_databases_are_left_alone():
+    with Store() as store:
+        assert store.journal_mode == "memory"

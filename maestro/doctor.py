@@ -48,13 +48,14 @@ def _database(config: Config) -> Check:
         return Check(FAIL, "database", f"{path}: {e}")
     try:
         with store:
-            version, total = store.schema_version, sum(store.counts().values())
+            version, total, journal = store.schema_version, sum(store.counts().values()), store.journal_mode
     except sqlite3.Error as e:  # e.g. "database is locked" by another process
         return Check(FAIL, "database", f"{path}: {e}")
     if version != len(MIGRATIONS):
         return Check(FAIL, "database", f"schema {version}, expected {len(MIGRATIONS)}")
     where = "in memory" if path == ":memory:" else str(Path(path).expanduser())
-    return Check(OK, "database", f"{where}, schema {version}, {total} items")
+    items = f"{total} item{'' if total == 1 else 's'}"
+    return Check(OK, "database", f"{where}, schema {version}, {journal} journal, {items}")
 
 
 def _api_token(config: Config) -> Check:

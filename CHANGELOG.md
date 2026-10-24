@@ -17,6 +17,7 @@ All notable changes to this project are documented here. The format follows
 - Engineering standards (`ENGINEERING.md`), architecture decision records (`docs/adr/`) and a PR template; CI now enforces a coverage floor (93%) and a dependency vulnerability audit (#58)
 - Telegram and SMS share one command implementation (`maestro/commands.py`)
 - The package type-checks cleanly with mypy, enforced in CI (#57)
+- The database runs in WAL mode with `synchronous=NORMAL` and a 5 s busy timeout: the web UI and API never block the scheduler (#53). Keep `MAESTRO_DB` on a local disk or Docker volume, not a network share
 - Telegram `/done` without a number now acts on the latest reminder instead of printing usage; `/snooze 3` defaults to 10 minutes
 - Reminder texts end with "(reply done or snooze 1h)"
 
