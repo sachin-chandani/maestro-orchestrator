@@ -9,7 +9,7 @@ These are the promises a self-hosted instance should keep. Each one has a metric
 |---|---|---|
 | Reminders fire on time | Delivered within 60 s of the due time (default tick is 30 s) | `maestro_scheduler_lag_seconds`; alert when `time() - maestro_scheduler_last_tick_timestamp_seconds > 120` |
 | Delivery guarantee | At least once per channel; never silently dropped. A crash between sending and recording can repeat one message. | Delivery tests in `tests/test_delivery.py`; give-ups are logged and counted (`result="gave_up"`) |
-| No double delivery | One scheduler fires at a time, even with several processes on one database | #52 |
+| No double delivery | One scheduler fires at a time, even with several processes on one database | `maestro_scheduler_leader`; `tests/test_lease.py`; ADR 0007 |
 | Durable data | Nothing acknowledged to the user is lost across restarts or upgrades | Migrations tested from every previous schema; WAL (#53); backups (#59) |
 | Loops keep running | One corrupt item, failed tick or malformed chat update is logged, counted and skipped; it never stops the scheduler or the bot | `maestro_scheduler_errors_total`; `tests/test_resilience.py` |
 | Correct times | Wall-clock times survive DST and server timezones | `tests/test_timezones.py`, property tests (#56) |

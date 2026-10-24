@@ -15,7 +15,8 @@ import builtins
 import logging
 import sqlite3
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -24,6 +25,11 @@ from maestro.models import Delivery, Item, Kind, Status
 from maestro.tz import UTC, get_timezone, localize
 
 log = logging.getLogger(__name__)
+
+
+class SchemaTooNewError(RuntimeError):
+    """The database was migrated by a newer Maestro than this one."""
+
 
 # Wait this long for another process's lock instead of failing with "database is locked".
 BUSY_TIMEOUT_SECONDS = 5.0
@@ -78,6 +84,14 @@ MIGRATIONS: list[list[str] | Callable[[sqlite3.Connection, ZoneInfo], None]] = [
     ],
     # 4: store UTC instead of naive local time
     _naive_local_to_utc,
+    # 5: one row naming the scheduler allowed to fire reminders, so several processes never double-send
+    [
+        """CREATE TABLE IF NOT EXISTS scheduler_lease (
+            id         INTEGER PRIMARY KEY CHECK (id = 1),
+            owner      TEXT NOT NULL,
+            expires_at TEXT NOT NULL
+        )""",
+    ],
 ]
 
 
@@ -140,12 +154,38 @@ class Store:
     def __exit__(self, *exc: object) -> None:
         self.close()
 
+    @contextmanager
+    def _transaction(self, immediate: bool = False) -> Iterator[None]:
+        """Run writes atomically: commit on success, roll back on error.
+
+        The connection is shared (ADR 0003), so a transaction left open by an earlier failure would
+        otherwise break every later write; it is rolled back first. `immediate` takes the write lock
+        up front, for read-then-write sequences that must not interleave with other processes.
+        """
+        if self.conn.in_transaction:
+            log.warning("Rolling back a transaction left open by an earlier failure")
+            self.conn.rollback()
+        if immediate:
+            self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            yield
+        except BaseException:
+            self.conn.rollback()
+            raise
+        self.conn.commit()
+
     def _migrate(self) -> None:
         # BEGIN IMMEDIATE takes the write lock before reading the version, so two processes opening
         # a fresh database at once (e.g. `maestro serve` and `maestro add`) can't both migrate.
-        self.conn.execute("BEGIN IMMEDIATE")
-        try:
+        with self._transaction(immediate=True):
             version = self.conn.execute("PRAGMA user_version").fetchone()[0]
+            if version > len(MIGRATIONS):
+                # An older Maestro must not run against a newer schema: it would ignore features such as
+                # the scheduler lease and, for example, deliver reminders twice.
+                raise SchemaTooNewError(
+                    f"Database schema {version} is newer than this Maestro supports ({len(MIGRATIONS)}); "
+                    "upgrade Maestro before using this database"
+                )
             for number, migration in enumerate(MIGRATIONS[version:], start=version + 1):
                 if callable(migration):
                     migration(self.conn, self.tz)
@@ -153,10 +193,6 @@ class Store:
                     for sql in migration:
                         self.conn.execute(sql)
                 self.conn.execute(f"PRAGMA user_version = {number}")
-            self.conn.commit()
-        except BaseException:
-            self.conn.rollback()
-            raise
 
     def _to_db(self, dt: datetime | None) -> str | None:
         return _utc_iso(dt, self.tz)
@@ -188,13 +224,13 @@ class Store:
         return self.conn.execute("PRAGMA user_version").fetchone()[0]
 
     def add(self, item: Item) -> Item:
-        cur = self.conn.execute(
-            "INSERT INTO items (text, kind, status, due_at, created_at, source_text, recurrence)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (item.text, item.kind, item.status, self._to_db(item.due_at),
-             self._to_db(item.created_at), item.source_text, item.recurrence),
-        )
-        self.conn.commit()
+        with self._transaction():
+            cur = self.conn.execute(
+                "INSERT INTO items (text, kind, status, due_at, created_at, source_text, recurrence)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (item.text, item.kind, item.status, self._to_db(item.due_at),
+                 self._to_db(item.created_at), item.source_text, item.recurrence),
+            )
         item.id = cur.lastrowid
         return item
 
@@ -231,23 +267,23 @@ class Store:
         return [self._item(r) for r in rows]
 
     def set_status(self, item_id: int, status: Status) -> bool:
-        cur = self.conn.execute("UPDATE items SET status = ? WHERE id = ?", (status, item_id))
-        self.conn.commit()
+        with self._transaction():
+            cur = self.conn.execute("UPDATE items SET status = ? WHERE id = ?", (status, item_id))
         return cur.rowcount > 0
 
     def reschedule(self, item_id: int, due_at: datetime) -> bool:
         """Move an item to a new due time and make it pending again (snooze, next recurrence)."""
-        cur = self.conn.execute(
-            "UPDATE items SET due_at = ?, status = ?, kind = ? WHERE id = ?",
-            (self._to_db(due_at), Status.PENDING, Kind.REMINDER, item_id),
-        )
-        self.conn.commit()
+        with self._transaction():
+            cur = self.conn.execute(
+                "UPDATE items SET due_at = ?, status = ?, kind = ? WHERE id = ?",
+                (self._to_db(due_at), Status.PENDING, Kind.REMINDER, item_id),
+            )
         return cur.rowcount > 0
 
     def delete(self, item_id: int) -> bool:
-        self.conn.execute("DELETE FROM deliveries WHERE item_id = ?", (item_id,))
-        cur = self.conn.execute("DELETE FROM items WHERE id = ?", (item_id,))
-        self.conn.commit()
+        with self._transaction():
+            self.conn.execute("DELETE FROM deliveries WHERE item_id = ?", (item_id,))
+            cur = self.conn.execute("DELETE FROM items WHERE id = ?", (item_id,))
         return cur.rowcount > 0
 
     def last_delivered(self, channel: str) -> int | None:
@@ -258,6 +294,35 @@ class Store:
             (channel,),
         ).fetchone()
         return row[0] if row else None
+
+    def lease_holder(self, now: datetime) -> str | None:
+        """Who holds an unexpired scheduler lease, without taking the write lock."""
+        row = self.conn.execute(
+            "SELECT owner FROM scheduler_lease WHERE id = 1 AND expires_at > ?", (self._to_db(now),)
+        ).fetchone()
+        return str(row["owner"]) if row else None
+
+    def acquire_lease(self, owner: str, now: datetime, expires_at: datetime) -> tuple[bool, str]:
+        """Take or renew the scheduler lease if it is free, expired or already ours.
+
+        Returns (acquired, current holder). The check-and-set runs under BEGIN IMMEDIATE, so two
+        processes can't both see the lease as free. Standbys check `lease_holder` first, cheaply.
+        """
+        with self._transaction(immediate=True):
+            row = self.conn.execute("SELECT owner, expires_at FROM scheduler_lease WHERE id = 1").fetchone()
+            if row is not None and row["owner"] != owner and row["expires_at"] > self._to_db(now):
+                return False, str(row["owner"])
+            self.conn.execute(
+                "INSERT INTO scheduler_lease (id, owner, expires_at) VALUES (1, ?, ?)"
+                " ON CONFLICT (id) DO UPDATE SET owner = excluded.owner, expires_at = excluded.expires_at",
+                (owner, self._to_db(expires_at)),
+            )
+        return True, owner
+
+    def release_lease(self, owner: str) -> None:
+        """Give up the lease (on shutdown) so a standby scheduler can take over at once."""
+        with self._transaction():
+            self.conn.execute("DELETE FROM scheduler_lease WHERE id = 1 AND owner = ?", (owner,))
 
     def deliveries(self, item_id: int, occurrence: datetime) -> dict[str, Delivery]:
         rows = self.conn.execute(
@@ -276,6 +341,10 @@ class Store:
         }
 
     def record_delivery(self, item_id: int, occurrence: datetime, delivery: Delivery) -> None:
+        with self._transaction():
+            self._upsert_delivery(item_id, occurrence, delivery)
+
+    def _upsert_delivery(self, item_id: int, occurrence: datetime, delivery: Delivery) -> None:
         self.conn.execute(
             "INSERT INTO deliveries (item_id, occurrence, channel, attempts, delivered_at, next_attempt_at,"
             " last_error) VALUES (?, ?, ?, ?, ?, ?, ?)"
@@ -285,4 +354,3 @@ class Store:
             (item_id, self._to_db(occurrence), delivery.channel, delivery.attempts,
              self._to_db(delivery.delivered_at), self._to_db(delivery.next_attempt_at), delivery.last_error),
         )
-        self.conn.commit()

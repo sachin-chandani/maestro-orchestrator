@@ -24,7 +24,7 @@ from maestro.models import Item, Status
 from maestro.notifier import Notifier
 from maestro.observability import METRICS, Labels
 from maestro.parser import parse, parse_duration
-from maestro.scheduler import tick
+from maestro.scheduler import Lease, tick
 from maestro.sms import WEBHOOK_PATH, SmsHandler
 from maestro.store import Store
 from maestro.tz import add_elapsed
@@ -39,9 +39,13 @@ WEB_UI = files("maestro").joinpath("web/index.html").read_text(encoding="utf-8")
 
 async def _scheduler_loop(store: Store, notifier: Notifier, interval: float) -> None:
     # Runs on the event loop with the request handlers, keeping SQLite access single-threaded.
-    while True:
-        tick(store, notifier)
-        await asyncio.sleep(interval)
+    lease = Lease.for_interval(interval)
+    try:
+        while True:
+            tick(store, notifier, lease)
+            await asyncio.sleep(interval)
+    finally:  # cancelled at shutdown: hand over to any standby scheduler right away
+        lease.release(store)
 
 
 async def _bot_loop(bot: "TelegramBot") -> None:

@@ -3,6 +3,7 @@
 import argparse
 import logging
 import os
+import signal
 import sys
 import time
 from collections.abc import Callable
@@ -16,7 +17,7 @@ from maestro.models import Item, Kind, Status
 from maestro.notifier import ConfigError, Notifier, build_notifier, default_channels
 from maestro.observability import configure_logging
 from maestro.parser import parse, parse_duration
-from maestro.scheduler import fire_due, run_forever
+from maestro.scheduler import Lease, fire_due, run_forever
 from maestro.store import Store
 from maestro.tz import add_elapsed, get_timezone
 
@@ -131,16 +132,28 @@ def _dispatch(args: argparse.Namespace, config: Config, store: Store, tz: ZoneIn
         if args.command == "serve":
             return _serve(store, config, notifier, args, bot)
         if args.once:
-            fire_due(store, notifier)
+            # Respect a running server's lease, and hand it straight back afterwards.
+            lease = Lease()
+            try:
+                fire_due(store, notifier, lease=lease)
+            finally:
+                lease.release(store)
         else:
             extra = " and listening on Telegram" if bot else ""
             print(f"Watching for due reminders every {args.interval:g}s via {', '.join(config.channels)}"
                   f"{extra}. Ctrl+C to stop.")
+            # docker stop / systemctl stop send SIGTERM: exit through the normal path so the scheduler
+            # lease is released and a standby takes over at once instead of after the TTL.
+            signal.signal(signal.SIGTERM, _exit_on_sigterm)
             try:
                 run_forever(store, notifier, args.interval, wait=_bot_wait(bot) if bot else time.sleep)
             except KeyboardInterrupt:
                 pass
     return 0
+
+
+def _exit_on_sigterm(signum: int, frame: object) -> None:
+    raise SystemExit(0)
 
 
 def _build_bot(config: Config, store: Store) -> "TelegramBot | None":
