@@ -26,8 +26,13 @@ PREFIX_RE = re.compile(
     r"|don'?t forget(?:\s+(?:to|that))?)\s+",
     re.I,
 )
-TIME_12H_RE = re.compile(r"\b(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b", re.I)
-TIME_24H_RE = re.compile(r"\bat\s+([01]?\d|2[0-3]):([0-5]\d)\b", re.I)
+# "at", "around", "after"... are part of the time phrase, so they leave the text with it.
+_TIME_LEAD = r"(?:(?:at|around|about|after|before|by|from)\s+)"
+TIME_12H_RE = re.compile(rf"\b{_TIME_LEAD}?(\d{{1,2}})(?::(\d{{2}}))?\s*(am|pm)\b", re.I)
+TIME_24H_RE = re.compile(rf"\b{_TIME_LEAD}([01]?\d|2[0-3]):([0-5]\d)\b", re.I)
+# "at 6" with no am/pm: read the way people mean it in conversation. 7-11 is morning, 12 is noon,
+# 1-6 is afternoon/evening. Needs "at" so numbers elsewhere ("2 cups", "level 3") stay text.
+TIME_BARE_RE = re.compile(r"\bat\s+(1[0-2]|[1-9])\b(?![:.]?\d|\s*(?:%|st|nd|rd|th)\b)", re.I)
 NOON_RE = re.compile(r"\b(?:at\s+)?(noon|midnight)\b", re.I)
 RELATIVE_RE = re.compile(
     r"\bin\s+(\d+|an?|one)\s+(minute|min|hour|hr|day|week)s?\b", re.I
@@ -35,7 +40,18 @@ RELATIVE_RE = re.compile(
 DAY_WORD_RE = re.compile(r"\b(today|tonight|tomorrow)\b", re.I)
 WEEKDAY_RE = re.compile(r"\b(?:(?:next|this|on)\s+)?(" + "|".join(WEEKDAYS) + r")\b", re.I)
 PART_OF_DAY = {"morning": time(9, 0), "afternoon": time(14, 0), "evening": time(18, 0), "night": time(21, 0)}
-PART_OF_DAY_RE = re.compile(r"\b(?:this\s+|in\s+the\s+|at\s+)?(morning|afternoon|evening|night)\b", re.I)
+_PARTS = "morning|afternoon|evening|night"
+_DAY_WORDS = "|".join(["today", "tomorrow", "tonight", "weekend", *WEEKDAYS])
+# Only as a time when the phrase says so, so "movie night saturday" keeps its name:
+#   "this evening", "in the morning", "at night"  -> the whole phrase is removed
+#   "tomorrow night", "friday morning"           -> only the part of day; the day word stays for later
+# After "every" (recurrences) the bare word is enough.
+PART_OF_DAY_RE = re.compile(
+    rf"\b(?:(?:this|in\s+the|at)\s+(?P<qualified>{_PARTS})"
+    rf"|(?:{_DAY_WORDS})\s+(?P<after_day>{_PARTS}))\b",
+    re.I,
+)
+BARE_PART_OF_DAY_RE = re.compile(rf"\b(?P<bare>{_PARTS})\b", re.I)
 END_OF_DAY_RE = re.compile(r"\b(?:by\s+)?(?:the\s+)?(?:end\s+of\s+(?:the\s+)?day|eod)\b", re.I)
 END_OF_WEEK_RE = re.compile(r"\b(?:by\s+)?(?:the\s+)?(?:end\s+of\s+(?:the\s+)?week|eow)\b", re.I)
 END_OF_DAY = time(17, 0)
@@ -63,7 +79,7 @@ def _cut(parts: _Parts, match: re.Match) -> None:
     parts.text = parts.text[: match.start()] + " " + parts.text[match.end():]
 
 
-def _extract_time(parts: _Parts) -> None:
+def _extract_time(parts: _Parts, bare_part_of_day: bool = False) -> None:
     if m := TIME_12H_RE.search(parts.text):
         hour, minute = int(m[1]) % 12, int(m[2] or 0)
         if m[3].lower() == "pm":
@@ -77,10 +93,23 @@ def _extract_time(parts: _Parts) -> None:
     elif m := NOON_RE.search(parts.text):
         parts.when_time = time(12, 0) if m[1].lower() == "noon" else time(0, 0)
         _cut(parts, m)
-    # "tomorrow morning" sets a time; "tomorrow morning at 8am" keeps 8am but still drops the word.
-    if m := PART_OF_DAY_RE.search(parts.text):
-        parts.when_time = parts.when_time or PART_OF_DAY[m[1].lower()]
+    elif m := TIME_BARE_RE.search(parts.text):
+        hour = int(m[1])
+        parts.when_time = time(hour if 7 <= hour <= 12 else hour + 12, 0)
         _cut(parts, m)
+    _extract_part_of_day(parts, bare=bare_part_of_day)
+
+
+def _extract_part_of_day(parts: _Parts, bare: bool) -> None:
+    """"tomorrow morning" sets a time; "tomorrow morning at 8am" keeps 8am but still drops the word.
+    `bare` allows a lone word, for recurrences ("every night")."""
+    m = (BARE_PART_OF_DAY_RE if bare else PART_OF_DAY_RE).search(parts.text)
+    if not m:
+        return
+    name = next(group for group, value in m.groupdict().items() if value)
+    parts.when_time = parts.when_time or PART_OF_DAY[m[name].lower()]
+    start = m.start(name) if name == "after_day" else m.start()
+    parts.text = parts.text[:start] + " " + parts.text[m.end(name):]
 
 
 def _extract_deadline(parts: _Parts, now: datetime) -> None:
@@ -138,20 +167,33 @@ def _extract_day(parts: _Parts, now: datetime) -> None:
         parts.when_date = date(year, month, min(day, calendar.monthrange(year, month)[1]))
         _cut(parts, m)
     else:
-        found = search_dates(
-            parts.text,
-            languages=["en"],
-            settings={
-                "PREFER_DATES_FROM": "future",
-                "RELATIVE_BASE": now.replace(tzinfo=None),
-                "REQUIRE_PARTS": ["day", "month"],
-            },
-        )
-        if found:
-            phrase, dt = found[0]
-            parts.when_date = dt.date()
-            start = parts.text.index(phrase)
-            parts.text = parts.text[:start] + " " + parts.text[start + len(phrase):]
+        _extract_calendar_date(parts, now)
+
+
+def _mask_non_year_numbers(text: str) -> str:
+    """Hide long numbers that can't be a year ("form 1040", "0100") from dateparser, which would
+    otherwise read them as one. Same length, so positions still line up with the original."""
+    return re.sub(r"\b\d{3,}\b", lambda m: m[0] if 1900 <= int(m[0]) <= 2099 else "#" * len(m[0]), text)
+
+
+def _extract_calendar_date(parts: _Parts, now: datetime) -> None:
+    masked = _mask_non_year_numbers(parts.text)
+    found = search_dates(
+        masked,
+        languages=["en"],
+        settings={
+            "PREFER_DATES_FROM": "future",
+            "RELATIVE_BASE": now.replace(tzinfo=None),
+            "REQUIRE_PARTS": ["day", "month"],
+        },
+    )
+    for phrase, dt in found or []:
+        if not now.year - 1 <= dt.year <= now.year + 50:
+            continue  # a number mistaken for a year
+        start = masked.index(phrase)
+        parts.when_date = dt.date()
+        parts.text = parts.text[:start] + " " + parts.text[start + len(phrase):]
+        return
 
 
 def _clean(text: str) -> str:
@@ -180,6 +222,7 @@ def parse(source: str, now: datetime | None = None, tz: tzinfo | None = None) ->
     """
     zone: tzinfo = tz or (now.tzinfo if now and now.tzinfo else None) or get_timezone()
     now = localize(now, zone) if now else datetime.now(zone)
+    had_prefix = PREFIX_RE.match(source) is not None
     parts = _Parts(text=PREFIX_RE.sub("", source, count=1))
 
     rule, matches = recurrence.extract(parts.text, now.date())
@@ -187,7 +230,7 @@ def parse(source: str, now: datetime | None = None, tz: tzinfo | None = None) ->
         # Cut from the end so earlier match positions stay valid.
         for m in sorted(matches, key=lambda m: m.start(), reverse=True):
             _cut(parts, m)
-        _extract_time(parts)
+        _extract_time(parts, bare_part_of_day=True)
         at = parts.when_time or DEFAULT_TIME
         parts.exact = recurrence.next_occurrence(rule, now, at)
     else:
@@ -205,7 +248,11 @@ def parse(source: str, now: datetime | None = None, tz: tzinfo | None = None) ->
         if due_at <= now and (parts.when_date is None or parts.when_date == now.date()):
             due_at += timedelta(days=1)
 
-    text = _clean(parts.text) or source.strip()
+    text = _clean(parts.text)
+    if had_prefix:
+        # "remind me in 15 minutes to check the oven": the connector is left once the time is gone.
+        text = re.sub(r"^(?:to|that|about)\s+", "", text, flags=re.I)
+    text = text or source.strip()
     return Item(
         text=text[0].upper() + text[1:],
         kind=Kind.REMINDER if due_at else Kind.NOTE,

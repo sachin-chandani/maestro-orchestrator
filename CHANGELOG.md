@@ -13,6 +13,7 @@ All notable changes to this project are documented here. The format follows
 - Every-N-days/weeks reminders step from their previous occurrence, so they keep their rhythm after downtime
 - Inbound SMS: text your Twilio number to capture, or `list` / `done 3` / `snooze 3 1h` / `rm 3`; verified with Twilio's signature and limited to your own number (#6)
 - `MAESTRO_PUBLIC_URL` for verifying webhooks behind a reverse proxy
+- Parser understands bare hours (`at 6` → 18:00, `at 9` → 09:00), `around`/`after`/`before 5pm`, and `monthly on the 5th` (#55)
 - Rate limits per client (#54): wrong API tokens (10/min, then the client is locked out of the API, so the token can't be brute-forced, even with parallel requests) and webhook requests with invalid signatures (60/min). Genuine Twilio callbacks and requests without a token are never limited; the web UI stops polling after a 401/429. `MAESTRO_TRUST_PROXY_HEADERS` for reverse proxies; metric `maestro_rate_limited_total`
 - Reply-to-act: `done`, `snooze 1h` or just `snooze` (10 minutes) without a number act on the reminder last delivered on that channel, by SMS or Telegram; `rm` always needs a number (#8)
 
@@ -25,6 +26,7 @@ All notable changes to this project are documented here. The format follows
 - Reminder texts end with "(reply done or snooze 1h)"
 
 ### Fixed
+- Parser (found by the new 200-phrase corpus, #55): "movie night saturday" no longer loses "night" (parts of the day now need "this", "in the", "at" or a day word); "remind me in 15 minutes to check the oven" no longer leaves "To"; "form 1040 by april 15" is no longer dated the year 1040
 - New one-off reminders are never overdue: "this weekend" said on a Saturday or Sunday from 10:00, and "tonight", "today" or "today at 9am" after that time, used to produce a time in the past that fired at once. A time today that has passed now means tomorrow; "this weekend" moves to the next unpassed weekend slot (found by property tests, #56)
 - Running more than one scheduler on a database (`serve` + `run`, cron `run --once`, two replicas) no longer delivers reminders twice: a lease in the database lets one fire while the others stand by and take over if it stops (#52). New metric `maestro_scheduler_leader`
 - Database connections are now closed (CLI, `maestro doctor`); `Store` is a context manager
