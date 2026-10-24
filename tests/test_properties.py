@@ -1,10 +1,11 @@
 """#56: property-based tests. Hypothesis generates inputs (including DST edge cases and arbitrary text)
 and checks invariants that hand-picked examples can miss."""
 
+import calendar
 from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
-from hypothesis import HealthCheck, assume, given, settings
+from hypothesis import assume, given, settings
 from hypothesis import strategies as st
 
 from maestro import recurrence
@@ -32,6 +33,10 @@ rules = st.one_of(
 )
 
 
+def utc(dt: datetime) -> datetime:
+    return dt.astimezone(UTC)
+
+
 def aware(naive: datetime, tz: ZoneInfo) -> datetime:
     return naive.replace(tzinfo=tz)
 
@@ -45,7 +50,9 @@ def exists(dt: datetime) -> bool:
 @settings(max_examples=400)
 def test_next_occurrence_is_strictly_later(rule, after, at, tz):
     after = aware(after, tz)
-    assert recurrence.next_occurrence(rule, after, at) > after
+    # Compare instants, not wall clocks: same-zone comparison ignores fold, so during a fall-back hour
+    # 01:00 (second pass) would wrongly look earlier than 01:59 (first pass).
+    assert utc(recurrence.next_occurrence(rule, after, at)) > utc(after)
 
 
 @given(rules.filter(lambda r: not r.startswith("interval")), instants, times, zones)
@@ -66,8 +73,7 @@ def test_calendar_rules_land_on_matching_days(rule, after, at, tz):
     elif kind == "weekly":
         assert nxt.weekday() == int(arg)
     elif kind == "monthly":
-        last_day = (date(nxt.year + nxt.month // 12, nxt.month % 12 + 1, 1) - timedelta(days=1)).day
-        assert nxt.day == min(int(arg), last_day)
+        assert nxt.day == min(int(arg), calendar.monthrange(nxt.year, nxt.month)[1])
 
 
 @given(st.integers(2, 30), instants, st.integers(0, 400), times, zones)
@@ -76,9 +82,9 @@ def test_every_n_days_stays_on_its_grid_after_any_outage(n, anchor, outage_days,
     anchor = aware(datetime.combine(anchor.date(), at), tz)
     after = anchor + timedelta(days=outage_days, hours=1)
     nxt = recurrence.next_occurrence(f"days:{n}", after, at, anchor=anchor)
-    assert nxt > after
+    assert utc(nxt) > utc(after)
     assert (nxt.date() - anchor.date()).days % n == 0
-    assert nxt - after <= timedelta(days=n + 1)  # skips ahead, never further than one period
+    assert utc(nxt) - utc(after) <= timedelta(days=n + 1)  # skips ahead, never more than one period
 
 
 @given(st.integers(2, 8), st.integers(0, 6), instants, st.integers(0, 120), times, zones)
@@ -87,7 +93,7 @@ def test_every_n_weeks_keeps_its_weekday_and_parity(n, weekday, anchor, outage_w
     first = recurrence.next_occurrence(f"weekly:{weekday}", aware(anchor, tz), at)
     after = first + timedelta(weeks=outage_weeks, days=1)
     nxt = recurrence.next_occurrence(f"weeks:{n}:{weekday}", after, at, anchor=first)
-    assert nxt > after and nxt.weekday() == weekday
+    assert utc(nxt) > utc(after) and nxt.weekday() == weekday
     assert (nxt.date() - first.date()).days % (7 * n) == 0
 
 
@@ -102,7 +108,7 @@ def test_elapsed_time_is_exact_across_dst(start, minutes, tz):
 
 
 @given(instants, zones, zones)
-@settings(max_examples=200, suppress_health_check=[HealthCheck.function_scoped_fixture])
+@settings(max_examples=200)
 def test_storage_round_trips_any_instant_in_any_zone(when, write_zone, read_zone):
     due = aware(when.replace(microsecond=0), write_zone)
     assume(exists(due))
@@ -128,14 +134,16 @@ def test_parse_never_crashes_and_keeps_the_text(source, now, tz):
 
 @given(st.sampled_from(["remind me to call mom", "pay rent", "water the plants", "dentist"]),
        st.sampled_from(["tomorrow at 5pm", "in 2 hours", "next friday at 10am", "on the 5th",
-                        "every day at 8am", "every other friday at 9am", "this weekend", "at noon"]),
+                        "every day at 8am", "every other friday at 9am", "this weekend", "at noon",
+                        "today at 9am", "tonight", "today", "by end of day", "eow", "this morning",
+                        "tomorrow morning", "this weekend at 9am"]),
        instants, zones)
 @settings(max_examples=300)
 def test_parsed_reminders_are_in_the_future(task, when, now, tz):
     now = aware(now, tz)
     assume(exists(now))
     item = parse(f"{task} {when}", now=now, tz=tz)
-    assert item.due_at is not None and item.due_at > now
+    assert item.due_at is not None and utc(item.due_at) > utc(now)
 
 
 def test_wall_clock_check_flags_nonexistent_times():
