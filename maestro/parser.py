@@ -190,9 +190,13 @@ def _extract_calendar_date(parts: _Parts, now: datetime) -> None:
     for phrase, dt in found or []:
         if not now.year - 1 <= dt.year <= now.year + 50:
             continue  # a number mistaken for a year
-        start = masked.index(phrase)
+        # dateparser can return the phrase with its whitespace normalised (tabs, form feeds), so
+        # locate it with flexible whitespace rather than an exact substring search.
+        pattern = r"\s+".join(re.escape(word) for word in phrase.split())
+        if not pattern or not (m := re.search(pattern, masked)):
+            continue
         parts.when_date = dt.date()
-        parts.text = parts.text[:start] + " " + parts.text[start + len(phrase):]
+        parts.text = parts.text[:m.start()] + " " + parts.text[m.end():]
         return
 
 

@@ -26,7 +26,7 @@ All notable changes to this project are documented here. The format follows
 - Reminder texts end with "(reply done or snooze 1h)"
 
 ### Fixed
-- Parser (found by the new 200-phrase corpus, #55): "movie night saturday" no longer loses "night" (parts of the day now need "this", "in the", "at" or a day word); "remind me in 15 minutes to check the oven" no longer leaves "To"; "form 1040 by april 15" is no longer dated the year 1040
+- Parser (found by the new 200-phrase corpus, #55): "movie night saturday" no longer loses "night" (parts of the day now need "this", "in the", "at" or a day word); "remind me in 15 minutes to check the oven" no longer leaves "To"; "form 1040 by april 15" is no longer dated the year 1040; text with unusual whitespace (tabs, form feeds) around a date no longer crashes the parser (found by property tests)
 - New one-off reminders are never overdue: "this weekend" said on a Saturday or Sunday from 10:00, and "tonight", "today" or "today at 9am" after that time, used to produce a time in the past that fired at once. A time today that has passed now means tomorrow; "this weekend" moves to the next unpassed weekend slot (found by property tests, #56)
 - Running more than one scheduler on a database (`serve` + `run`, cron `run --once`, two replicas) no longer delivers reminders twice: a lease in the database lets one fire while the others stand by and take over if it stops (#52). New metric `maestro_scheduler_leader`
 - Database connections are now closed (CLI, `maestro doctor`); `Store` is a context manager
