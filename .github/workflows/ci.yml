@@ -19,6 +19,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: pip install -e '.[dev]'
       - run: ruff check .
+      - run: mypy  # settings and file list in pyproject.toml
       # Coverage gate: fail_under in pyproject.toml.
       - run: pytest -q --cov --cov-report=term
 

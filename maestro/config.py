@@ -4,6 +4,7 @@ Nothing here is required for local CLI use; channels that need keys stay off unt
 """
 
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -49,7 +50,7 @@ class Config:
     telegram_chat_id: str | None = None
 
     @classmethod
-    def from_env(cls, env: dict[str, str] | None = None) -> "Config":
+    def from_env(cls, env: Mapping[str, str] | None = None) -> "Config":
         env = os.environ if env is None else env
         return cls(
             db_path=env.get("MAESTRO_DB", str(DEFAULT_DB)),

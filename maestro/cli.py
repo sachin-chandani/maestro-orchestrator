@@ -5,18 +5,23 @@ import logging
 import os
 import sys
 import time
+from collections.abc import Callable
 from datetime import datetime
+from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
 from maestro import recurrence
 from maestro.config import Config, load_dotenv
 from maestro.models import Item, Kind, Status
-from maestro.notifier import ConfigError, build_notifier, default_channels
+from maestro.notifier import ConfigError, Notifier, build_notifier, default_channels
 from maestro.observability import configure_logging
 from maestro.parser import parse, parse_duration
 from maestro.scheduler import fire_due, run_forever
 from maestro.store import Store
 from maestro.tz import add_elapsed, get_timezone
+
+if TYPE_CHECKING:
+    from maestro.telegram import TelegramBot
 
 
 def _format(item: Item) -> str:
@@ -111,7 +116,10 @@ def _dispatch(args: argparse.Namespace, config: Config, store: Store, tz: ZoneIn
                 print(e, file=sys.stderr)
                 return 2
             store.reschedule(args.id, add_elapsed(datetime.now(tz).replace(microsecond=0), delta))
-            print(f"Snoozed: {_format(store.get(args.id)).strip()}")
+            if (snoozed := store.get(args.id)) is None:
+                print(f"No item #{args.id}", file=sys.stderr)
+                return 1
+            print(f"Snoozed: {_format(snoozed).strip()}")
     elif args.command in ("run", "serve"):
         try:
             configure_logging(config.log_format, config.log_level)
@@ -135,7 +143,7 @@ def _dispatch(args: argparse.Namespace, config: Config, store: Store, tz: ZoneIn
     return 0
 
 
-def _build_bot(config: Config, store: Store):
+def _build_bot(config: Config, store: Store) -> "TelegramBot | None":
     if not config.telegram_bot_token:
         return None
     from maestro.telegram import TelegramBot, TelegramClient
@@ -145,7 +153,7 @@ def _build_bot(config: Config, store: Store):
     return TelegramBot(TelegramClient.for_token(config.telegram_bot_token), store, config.telegram_chat_id)
 
 
-def _bot_wait(bot):
+def _bot_wait(bot: "TelegramBot") -> Callable[[float], None]:
     """Use the wait between scheduler ticks to long-poll Telegram, so messages are answered right away."""
 
     def wait(seconds: float) -> None:
@@ -158,7 +166,8 @@ def _bot_wait(bot):
     return wait
 
 
-def _serve(store: Store, config: Config, notifier, args, bot=None) -> int:
+def _serve(store: Store, config: Config, notifier: Notifier, args: argparse.Namespace,
+           bot: "TelegramBot | None" = None) -> int:
     try:
         import uvicorn
 

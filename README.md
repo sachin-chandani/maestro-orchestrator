@@ -139,7 +139,7 @@ print(item.due_at, item.recurrence)   # 2026-10-24 10:00:00 weekly:5
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e '.[dev]'
-pytest && ruff check .
+ruff check . && mypy && pytest --cov
 ```
 See [CONTRIBUTING.md](CONTRIBUTING.md), [ENGINEERING.md](ENGINEERING.md) for the definition of done and service objectives, and [docs/adr/](docs/adr/) for design decisions.
 

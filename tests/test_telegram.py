@@ -193,3 +193,11 @@ def test_channel_config():
         build_notifier(Config(channels=["telegram"], telegram_bot_token="123:abc"))
     built = build_notifier(Config(channels=["telegram"], telegram_bot_token="123:abc", telegram_chat_id="42"))
     assert isinstance(built.channels["telegram"], TelegramNotifier)
+
+
+def test_malformed_get_updates_response_is_an_error(setup):
+    _, _, bot = setup
+    bot.client.transport = lambda method, params, timeout: {"unexpected": "shape"}
+    with pytest.raises(TelegramError, match="expected a list"):
+        bot.fetch(timeout=1)
+    assert bot.offset is None

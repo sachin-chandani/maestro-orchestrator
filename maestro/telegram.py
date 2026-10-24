@@ -104,6 +104,8 @@ class TelegramBot:
             {"offset": self.offset, "timeout": timeout, "allowed_updates": ["message", "callback_query"]},
             http_timeout=timeout + 10,  # must outlast the server-side long poll
         )
+        if not isinstance(updates, list):
+            raise TelegramError(f"getUpdates returned {type(updates).__name__}, expected a list")
         if updates:
             self.offset = updates[-1]["update_id"] + 1
         return updates
@@ -112,14 +114,18 @@ class TelegramBot:
         for update in self.fetch(timeout):
             self.handle(update)
 
-    def handle(self, update: dict) -> None:
+    def handle(self, update: object) -> None:
+        """Handle one update. Never raises: a bad update is logged and skipped so polling continues."""
         try:
+            if not isinstance(update, dict):
+                raise TelegramError(f"update is {type(update).__name__}, expected an object")
             if query := update.get("callback_query"):
                 self._handle_callback(query)
             elif (message := update.get("message")) and "text" in message:
                 self._handle_message(message)
-        except TelegramError:
-            log.exception("Telegram call failed while handling update %s", update.get("update_id"))
+        except Exception:
+            update_id = update.get("update_id") if isinstance(update, dict) else None
+            log.exception("Failed to handle Telegram update %s", update_id)
 
     # --- messages -------------------------------------------------------------------------
 

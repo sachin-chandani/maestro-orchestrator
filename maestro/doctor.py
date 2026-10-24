@@ -81,7 +81,8 @@ def _inbound_sms(config: Config) -> list[Check]:
 
 
 def _channels(config: Config) -> tuple[list[Check], dict[str, Notifier]]:
-    checks, built = [], {}
+    checks: list[Check] = []
+    built: dict[str, Notifier] = {}
     if not config.channels:
         return [Check(FAIL, "channels", "MAESTRO_CHANNELS is empty")], built
     for name in config.channels:

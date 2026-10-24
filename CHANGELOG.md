@@ -16,11 +16,14 @@ All notable changes to this project are documented here. The format follows
 ### Changed
 - Engineering standards (`ENGINEERING.md`), architecture decision records (`docs/adr/`) and a PR template; CI now enforces a coverage floor (93%) and a dependency vulnerability audit (#58)
 - Telegram and SMS share one command implementation (`maestro/commands.py`)
+- The package type-checks cleanly with mypy, enforced in CI (#57)
 - Telegram `/done` without a number now acts on the latest reminder instead of printing usage; `/snooze 3` defaults to 10 minutes
 - Reminder texts end with "(reply done or snooze 1h)"
 
 ### Fixed
 - Database connections are now closed (CLI, `maestro doctor`); `Store` is a context manager
+- API and CLI no longer crash if an item disappears between an update and the read-back (404 / exit 1 / "No item"); found by #57
+- One corrupt reminder or a failed tick no longer stops the scheduler, and one malformed Telegram update no longer stops the bot; new metric `maestro_scheduler_errors_total`
 - "the weekly report…", "my daily standup notes…" and similar are no longer turned into recurring reminders
 - "the 5th element…" is no longer read as a date
 

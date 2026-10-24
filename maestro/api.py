@@ -8,9 +8,11 @@ connection is never used from two threads at once.
 import asyncio
 import hmac
 import logging
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime
 from importlib.resources import files
+from typing import TYPE_CHECKING
 from urllib.parse import parse_qs
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, status
@@ -20,12 +22,15 @@ from pydantic import BaseModel, Field
 from maestro import __version__, recurrence
 from maestro.models import Item, Status
 from maestro.notifier import Notifier
-from maestro.observability import METRICS
+from maestro.observability import METRICS, Labels
 from maestro.parser import parse, parse_duration
-from maestro.scheduler import fire_due
-from maestro.sms import WEBHOOK_PATH
+from maestro.scheduler import tick
+from maestro.sms import WEBHOOK_PATH, SmsHandler
 from maestro.store import Store
 from maestro.tz import add_elapsed
+
+if TYPE_CHECKING:
+    from maestro.telegram import TelegramBot
 
 log = logging.getLogger(__name__)
 
@@ -35,11 +40,11 @@ WEB_UI = files("maestro").joinpath("web/index.html").read_text(encoding="utf-8")
 async def _scheduler_loop(store: Store, notifier: Notifier, interval: float) -> None:
     # Runs on the event loop with the request handlers, keeping SQLite access single-threaded.
     while True:
-        fire_due(store, notifier)
+        tick(store, notifier)
         await asyncio.sleep(interval)
 
 
-async def _bot_loop(bot) -> None:
+async def _bot_loop(bot: "TelegramBot") -> None:
     # The long poll runs in a worker thread; handling (which touches SQLite) stays on the event loop.
     while True:
         try:
@@ -49,7 +54,7 @@ async def _bot_loop(bot) -> None:
             await asyncio.sleep(10)
             continue
         for update in updates:
-            bot.handle(update)
+            bot.handle(update)  # never raises: one bad update can't stop the bot
 
 
 class CaptureIn(BaseModel):
@@ -73,6 +78,8 @@ class ItemOut(BaseModel):
 
     @classmethod
     def of(cls, item: Item) -> "ItemOut":
+        if item.id is None:
+            raise ValueError("Only stored items can be returned from the API")
         return cls(
             id=item.id, text=item.text, kind=item.kind, status=item.status,
             due_at=item.due_at, created_at=item.created_at, recurrence=item.recurrence,
@@ -82,15 +89,16 @@ class ItemOut(BaseModel):
 
 
 def create_app(store: Store, api_token: str | None = None, notifier: Notifier | None = None,
-               interval: float = 30.0, bot=None, sms=None, public_url: str | None = None) -> FastAPI:
+               interval: float = 30.0, bot: "TelegramBot | None" = None, sms: SmsHandler | None = None,
+               public_url: str | None = None) -> FastAPI:
     """Build the app. With a notifier, due reminders are also fired from a background task;
     with a bot (maestro.telegram.TelegramBot), chat messages are handled from another; with an
     SmsHandler (maestro.sms), the Twilio webhook is enabled. `public_url` is the externally visible
     base URL, needed to verify webhook signatures behind a reverse proxy."""
 
     @asynccontextmanager
-    async def lifespan(_: FastAPI):
-        tasks = []
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        tasks: list[asyncio.Task[None]] = []
         if notifier:
             tasks.append(asyncio.create_task(_scheduler_loop(store, notifier, interval)))
         if bot:
@@ -143,7 +151,9 @@ def create_app(store: Store, api_token: str | None = None, notifier: Notifier | 
 
     @app.get("/metrics", response_class=PlainTextResponse, dependencies=[Depends(require_token)])
     async def metrics() -> PlainTextResponse:
-        items = {(("kind", kind), ("status", status)): n for (kind, status), n in store.counts().items()}
+        items: dict[Labels, float] = {
+            (("kind", kind), ("status", status)): n for (kind, status), n in store.counts().items()
+        }
         return PlainTextResponse(METRICS.render(extra={"maestro_items": items}),
                                  media_type="text/plain; version=0.0.4")
 
@@ -165,7 +175,7 @@ def create_app(store: Store, api_token: str | None = None, notifier: Notifier | 
     async def complete(item_id: int) -> ItemOut:
         get_or_404(item_id)
         store.set_status(item_id, Status.DONE)
-        return ItemOut.of(store.get(item_id))
+        return ItemOut.of(get_or_404(item_id))
 
     @app.post("/items/{item_id}/snooze", dependencies=[Depends(require_token)])
     async def snooze(item_id: int, body: SnoozeIn) -> ItemOut:
@@ -175,7 +185,7 @@ def create_app(store: Store, api_token: str | None = None, notifier: Notifier | 
         except ValueError as e:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(e)) from e
         store.reschedule(item_id, add_elapsed(datetime.now(store.tz).replace(microsecond=0), delta))
-        return ItemOut.of(store.get(item_id))
+        return ItemOut.of(get_or_404(item_id))
 
     @app.delete("/items/{item_id}", status_code=204, dependencies=[Depends(require_token)])
     async def delete(item_id: int) -> None:
