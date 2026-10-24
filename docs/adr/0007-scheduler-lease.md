@@ -14,7 +14,7 @@
 
 ## Consequences
 - Exactly-once in normal operation, including restarts and crashes. A leader that freezes for longer than the TTL in the middle of a tick (e.g. a suspended VM) can overlap with its successor for one reminder; the guarantee there is still at-least-once (ENGINEERING.md).
-- Two lease writes per tick plus one per due reminder: negligible at personal scale.
+- Cheap: the leader writes the lease at most once per ttl/3, standbys only read until it looks free.
 - Expiry compares wall clocks across processes. On one host that's exact; across hosts, clocks must be NTP-synced to well within the TTL.
 - An older Maestro that doesn't know the lease would ignore it, so the store refuses to open a database whose schema is newer than it supports (`SchemaTooNewError`). Releases before 0.3 lack this guard: stop every old process before upgrading.
 - Moving to Postgres (#34) can keep the same design with `SELECT ... FOR UPDATE` or an advisory lock.
