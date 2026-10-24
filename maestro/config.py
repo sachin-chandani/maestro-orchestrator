@@ -24,6 +24,17 @@ def load_dotenv(path: str | Path = ".env") -> None:
         os.environ.setdefault(key.strip(), value.strip().strip("'\""))
 
 
+def _count(env: Mapping[str, str], name: str, default: int) -> int:
+    value = env.get(name) or str(default)
+    if not value.isdigit():
+        raise ValueError(f"{name} must be a whole number (0 turns it off), not {value!r}")
+    return int(value)
+
+
+def _flag(env: Mapping[str, str], name: str) -> bool:
+    return (env.get(name) or "").strip().lower() in ("1", "true", "yes", "on")
+
+
 def _csv(value: str) -> list[str]:
     return [v.strip() for v in value.split(",") if v.strip()]
 
@@ -35,6 +46,9 @@ class Config:
     api_token: str | None = None
     timezone: str | None = None  # IANA name; None means the system timezone
     public_url: str | None = None  # how the outside world reaches this server, e.g. https://maestro.example.com
+    rate_limit_webhook: int = 60  # requests per minute per client on public endpoints; 0 = off
+    rate_limit_auth_failures: int = 10  # failed auths per minute per client before 429; 0 = off
+    trust_proxy_headers: bool = False
     log_format: str = "text"  # or "json"
     log_level: str = "INFO"
 
@@ -58,6 +72,9 @@ class Config:
             api_token=env.get("MAESTRO_API_TOKEN") or None,
             timezone=env.get("MAESTRO_TIMEZONE") or None,
             public_url=(env.get("MAESTRO_PUBLIC_URL") or "").rstrip("/") or None,
+            rate_limit_webhook=_count(env, "MAESTRO_RATE_LIMIT_WEBHOOK", 60),
+            rate_limit_auth_failures=_count(env, "MAESTRO_RATE_LIMIT_AUTH_FAILURES", 10),
+            trust_proxy_headers=_flag(env, "MAESTRO_TRUST_PROXY_HEADERS"),
             log_format=(env.get("MAESTRO_LOG_FORMAT") or "text").lower(),
             log_level=(env.get("MAESTRO_LOG_LEVEL") or "INFO").upper(),
             twilio_account_sid=env.get("TWILIO_ACCOUNT_SID") or None,

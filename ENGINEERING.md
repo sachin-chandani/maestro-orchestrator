@@ -14,7 +14,7 @@ These are the promises a self-hosted instance should keep. Each one has a metric
 | Loops keep running | One corrupt item, failed tick or malformed chat update is logged, counted and skipped; it never stops the scheduler or the bot | `maestro_scheduler_errors_total`; `tests/test_resilience.py` |
 | Correct times | Wall-clock times survive DST and server timezones | `tests/test_timezones.py`, property tests (#56) |
 | Understands people | At least 95% of the parser corpus parses exactly as expected | Corpus test (#55) |
-| Safe to expose | Every non-public route needs the API token; webhooks need a valid provider signature; public routes are rate limited | `tests/test_api.py`, `tests/test_sms.py`, #54 |
+| Safe to expose | Every non-public route needs the API token; webhooks need a valid provider signature; public routes are rate limited | `tests/test_api.py`, `tests/test_sms.py`, `tests/test_ratelimit.py`; `maestro_rate_limited_total` |
 
 ## Definition of done
 A change is done when all of these hold:

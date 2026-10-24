@@ -68,6 +68,9 @@ All settings come from environment variables or a `.env` file. See [.env.example
 | `MAESTRO_DB` | SQLite path (default `~/.maestro/maestro.db`). Must be on a local disk or Docker volume, not NFS/SMB (WAL mode) |
 | `MAESTRO_TIMEZONE` | Your IANA timezone, e.g. `Europe/London`. Defaults to the system zone, which is UTC in Docker, so set it when self-hosting |
 | `MAESTRO_API_TOKEN` | Bearer token for the API; required unless bound to localhost |
+| `MAESTRO_RATE_LIMIT_WEBHOOK` | Requests per minute per client on public webhooks (default 60, 0 = off) |
+| `MAESTRO_RATE_LIMIT_AUTH_FAILURES` | Failed authentications per minute per client before it gets 429s on everything (default 10, 0 = off) |
+| `MAESTRO_TRUST_PROXY_HEADERS` | `true` behind a reverse proxy, so limits apply per real client (last `X-Forwarded-For` entry) |
 | `MAESTRO_LOG_FORMAT`, `MAESTRO_LOG_LEVEL` | `text` (default) or `json` (one object per line, for log shippers); `INFO` by default |
 | `MAESTRO_CHANNELS` | Comma-separated: `console`, `macos`, `ntfy`, `twilio_sms`, `telegram` |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | Your bot and the only chat it will talk to (see below) |

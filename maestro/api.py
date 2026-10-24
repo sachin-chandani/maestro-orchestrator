@@ -8,7 +8,7 @@ connection is never used from two threads at once.
 import asyncio
 import hmac
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import datetime
 from importlib.resources import files
@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 from urllib.parse import parse_qs
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, status
-from fastapi.responses import HTMLResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
 from maestro import __version__, recurrence
@@ -24,6 +24,7 @@ from maestro.models import Item, Status
 from maestro.notifier import Notifier
 from maestro.observability import METRICS, Labels
 from maestro.parser import parse, parse_duration
+from maestro.ratelimit import RateLimits, TokenBucket
 from maestro.scheduler import Lease, tick
 from maestro.sms import WEBHOOK_PATH, SmsHandler
 from maestro.store import Store
@@ -94,11 +95,12 @@ class ItemOut(BaseModel):
 
 def create_app(store: Store, api_token: str | None = None, notifier: Notifier | None = None,
                interval: float = 30.0, bot: "TelegramBot | None" = None, sms: SmsHandler | None = None,
-               public_url: str | None = None) -> FastAPI:
+               public_url: str | None = None, limits: RateLimits | None = None) -> FastAPI:
     """Build the app. With a notifier, due reminders are also fired from a background task;
     with a bot (maestro.telegram.TelegramBot), chat messages are handled from another; with an
     SmsHandler (maestro.sms), the Twilio webhook is enabled. `public_url` is the externally visible
-    base URL, needed to verify webhook signatures behind a reverse proxy."""
+    base URL, needed to verify webhook signatures behind a reverse proxy. `limits` defaults to
+    RateLimits(): public endpoints and failed authentication are rate limited per client."""
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -113,6 +115,29 @@ def create_app(store: Store, api_token: str | None = None, notifier: Notifier | 
 
     app = FastAPI(title="Maestro", version=__version__, lifespan=lifespan,
                   description="Self-hosted second brain: capture things to remember, get reminded.")
+
+    limits = limits or RateLimits()
+    webhook_bucket = TokenBucket(limits.webhook_per_minute) if limits.webhook_per_minute else None
+    failure_bucket = TokenBucket(limits.auth_failures_per_minute) if limits.auth_failures_per_minute else None
+
+    def too_many(bucket: TokenBucket, client: str, reason: str) -> Response:
+        METRICS.inc("maestro_rate_limited_total", reason=reason)
+        log.warning("Rate limited %s (%s)", client, reason)
+        return JSONResponse({"detail": "Too many requests"}, status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                            headers={"Retry-After": str(bucket.retry_after(client))})
+
+    @app.middleware("http")
+    async def rate_limit(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
+        client = limits.client(request.client.host if request.client else None,
+                               request.headers.get("X-Forwarded-For"))
+        if failure_bucket and not failure_bucket.has_tokens(client):
+            return too_many(failure_bucket, client, "auth_failures")
+        if webhook_bucket and request.url.path.startswith("/webhooks/") and not webhook_bucket.take(client):
+            return too_many(webhook_bucket, client, "webhook")
+        response = await call_next(request)
+        if failure_bucket and response.status_code in (401, 403):
+            failure_bucket.take(client)
+        return response
 
     async def require_token(authorization: str | None = Header(default=None)) -> None:
         if api_token is None:

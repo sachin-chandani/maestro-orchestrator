@@ -71,7 +71,11 @@ def _build_parser(config: Config) -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     load_dotenv()
-    config = Config.from_env()
+    try:
+        config = Config.from_env()
+    except ValueError as e:
+        print(f"Config error: {e}", file=sys.stderr)
+        return 2
     if "MAESTRO_CHANNELS" not in os.environ:
         config.channels = default_channels()
     args = _build_parser(config).parse_args(argv)
@@ -185,6 +189,7 @@ def _serve(store: Store, config: Config, notifier: Notifier, args: argparse.Name
         import uvicorn
 
         from maestro.api import create_app
+        from maestro.ratelimit import RateLimits
     except ImportError:
         print("The server needs extra packages: pip install 'maestro-orchestrator[server]'", file=sys.stderr)
         return 2
@@ -197,7 +202,9 @@ def _serve(store: Store, config: Config, notifier: Notifier, args: argparse.Name
 
         sms = SmsHandler(store, config.twilio_auth_token, config.sms_to)
     app = create_app(store, api_token=config.api_token, notifier=notifier, interval=args.interval, bot=bot,
-                     sms=sms, public_url=config.public_url)
+                     sms=sms, public_url=config.public_url,
+                     limits=RateLimits(config.rate_limit_webhook, config.rate_limit_auth_failures,
+                                       config.trust_proxy_headers))
     # log_config=None keeps uvicorn on our root handler, so MAESTRO_LOG_FORMAT=json covers access logs too.
     uvicorn.run(app, host=args.host, port=args.port, log_config=None)
     return 0
