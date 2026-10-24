@@ -1,9 +1,16 @@
 import inspect
+import os
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pytest
+from hypothesis import settings
+
+# CI runners are slow and noisy: no per-example deadline there, so timing never fails a property test.
+settings.register_profile("ci", deadline=None, print_blob=True)
+if os.environ.get("CI"):
+    settings.load_profile("ci")
 
 # A zone with DST: in 2026 US clocks fall back on Sun Nov 1, just after the dates most tests use.
 TZ = ZoneInfo("America/New_York")

@@ -93,3 +93,12 @@ def test_every_three_days_steps_from_the_last_occurrence():
     assert _fire(store, item.id, dt(2026, 10, 27, 9, 5)) == dt(2026, 10, 30, 9, 0)
     # Late by 5 days: next is on the original 3-day grid (Nov 2), not 3 days from now.
     assert _fire(store, item.id, dt(2026, 11, 4, 9, 0)) == dt(2026, 11, 5, 9, 0)
+
+
+@pytest.mark.parametrize("now, due", [
+    (dt(2026, 10, 24, 9, 0), dt(2026, 10, 24, 10, 0)),   # Saturday morning: later today
+    (dt(2026, 10, 24, 10, 0), dt(2026, 10, 25, 10, 0)),  # Saturday at/after 10: Sunday (found by #56)
+    (dt(2026, 10, 25, 12, 0), dt(2026, 10, 31, 10, 0)),  # Sunday afternoon: next Saturday
+])
+def test_this_weekend_never_lands_in_the_past(now, due):
+    assert parse("clean garage this weekend", now=now).due_at == due

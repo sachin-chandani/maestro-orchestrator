@@ -25,6 +25,7 @@ All notable changes to this project are documented here. The format follows
 - Reminder texts end with "(reply done or snooze 1h)"
 
 ### Fixed
+- "this weekend" said on a Saturday after 10:00 or on a Sunday afternoon no longer gives a time in the past (found by property tests, #56)
 - Running more than one scheduler on a database (`serve` + `run`, cron `run --once`, two replicas) no longer delivers reminders twice: a lease in the database lets one fire while the others stand by and take over if it stops (#52). New metric `maestro_scheduler_leader`
 - Database connections are now closed (CLI, `maestro doctor`); `Store` is a context manager
 - Every write runs in a transaction that commits or rolls back as a whole; a write that failed half way can no longer leave the shared connection unusable

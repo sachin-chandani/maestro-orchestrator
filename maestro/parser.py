@@ -122,9 +122,12 @@ def _extract_day(parts: _Parts, now: datetime) -> None:
         parts.when_date = now.date() + timedelta(days=ahead)
         _cut(parts, m)
     elif m := WEEKEND_RE.search(parts.text):
-        # Saturday, or today if the weekend has already started.
-        parts.when_date = now.date() + timedelta(days=max(0, 5 - now.weekday()))
+        # The next weekend slot that hasn't passed: Saturday, then Sunday, then the following Saturday.
         parts.when_time = parts.when_time or WEEKEND_TIME
+        slot = now.date() + timedelta(days=max(0, 5 - now.weekday()))
+        while slot.weekday() < 5 or datetime.combine(slot, parts.when_time, tzinfo=now.tzinfo) <= now:
+            slot += timedelta(days=1)
+        parts.when_date = slot
         _cut(parts, m)
     elif (m := DAY_OF_MONTH_RE.search(parts.text)) and 1 <= int(m[1]) <= 31:
         # The next "5th" after today, clamped to short months ("the 31st" in November is the 30th).
