@@ -93,3 +93,18 @@ def test_every_three_days_steps_from_the_last_occurrence():
     assert _fire(store, item.id, dt(2026, 10, 27, 9, 5)) == dt(2026, 10, 30, 9, 0)
     # Late by 5 days: next is on the original 3-day grid (Nov 2), not 3 days from now.
     assert _fire(store, item.id, dt(2026, 11, 4, 9, 0)) == dt(2026, 11, 5, 9, 0)
+
+
+@pytest.mark.parametrize("phrase, now, due", [
+    ("this weekend", dt(2026, 10, 24, 9, 0), dt(2026, 10, 24, 10, 0)),   # Sat morning: later today
+    ("this weekend", dt(2026, 10, 24, 10, 0), dt(2026, 10, 25, 10, 0)),  # Sat from 10:00: Sunday (#56)
+    ("this weekend", dt(2026, 10, 25, 9, 0), dt(2026, 10, 25, 10, 0)),   # Sun morning: later today
+    ("this weekend", dt(2026, 10, 25, 11, 0), dt(2026, 10, 31, 10, 0)),  # Sun from 10:00: next Saturday
+    ("this weekend at 9am", dt(2026, 10, 25, 10, 0), dt(2026, 10, 31, 9, 0)),
+    ("tonight", dt(2026, 10, 24, 21, 0), dt(2026, 10, 25, 20, 0)),       # 20:00 passed: tomorrow
+    ("today at 9am", dt(2026, 10, 24, 10, 0), dt(2026, 10, 25, 9, 0)),
+    ("today", dt(2026, 10, 24, 10, 0), dt(2026, 10, 25, 9, 0)),
+    ("today at 5pm", dt(2026, 10, 24, 10, 0), dt(2026, 10, 24, 17, 0)),  # still ahead: today
+])
+def test_one_off_times_never_land_in_the_past(phrase, now, due):
+    assert parse(f"clean garage {phrase}", now=now).due_at == due

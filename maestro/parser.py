@@ -122,9 +122,12 @@ def _extract_day(parts: _Parts, now: datetime) -> None:
         parts.when_date = now.date() + timedelta(days=ahead)
         _cut(parts, m)
     elif m := WEEKEND_RE.search(parts.text):
-        # Saturday, or today if the weekend has already started.
-        parts.when_date = now.date() + timedelta(days=max(0, 5 - now.weekday()))
+        # The next weekend slot that hasn't passed: Saturday, then Sunday, then the following Saturday.
         parts.when_time = parts.when_time or WEEKEND_TIME
+        slot = now.date()
+        while slot.weekday() < 5 or datetime.combine(slot, parts.when_time, tzinfo=now.tzinfo) <= now:
+            slot += timedelta(days=1)
+        parts.when_date = slot
         _cut(parts, m)
     elif (m := DAY_OF_MONTH_RE.search(parts.text)) and 1 <= int(m[1]) <= 31:
         # The next "5th" after today, clamped to short months ("the 31st" in November is the 30th).
@@ -197,8 +200,9 @@ def parse(source: str, now: datetime | None = None, tz: tzinfo | None = None) ->
     due_at = parts.exact
     if due_at is None and (parts.when_date or parts.when_time):
         due_at = datetime.combine(parts.when_date or now.date(), parts.when_time or DEFAULT_TIME, tzinfo=zone)
-        # A bare time that has already passed today means tomorrow.
-        if parts.when_date is None and due_at <= now:
+        # One rule for every phrase that lands on today ("at 9am", "today", "tonight", "eod"): a time
+        # that has already passed means the same time tomorrow, so a new reminder is never overdue.
+        if due_at <= now and (parts.when_date is None or parts.when_date == now.date()):
             due_at += timedelta(days=1)
 
     text = _clean(parts.text) or source.strip()

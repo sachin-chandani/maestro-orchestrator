@@ -72,7 +72,7 @@ Dates are targets, not promises. Work is tracked in [GitHub issues](https://gith
 - [x] SQLite durability: WAL and busy timeout (#53)
 - [x] Rate limits on public endpoints (#54)
 - [ ] Parser accuracy corpus, target >= 95% (#55)
-- [ ] Property-based tests for recurrence and timezones (#56)
+- [x] Property-based tests for recurrence and timezones (#56)
 - [x] mypy clean in CI (#57); engineering standards, ADRs, coverage and audit gates (#58)
 
 Exit criteria: capture from every source above, parser corpus >= 95%, exactly-once scheduling across processes, mypy and coverage >= 90% enforced in CI, no known vulnerabilities.

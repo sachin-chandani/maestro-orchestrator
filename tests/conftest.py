@@ -1,9 +1,17 @@
 import inspect
+import os
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pytest
+from hypothesis import settings
+
+# No per-example deadline anywhere: dateparser's cold start and Store setup make first examples slow,
+# and a timing failure says nothing about correctness. CI also prints a reproduction blob.
+settings.register_profile("local", deadline=None)
+settings.register_profile("ci", deadline=None, print_blob=True)
+settings.load_profile("ci" if os.environ.get("CI", "").lower() in ("1", "true", "yes") else "local")
 
 # A zone with DST: in 2026 US clocks fall back on Sun Nov 1, just after the dates most tests use.
 TZ = ZoneInfo("America/New_York")
