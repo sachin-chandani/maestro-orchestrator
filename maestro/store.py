@@ -83,6 +83,15 @@ class Store:
         self.conn.row_factory = sqlite3.Row
         self._migrate()
 
+    def close(self) -> None:
+        self.conn.close()
+
+    def __enter__(self) -> Store:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
+
     def _migrate(self) -> None:
         # BEGIN IMMEDIATE takes the write lock before reading the version, so two processes opening
         # a fresh database at once (e.g. `maestro serve` and `maestro add`) can't both migrate.

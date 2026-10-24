@@ -19,6 +19,24 @@ def _pin_timezone(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _close_stores(monkeypatch):
+    """Close every Store a test opens, so leaked connections in product code stand out."""
+    from maestro.store import Store
+
+    opened = []
+    original_init = Store.__init__
+
+    def tracking_init(self, *args, **kwargs):
+        original_init(self, *args, **kwargs)
+        opened.append(self)
+
+    monkeypatch.setattr(Store, "__init__", tracking_init)
+    yield
+    for store in opened:
+        store.close()
+
+
+@pytest.fixture(autouse=True)
 def _fresh_metrics():
     from maestro.observability import METRICS
 

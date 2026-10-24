@@ -14,11 +14,13 @@ All notable changes to this project are documented here. The format follows
 - Reply-to-act: `done`, `snooze 1h` or just `snooze` (10 minutes) without a number act on the reminder last delivered on that channel, by SMS or Telegram; `rm` always needs a number (#8)
 
 ### Changed
+- Engineering standards (`ENGINEERING.md`), architecture decision records (`docs/adr/`) and a PR template; CI now enforces a coverage floor (93%) and a dependency vulnerability audit (#58)
 - Telegram and SMS share one command implementation (`maestro/commands.py`)
 - Telegram `/done` without a number now acts on the latest reminder instead of printing usage; `/snooze 3` defaults to 10 minutes
 - Reminder texts end with "(reply done or snooze 1h)"
 
 ### Fixed
+- Database connections are now closed (CLI, `maestro doctor`); `Store` is a context manager
 - "the weekly report…", "my daily standup notes…" and similar are no longer turned into recurring reminders
 - "the 5th element…" is no longer read as a date
 

@@ -141,7 +141,7 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -e '.[dev]'
 pytest && ruff check .
 ```
-See [CONTRIBUTING.md](CONTRIBUTING.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md), [ENGINEERING.md](ENGINEERING.md) for the definition of done and service objectives, and [docs/adr/](docs/adr/) for design decisions.
 
 ## License
 [MIT](LICENSE)
