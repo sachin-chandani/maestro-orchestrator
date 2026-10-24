@@ -12,14 +12,12 @@ import logging
 import urllib.error
 import urllib.request
 from collections.abc import Callable
-from datetime import datetime
 
-from maestro import recurrence
-from maestro.models import Item, Kind, Status
+from maestro import commands
+from maestro.models import Item, Kind
 from maestro.observability import METRICS
-from maestro.parser import parse, parse_duration
+from maestro.parser import parse
 from maestro.store import Store
-from maestro.tz import add_elapsed
 
 log = logging.getLogger(__name__)
 
@@ -27,7 +25,6 @@ log = logging.getLogger(__name__)
 Transport = Callable[[str, dict, float], object]
 
 SNOOZE_CHOICES = ["10m", "1h", "1d"]
-LIST_LIMIT = 20
 
 
 class TelegramError(RuntimeError):
@@ -72,18 +69,6 @@ class TelegramClient:
         return self.call("sendMessage", {"chat_id": chat_id, "text": text, "reply_markup": markup})
 
 
-def _when(item: Item) -> str:
-    if not item.due_at:
-        return "note"
-    label = item.due_at.strftime("%a %d %b %H:%M")
-    return f"{label}, {recurrence.describe(item.recurrence)}" if item.recurrence else label
-
-
-def _line(item: Item) -> str:
-    icon = "⏰" if item.kind == Kind.REMINDER else "📝"
-    return f"{icon} #{item.id} {item.text} ({_when(item)})"
-
-
 def _action_buttons(item: Item) -> list[list[dict]]:
     row = [{"text": "✅ Done", "callback_data": f"done:{item.id}"}]
     row += [{"text": f"+{d}", "callback_data": f"snooze:{item.id}:{d}"} for d in SNOOZE_CHOICES]
@@ -99,18 +84,6 @@ class TelegramNotifier:
 
     def send(self, item: Item) -> None:
         self.client.send(self.chat_id, f"⏰ {item.text}", _action_buttons(item))
-
-
-HELP = (
-    "Send me anything to remember, e.g.\n"
-    "• call mom tomorrow at 5pm\n"
-    "• pay rent on the 1st of every month\n"
-    "• remember the wifi password is on the router\n\n"
-    "/list: what's coming up\n"
-    "/done <id>: mark done\n"
-    "/snooze <id> <10m|2h|1d>: push back\n"
-    "/rm <id>: delete"
-)
 
 
 class TelegramBot:
@@ -167,40 +140,19 @@ class TelegramBot:
             METRICS.inc("maestro_captures_total", source="telegram")
             item = self.store.add(parse(text, tz=self.store.tz))
             buttons = _action_buttons(item) if item.kind == Kind.REMINDER else None
-            self.client.send(chat_id, f"Saved {_line(item)}", buttons)
+            self.client.send(chat_id, f"Saved {commands.line(item)}", buttons)
             return
 
         command, *args = text.split()
         command = command.split("@")[0].lower()  # "/list@MyMaestroBot" in group chats
         if command in ("/start", "/help"):
-            self.client.send(chat_id, HELP)
+            self.client.send(chat_id, commands.help_text(prefix="/"))
         elif command == "/list":
-            items = self.store.list()[:LIST_LIMIT]
-            self.client.send(chat_id, "\n".join(map(_line, items)) or "Nothing to remember yet.")
+            self.client.send(chat_id, commands.list_items(self.store))
         elif command in ("/done", "/rm", "/snooze"):
-            self.client.send(chat_id, self._act(command[1:], args))
+            self.client.send(chat_id, commands.act(self.store, command[1:], args, prefix="/"))
         else:
             self.client.send(chat_id, f"Unknown command {command}. Try /help")
-
-    def _act(self, action: str, args: list[str]) -> str:
-        expected = 2 if action == "snooze" else 1
-        if len(args) != expected or not args[0].lstrip("#").isdigit():
-            return "Usage: /snooze <id> <10m|2h|1d>" if action == "snooze" else f"Usage: /{action} <id>"
-        item_id = int(args[0].lstrip("#"))
-        if (item := self.store.get(item_id)) is None:
-            return f"No item #{item_id}"
-        if action == "done":
-            self.store.set_status(item_id, Status.DONE)
-            return f"✅ Done: {item.text}"
-        if action == "rm":
-            self.store.delete(item_id)
-            return f"🗑 Deleted: {item.text}"
-        try:
-            delta = parse_duration(args[1])
-        except ValueError as e:
-            return str(e)
-        self.store.reschedule(item_id, add_elapsed(datetime.now(self.store.tz).replace(microsecond=0), delta))
-        return f"😴 Snoozed: {_line(self.store.get(item_id))}"
 
     # --- buttons ---------------------------------------------------------------------------
 
@@ -212,7 +164,7 @@ class TelegramBot:
             return
         action, _, rest = query.get("data", "").partition(":")
         args = rest.split(":") if rest else []
-        result = self._act(action, args) if action in ("done", "snooze") else "Unknown action"
+        result = commands.act(self.store, action, args) if action in ("done", "snooze") else "Unknown action"
         self.client.call("answerCallbackQuery", {"callback_query_id": query["id"], "text": result[:200]})
         # Replace the buttons with the outcome so old reminders can't be acted on twice by accident.
         self.client.call("editMessageText", {"chat_id": chat_id, "message_id": message.get("message_id"),

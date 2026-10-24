@@ -9,6 +9,11 @@ All notable changes to this project are documented here. The format follows
 - Phrases: `tomorrow morning` / `afternoon` / `evening` / `night`, `by end of day` / `eod`, `end of week` / `eow`, `this weekend`, `on the 5th` (#16)
 - Recurrences: `every 3 days`, `every other day`, `every other friday`, `every 2 weeks on monday`, `biweekly` / `fortnightly` (with `on <weekday>` anywhere in the phrase), `every night` / `every morning` (#16)
 - Every-N-days/weeks reminders step from their previous occurrence, so they keep their rhythm after downtime
+- Inbound SMS: text your Twilio number to capture, or `list` / `done 3` / `snooze 3 1h` / `rm 3`; verified with Twilio's signature and limited to your own number (#6)
+- `MAESTRO_PUBLIC_URL` for verifying webhooks behind a reverse proxy
+
+### Changed
+- Telegram and SMS share one command implementation (`maestro/commands.py`)
 
 ### Fixed
 - "the weekly report…", "my daily standup notes…" and similar are no longer turned into recurring reminders

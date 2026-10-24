@@ -13,6 +13,7 @@ from pathlib import Path
 from maestro.config import Config
 from maestro.models import Item, Kind
 from maestro.notifier import CHANNELS, ConfigError, Notifier
+from maestro.sms import WEBHOOK_PATH
 from maestro.store import MIGRATIONS, Store
 from maestro.tz import get_timezone
 
@@ -66,6 +67,15 @@ def _telegram_bot(config: Config) -> list[Check]:
     return [Check(OK, "telegram bot", f"answers chat {config.telegram_chat_id}")]
 
 
+def _inbound_sms(config: Config) -> list[Check]:
+    if not (config.twilio_auth_token and config.sms_to):
+        return []
+    if not config.public_url:
+        return [Check(WARN, "inbound SMS", "set MAESTRO_PUBLIC_URL so Twilio webhook signatures can be "
+                                           "verified behind a proxy")]
+    return [Check(OK, "inbound SMS", f"point Twilio's webhook at {config.public_url}{WEBHOOK_PATH}")]
+
+
 def _channels(config: Config) -> tuple[list[Check], dict[str, Notifier]]:
     checks, built = [], {}
     if not config.channels:
@@ -100,7 +110,8 @@ def _send_tests(built: dict[str, Notifier]) -> list[Check]:
 
 def run(config: Config, send_test: bool = False, out: Callable[[str], None] = print) -> bool:
     """Run every check, print each result, and return True when nothing failed."""
-    checks = [_timezone(config), _database(config), _api_token(config), *_telegram_bot(config)]
+    checks = [_timezone(config), _database(config), _api_token(config), *_telegram_bot(config),
+              *_inbound_sms(config)]
     channel_checks, built = _channels(config)
     checks += channel_checks
     if send_test:
