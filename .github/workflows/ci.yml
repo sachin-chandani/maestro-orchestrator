@@ -19,7 +19,21 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: pip install -e '.[dev]'
       - run: ruff check .
-      - run: pytest -q
+      # Coverage gate: fail_under in pyproject.toml.
+      - run: pytest -q --cov --cov-report=term
+
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e '.[server]'
+      # Audit exactly what Maestro installs at runtime. pip-audit runs from its own pipx environment,
+      # so its dependencies (and the runner's pip) can't fail the job.
+      - run: pip freeze --exclude-editable > runtime-requirements.txt
+      - run: pipx run pip-audit --requirement runtime-requirements.txt --no-deps --disable-pip
 
   docker:
     runs-on: ubuntu-latest

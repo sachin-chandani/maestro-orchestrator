@@ -96,6 +96,27 @@ def test_migrates_v1_database(tmp_path):
     assert store.get(1).recurrence is None
 
 
+def test_failed_migration_closes_the_connection(tmp_path, monkeypatch):
+    import maestro.store as store_module
+
+    closed = []
+    real_close = store_module.Store.close
+
+    def recording_close(self):
+        closed.append(True)
+        real_close(self)
+
+    monkeypatch.setattr(store_module.Store, "close", recording_close)
+
+    def broken(conn, tz):
+        raise sqlite3.OperationalError("disk I/O error")
+
+    monkeypatch.setattr(store_module, "MIGRATIONS", [*MIGRATIONS, broken])
+    with pytest.raises(sqlite3.OperationalError):
+        Store(tmp_path / "m.db")
+    assert closed == [True]
+
+
 def test_concurrent_opens_of_fresh_database_migrate_once(tmp_path):
     # Regression: `maestro serve` and `maestro add` racing on a new DB both ran migration 2.
     from concurrent.futures import ThreadPoolExecutor

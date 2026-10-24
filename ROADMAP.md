@@ -61,24 +61,37 @@ Dates are targets, not promises. Work is tracked in [GitHub issues](https://gith
 - [x] `maestro doctor` to validate config and test each channel (#15)
 - [x] Release workflow on tags: GitHub release from the changelog, multi-arch GHCR image, PyPI once enabled (#4)
 
-## v0.3: Capture from anywhere (target Nov 15, 2026)
+## v0.3: Capture from anywhere, hardened (target Nov 8, 2026)
 - [x] Telegram bot: capture, list, snooze and done from chat, plus a delivery channel with action buttons (#5)
 - [x] Inbound SMS to your Twilio number, with signature validation (#6)
 - [ ] Inbound voice: call your number and say the reminder (#7)
 - [x] Reply-to-act: "done" or "snooze 1h" in reply to a reminder (#8)
 - [ ] Email-in via IMAP (#9)
 - [ ] Apple Shortcuts and Android Tasker recipes (#10)
+- [ ] Exactly-once scheduling when more than one process runs (#52)
+- [ ] SQLite durability: WAL and busy timeout (#53)
+- [ ] Rate limits on public endpoints (#54)
+- [ ] Parser accuracy corpus, target >= 95% (#55)
+- [ ] Property-based tests for recurrence and timezones (#56)
+- [ ] mypy clean in CI (#57); engineering standards, ADRs, coverage and audit gates (#58)
+
+Exit criteria: capture from every source above, parser corpus >= 95%, exactly-once scheduling across processes, mypy and coverage >= 90% enforced in CI, no known vulnerabilities.
 - [x] More phrases: parts of the day, end of day/week, weekends, `on the 5th`, every N days/weeks (#16)
 
-## v0.4: More ways out (target Nov 29, 2026)
+## v0.4: More ways out (target Nov 22, 2026)
 - [ ] Voice-call reminders to your own phone (#11)
 - [ ] Email (SMTP) channel (#17) and a generic webhook channel for Slack, Discord, Home Assistant (#18)
 - [ ] Acknowledgement tracking (#19), then escalation policies: push, then SMS, then a call (#12)
 - [ ] Quiet hours (#13)
 - [ ] Per-item channel choice: "text me", "call me", "email me" (#20)
 - [ ] Channel plugins via entry points (#14)
+- [ ] Local backup and restore (#59)
+- [ ] Graceful shutdown and documented at-least-once delivery (#60)
+- [ ] Telegram: act on the reminder you replied to (#61)
 
-## v0.5: Web UI and companion apps (target Dec 20, 2026)
+Exit criteria: escalation proven end to end with fakes, acknowledgements on every channel, backups restorable.
+
+## v0.5: Web UI and companion apps (target Dec 13, 2026)
 - [x] Minimal web UI at `/`: capture, reminders and notes, search, done/snooze/delete, auto-refresh
 - [ ] Edit items (#21) and a timeline view with keyboard shortcuts (#22)
 - [ ] End-to-end tests for the web UI (#23)
@@ -96,9 +109,9 @@ Dates are targets, not promises. Work is tracked in [GitHub issues](https://gith
 ## v0.7: Production-grade self-hosting (target Feb 7, 2027)
 - [ ] Storage interface and PostgreSQL backend (#34)
 - [ ] Multi-user per instance (#35) and OIDC login for the web UI (#36)
-- [ ] Encrypted backups to S3-compatible storage (#37)
+- [ ] Encrypted off-site backups to S3-compatible storage (#37)
 - [ ] Deployment guides: Raspberry Pi, Fly.io, Railway, systemd, Caddy (#38) and a Helm chart (#39)
-- [ ] API rate limiting and audit log (#40)
+- [ ] Per-token API rate limits and audit log (#40)
 
 ## v1.0: Stable (target Feb 28, 2027)
 - [ ] Documentation site (#41)

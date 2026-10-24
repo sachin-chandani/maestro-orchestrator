@@ -80,6 +80,20 @@ def test_bad_timezone_does_not_crash_the_cli(tmp_path, monkeypatch, capsys):
     assert "✗ timezone" in out and "✗ database" in out
 
 
+def test_database_errors_after_opening_are_reported_not_raised(tmp_path, monkeypatch):
+    import sqlite3
+
+    from maestro.store import Store
+
+    def locked(self):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(Store, "counts", locked)
+    ok, lines = run(Config(db_path=str(tmp_path / "m.db"), channels=["console"], api_token="t"))
+    assert not ok
+    assert lines[1].endswith("database is locked")
+
+
 @pytest.mark.parametrize("path", ["/proc/definitely/not/writable/m.db"])
 def test_unwritable_database(path):
     ok, lines = run(Config(db_path=path, channels=["console"], api_token="t"))

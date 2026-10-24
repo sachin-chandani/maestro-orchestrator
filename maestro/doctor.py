@@ -46,11 +46,15 @@ def _database(config: Config) -> Check:
         store = Store(path, tz=get_timezone(config.timezone))
     except (sqlite3.Error, OSError, ValueError) as e:
         return Check(FAIL, "database", f"{path}: {e}")
-    if store.schema_version != len(MIGRATIONS):
-        return Check(FAIL, "database", f"schema {store.schema_version}, expected {len(MIGRATIONS)}")
-    total = sum(store.counts().values())
+    try:
+        with store:
+            version, total = store.schema_version, sum(store.counts().values())
+    except sqlite3.Error as e:  # e.g. "database is locked" by another process
+        return Check(FAIL, "database", f"{path}: {e}")
+    if version != len(MIGRATIONS):
+        return Check(FAIL, "database", f"schema {version}, expected {len(MIGRATIONS)}")
     where = "in memory" if path == ":memory:" else str(Path(path).expanduser())
-    return Check(OK, "database", f"{where}, schema {store.schema_version}, {total} items")
+    return Check(OK, "database", f"{where}, schema {version}, {total} items")
 
 
 def _api_token(config: Config) -> Check:

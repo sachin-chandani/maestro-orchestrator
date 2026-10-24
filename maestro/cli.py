@@ -6,6 +6,7 @@ import os
 import sys
 import time
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from maestro import recurrence
 from maestro.config import Config, load_dotenv
@@ -79,8 +80,11 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError as e:
         print(f"Config error: {e}", file=sys.stderr)
         return 2
-    store = Store(args.db, tz=tz)
+    with Store(args.db, tz=tz) as store:
+        return _dispatch(args, config, store, tz)
 
+
+def _dispatch(args: argparse.Namespace, config: Config, store: Store, tz: ZoneInfo) -> int:
     if args.command == "add":
         item = store.add(parse(" ".join(args.text), tz=tz))
         print(f"Saved: {_format(item).strip()}")
