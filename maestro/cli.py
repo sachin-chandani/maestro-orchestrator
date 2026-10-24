@@ -3,6 +3,7 @@
 import argparse
 import logging
 import os
+import signal
 import sys
 import time
 from collections.abc import Callable
@@ -141,11 +142,18 @@ def _dispatch(args: argparse.Namespace, config: Config, store: Store, tz: ZoneIn
             extra = " and listening on Telegram" if bot else ""
             print(f"Watching for due reminders every {args.interval:g}s via {', '.join(config.channels)}"
                   f"{extra}. Ctrl+C to stop.")
+            # docker stop / systemctl stop send SIGTERM: exit through the normal path so the scheduler
+            # lease is released and a standby takes over at once instead of after the TTL.
+            signal.signal(signal.SIGTERM, _exit_on_sigterm)
             try:
                 run_forever(store, notifier, args.interval, wait=_bot_wait(bot) if bot else time.sleep)
             except KeyboardInterrupt:
                 pass
     return 0
+
+
+def _exit_on_sigterm(signum: int, frame: object) -> None:
+    raise SystemExit(0)
 
 
 def _build_bot(config: Config, store: Store) -> "TelegramBot | None":

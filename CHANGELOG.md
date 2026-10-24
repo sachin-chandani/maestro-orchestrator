@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+**Upgrading:** stop every running Maestro process (server, `run`, cron jobs) before starting the new version. Older versions don't know about the scheduler lease (#52) and would keep delivering in parallel. From this version on, an older Maestro refuses to open a newer database.
+
 ### Added
 - Phrases: `tomorrow morning` / `afternoon` / `evening` / `night`, `by end of day` / `eod`, `end of week` / `eow`, `this weekend`, `on the 5th` (#16)
 - Recurrences: `every 3 days`, `every other day`, `every other friday`, `every 2 weeks on monday`, `biweekly` / `fortnightly` (with `on <weekday>` anywhere in the phrase), `every night` / `every morning` (#16)
@@ -24,6 +26,8 @@ All notable changes to this project are documented here. The format follows
 ### Fixed
 - Running more than one scheduler on a database (`serve` + `run`, cron `run --once`, two replicas) no longer delivers reminders twice: a lease in the database lets one fire while the others stand by and take over if it stops (#52). New metric `maestro_scheduler_leader`
 - Database connections are now closed (CLI, `maestro doctor`); `Store` is a context manager
+- Every write runs in a transaction that commits or rolls back as a whole; a write that failed half way can no longer leave the shared connection unusable
+- `maestro run` exits cleanly on SIGTERM (`docker stop`, `systemctl stop`) and hands the scheduler lease over immediately
 - API and CLI no longer crash if an item disappears between an update and the read-back (404 / exit 1 / "No item"); found by #57
 - One corrupt reminder or a failed tick no longer stops the scheduler, and one malformed Telegram update no longer stops the bot; new metric `maestro_scheduler_errors_total`
 - "the weekly report…", "my daily standup notes…" and similar are no longer turned into recurring reminders

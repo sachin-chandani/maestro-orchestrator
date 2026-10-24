@@ -45,10 +45,7 @@ async def _scheduler_loop(store: Store, notifier: Notifier, interval: float) -> 
             tick(store, notifier, lease)
             await asyncio.sleep(interval)
     finally:  # cancelled at shutdown: hand over to any standby scheduler right away
-        try:
-            lease.release(store)
-        except Exception:
-            log.exception("Could not release the scheduler lease; it will expire on its own")
+        lease.release(store)
 
 
 async def _bot_loop(bot: "TelegramBot") -> None:

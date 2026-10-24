@@ -34,38 +34,62 @@ def _default_owner() -> str:
     return f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:8]}"
 
 
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
 @dataclass
 class Lease:
-    """Leadership among schedulers sharing one database.
+    """Leadership among schedulers sharing one database (ADR 0007).
 
-    The holder renews the lease every tick and before each reminder; if it stops (crash, kill, hang),
-    another scheduler takes over once `ttl` has passed. Exactly one scheduler fires in normal
-    operation. A leader frozen for longer than `ttl` mid-tick could still overlap with its successor
-    for one reminder, so keep `ttl` well above the tick interval (the default is three ticks).
+    The holder renews the lease as it works; if it stops (crash, kill, hang), another scheduler takes
+    over once `ttl` has passed. Renewals always use the real current time, so a long tick (slow
+    channels) keeps the lease alive. A leader frozen for longer than `ttl` mid-reminder could still
+    overlap with its successor for that reminder, so `ttl` defaults to three ticks.
     """
 
     ttl: timedelta = timedelta(seconds=90)
     owner: str = field(default_factory=_default_owner)
+    clock: Callable[[], datetime] = _utc_now
     held: bool | None = None  # last known state, to log only on changes
+    renewed_at: datetime | None = None
 
     @classmethod
     def for_interval(cls, interval: float) -> "Lease":
         return cls(ttl=timedelta(seconds=max(3 * interval, 30)))
 
     def acquire(self, store: Store, now: datetime) -> bool:
+        now = max(now, self.clock())  # never renew against a stale tick-start time
+        if self.held and self.renewed_at and now - self.renewed_at < self.ttl / 3:
+            return True  # renewed recently: nobody can have taken it, skip the write
+        if not self.held and (holder := store.lease_holder(now)) not in (None, self.owner):
+            return self._settle(False, holder)  # cheap read: standbys don't take the write lock
         acquired, holder = store.acquire_lease(self.owner, now, now + self.ttl)
+        if acquired:
+            self.renewed_at = now
+        return self._settle(acquired, holder)
+
+    def _settle(self, acquired: bool, holder: str) -> bool:
         if acquired != self.held:
             if acquired:
                 log.info("Scheduler %s is now firing reminders", self.owner)
             else:
                 log.info("Scheduler %s is standing by: %s holds the lease", self.owner, holder)
         self.held = acquired
+        if not acquired:
+            self.renewed_at = None
         METRICS.set("maestro_scheduler_leader", 1 if acquired else 0)
         return acquired
 
     def release(self, store: Store) -> None:
-        store.release_lease(self.owner)
-        self.held = False
+        """Hand the lease over (on shutdown) if we hold it. Never raises: it expires on its own anyway."""
+        if not self.held:
+            return
+        try:
+            store.release_lease(self.owner)
+        except Exception:
+            log.exception("Could not release the scheduler lease; it will expire on its own")
+        self.held, self.renewed_at = False, None
         METRICS.set("maestro_scheduler_leader", 0)
 
 
@@ -184,7 +208,4 @@ def run_forever(store: Store, notifier: Notifier, interval: float = 30.0,
             tick(store, notifier, lease)
             wait(interval)
     finally:
-        try:
-            lease.release(store)
-        except Exception:
-            log.exception("Could not release the scheduler lease; it will expire on its own")
+        lease.release(store)
