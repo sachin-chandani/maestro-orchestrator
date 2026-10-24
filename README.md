@@ -72,7 +72,8 @@ All settings come from environment variables or a `.env` file. See [.env.example
 | `MAESTRO_CHANNELS` | Comma-separated: `console`, `macos`, `ntfy`, `twilio_sms`, `telegram` |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | Your bot and the only chat it will talk to (see below) |
 | `NTFY_URL`, `NTFY_TOPIC` | ntfy server and topic |
-| `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER`, `MAESTRO_SMS_TO` | SMS to your own phone |
+| `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER`, `MAESTRO_SMS_TO` | SMS to and from your own phone |
+| `MAESTRO_PUBLIC_URL` | How the internet reaches your server (e.g. `https://maestro.example.com`); needed for inbound webhooks behind a proxy |
 
 ### Checking your setup
 ```bash
@@ -90,6 +91,14 @@ It exits non-zero if anything fails, so you can run it before a deploy (`docker 
 3. Set `TELEGRAM_CHAT_ID` to that id, add `telegram` to `MAESTRO_CHANNELS`, and restart.
 
 Now anything you text the bot is captured, reminders arrive in the chat with ✅ Done / +10m / +1h / +1d buttons, and messages from any other chat are ignored. The bot long-polls Telegram, so it needs no public URL.
+
+### Text your reminders (inbound SMS)
+With the Twilio settings above, set `MAESTRO_PUBLIC_URL` to the address the internet reaches your server at, and point your Twilio number's "A message comes in" webhook at `https://<your-server>/webhooks/twilio/sms`. Then text it:
+
+- `dentist next tue 3pm` → saved, with a reply confirming the time
+- `list`, `done 3`, `snooze 3 1h`, `rm 3`, `help`
+
+Requests are verified with Twilio's signature, and only texts from `MAESTRO_SMS_TO` (your number) are acted on. `maestro doctor` prints the exact webhook URL to use.
 
 ## CLI reference
 ```bash

@@ -11,8 +11,9 @@ import logging
 from contextlib import asynccontextmanager
 from datetime import datetime
 from importlib.resources import files
+from urllib.parse import parse_qs
 
-from fastapi import Depends, FastAPI, Header, HTTPException, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, status
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
@@ -22,6 +23,7 @@ from maestro.notifier import Notifier
 from maestro.observability import METRICS
 from maestro.parser import parse, parse_duration
 from maestro.scheduler import fire_due
+from maestro.sms import WEBHOOK_PATH
 from maestro.store import Store
 from maestro.tz import add_elapsed
 
@@ -80,9 +82,11 @@ class ItemOut(BaseModel):
 
 
 def create_app(store: Store, api_token: str | None = None, notifier: Notifier | None = None,
-               interval: float = 30.0, bot=None) -> FastAPI:
+               interval: float = 30.0, bot=None, sms=None, public_url: str | None = None) -> FastAPI:
     """Build the app. With a notifier, due reminders are also fired from a background task;
-    with a bot (maestro.telegram.TelegramBot), chat messages are handled from another."""
+    with a bot (maestro.telegram.TelegramBot), chat messages are handled from another; with an
+    SmsHandler (maestro.sms), the Twilio webhook is enabled. `public_url` is the externally visible
+    base URL, needed to verify webhook signatures behind a reverse proxy."""
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -104,6 +108,23 @@ def create_app(store: Store, api_token: str | None = None, notifier: Notifier | 
         expected = f"Bearer {api_token}"
         if authorization is None or not hmac.compare_digest(authorization, expected):
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or missing API token")
+
+    @app.post(WEBHOOK_PATH, include_in_schema=False)
+    async def twilio_sms(request: Request) -> Response:
+        # Authenticated by Twilio's signature rather than the API token, which Twilio can't send.
+        if sms is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Inbound SMS is not configured")
+        form = parse_qs((await request.body()).decode(), keep_blank_values=True)
+        params = {key: values[0] for key, values in form.items()}
+        # Twilio signs the URL it called; behind a proxy that's the public URL, not what we see.
+        url = str(request.url)
+        if public_url:
+            query = f"?{request.url.query}" if request.url.query else ""
+            url = f"{public_url.rstrip('/')}{request.url.path}{query}"
+        if not sms.verify(url, params, request.headers.get("X-Twilio-Signature")):
+            log.warning("Rejected SMS webhook with a bad signature (checked against %s)", url)
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Invalid Twilio signature")
+        return Response(sms.handle(params), media_type="application/xml")
 
     def get_or_404(item_id: int) -> Item:
         if (item := store.get(item_id)) is None:

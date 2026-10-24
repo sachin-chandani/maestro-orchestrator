@@ -165,7 +165,13 @@ def _serve(store: Store, config: Config, notifier, args, bot=None) -> int:
     if config.api_token is None and args.host not in ("127.0.0.1", "localhost"):
         print("Refusing to listen on a public interface without MAESTRO_API_TOKEN set.", file=sys.stderr)
         return 2
-    app = create_app(store, api_token=config.api_token, notifier=notifier, interval=args.interval, bot=bot)
+    sms = None
+    if config.twilio_auth_token and config.sms_to:
+        from maestro.sms import SmsHandler
+
+        sms = SmsHandler(store, config.twilio_auth_token, config.sms_to)
+    app = create_app(store, api_token=config.api_token, notifier=notifier, interval=args.interval, bot=bot,
+                     sms=sms, public_url=config.public_url)
     # log_config=None keeps uvicorn on our root handler, so MAESTRO_LOG_FORMAT=json covers access logs too.
     uvicorn.run(app, host=args.host, port=args.port, log_config=None)
     return 0
