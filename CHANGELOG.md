@@ -5,6 +5,15 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- Phrases: `tomorrow morning` / `afternoon` / `evening` / `night`, `by end of day` / `eod`, `end of week` / `eow`, `this weekend`, `on the 5th` (#16)
+- Recurrences: `every 3 days`, `every other day`, `every other friday`, `every 2 weeks on monday`, `biweekly` / `fortnightly` (with `on <weekday>` anywhere in the phrase), `every night` / `every morning` (#16)
+- Every-N-days/weeks reminders step from their previous occurrence, so they keep their rhythm after downtime
+
+### Fixed
+- "the weekly report…", "my daily standup notes…" and similar are no longer turned into recurring reminders
+- "the 5th element…" is no longer read as a date
+
 ## [0.2.0] - 2026-10-24
 Self-hosting essentials.
 

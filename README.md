@@ -21,8 +21,8 @@ Saved: 3  📝 —                 My passport is in the blue drawer
 **Status:** early but usable (v0.2). CLI, web UI, REST API, recurring reminders, timezones, and delivery via desktop, ntfy, Twilio SMS and Telegram work today. See the [roadmap](ROADMAP.md) for SMS and voice capture, escalation, calendar feeds and more.
 
 ## Features
-- **Plain language:** `tomorrow at 5pm`, `in 2 hours`, `next friday at 10am`, `on Nov 1`, `tonight`, `at noon`
-- **Recurring:** `every day at 8am`, `every weekday at 9:30am`, `every monday`, `on the 1st of every month`, `every 2 hours`
+- **Plain language:** `tomorrow at 5pm`, `in 2 hours`, `next friday at 10am`, `on Nov 1`, `tonight`, `at noon`, `tomorrow morning`, `by end of day`, `eow`, `this weekend`, `on the 5th`
+- **Recurring:** `every day at 8am`, `every weekday at 9:30am`, `every monday`, `every other friday`, `every 3 days`, `biweekly on tuesday`, `every night`, `on the 1st of every month`, `every 2 hours`
 - **Timezone-aware:** stored in UTC, shown in your timezone; "8am every day" stays 8am across DST changes
 - **Notes:** anything without a time is kept and searchable
 - **Channels:** console, macOS notifications, [ntfy](https://ntfy.sh) push, Twilio SMS, Telegram (with Done/snooze buttons)

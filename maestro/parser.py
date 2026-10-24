@@ -5,6 +5,7 @@ dateparser misreads common phrases ("at 7am" becomes July, "next friday" a year 
 dateparser is only used for calendar dates such as "Nov 1" or "2027-03-15".
 """
 
+import calendar
 import re
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
@@ -34,6 +35,15 @@ RELATIVE_RE = re.compile(
 )
 DAY_WORD_RE = re.compile(r"\b(today|tonight|tomorrow)\b", re.I)
 WEEKDAY_RE = re.compile(r"\b(?:(?:next|this|on)\s+)?(" + "|".join(WEEKDAYS) + r")\b", re.I)
+PART_OF_DAY = {"morning": time(9, 0), "afternoon": time(14, 0), "evening": time(18, 0), "night": time(21, 0)}
+PART_OF_DAY_RE = re.compile(r"\b(?:this\s+|in\s+the\s+|at\s+)?(morning|afternoon|evening|night)\b", re.I)
+END_OF_DAY_RE = re.compile(r"\b(?:by\s+)?(?:the\s+)?(?:end\s+of\s+(?:the\s+)?day|eod)\b", re.I)
+END_OF_WEEK_RE = re.compile(r"\b(?:by\s+)?(?:the\s+)?(?:end\s+of\s+(?:the\s+)?week|eow)\b", re.I)
+END_OF_DAY = time(17, 0)
+WEEKEND_RE = re.compile(r"\b(?:this\s+|the\s+|on\s+the\s+)?weekend\b", re.I)
+WEEKEND_TIME = time(10, 0)
+# Needs "on"/"by" so "the 5th element" stays text.
+DAY_OF_MONTH_RE = re.compile(r"\b(?:on|by)\s+the\s+(\d{1,2})(?:st|nd|rd|th)\b", re.I)
 
 UNIT_DELTAS = {
     "minute": timedelta(minutes=1), "min": timedelta(minutes=1),
@@ -68,6 +78,24 @@ def _extract_time(parts: _Parts) -> None:
     elif m := NOON_RE.search(parts.text):
         parts.when_time = time(12, 0) if m[1].lower() == "noon" else time(0, 0)
         _cut(parts, m)
+    # "tomorrow morning" sets a time; "tomorrow morning at 8am" keeps 8am but still drops the word.
+    if m := PART_OF_DAY_RE.search(parts.text):
+        parts.when_time = parts.when_time or PART_OF_DAY[m[1].lower()]
+        _cut(parts, m)
+
+
+def _extract_deadline(parts: _Parts, now: datetime) -> None:
+    """End of day is 17:00; end of week is Friday 17:00 (next Friday once the weekend has started)."""
+    if m := END_OF_WEEK_RE.search(parts.text):
+        parts.when_time = parts.when_time or END_OF_DAY
+        ahead = (4 - now.weekday()) % 7
+        if ahead == 0 and parts.when_time <= now.time():
+            ahead = 7  # said on Friday after the deadline: next Friday
+        parts.when_date = now.date() + timedelta(days=ahead)
+        _cut(parts, m)
+    elif m := END_OF_DAY_RE.search(parts.text):
+        parts.when_time = parts.when_time or END_OF_DAY
+        _cut(parts, m)
 
 
 def _extract_relative(parts: _Parts, now: datetime) -> None:
@@ -93,6 +121,19 @@ def _extract_day(parts: _Parts, now: datetime) -> None:
         # Always the next occurrence after today, so "friday" said on a Friday means next week.
         ahead = (WEEKDAYS.index(m[1].lower()) - now.weekday()) % 7 or 7
         parts.when_date = now.date() + timedelta(days=ahead)
+        _cut(parts, m)
+    elif m := WEEKEND_RE.search(parts.text):
+        # Saturday, or today if the weekend has already started.
+        parts.when_date = now.date() + timedelta(days=max(0, 5 - now.weekday()))
+        parts.when_time = parts.when_time or WEEKEND_TIME
+        _cut(parts, m)
+    elif (m := DAY_OF_MONTH_RE.search(parts.text)) and 1 <= int(m[1]) <= 31:
+        # The next "5th" after today, clamped to short months ("the 31st" in November is the 30th).
+        day = int(m[1])
+        year, month = now.year, now.month
+        if day <= now.day:
+            year, month = (year + 1, 1) if month == 12 else (year, month + 1)
+        parts.when_date = date(year, month, min(day, calendar.monthrange(year, month)[1]))
         _cut(parts, m)
     else:
         found = search_dates(
@@ -138,16 +179,19 @@ def parse(source: str, now: datetime | None = None, tz: ZoneInfo | None = None) 
     now = localize(now, tz) if now else datetime.now(tz)
     parts = _Parts(text=PREFIX_RE.sub("", source, count=1))
 
-    rule, m = recurrence.extract(parts.text, now.date())
-    if m:
-        _cut(parts, m)
+    rule, matches = recurrence.extract(parts.text, now.date())
+    if rule:
+        # Cut from the end so earlier match positions stay valid.
+        for m in sorted(matches, key=lambda m: m.start(), reverse=True):
+            _cut(parts, m)
         _extract_time(parts)
         at = parts.when_time or DEFAULT_TIME
         parts.exact = recurrence.next_occurrence(rule, now, at)
     else:
         _extract_relative(parts, now)
         _extract_time(parts)
-        if parts.exact is None:
+        _extract_deadline(parts, now)
+        if parts.exact is None and parts.when_date is None:
             _extract_day(parts, now)
 
     due_at = parts.exact
