@@ -11,9 +11,12 @@ All notable changes to this project are documented here. The format follows
 - Every-N-days/weeks reminders step from their previous occurrence, so they keep their rhythm after downtime
 - Inbound SMS: text your Twilio number to capture, or `list` / `done 3` / `snooze 3 1h` / `rm 3`; verified with Twilio's signature and limited to your own number (#6)
 - `MAESTRO_PUBLIC_URL` for verifying webhooks behind a reverse proxy
+- Reply-to-act: `done`, `snooze 1h` or just `snooze` (10 minutes) without a number act on the reminder last delivered on that channel, by SMS or Telegram; `rm` always needs a number (#8)
 
 ### Changed
 - Telegram and SMS share one command implementation (`maestro/commands.py`)
+- Telegram `/done` without a number now acts on the latest reminder instead of printing usage; `/snooze 3` defaults to 10 minutes
+- Reminder texts end with "(reply done or snooze 1h)"
 
 ### Fixed
 - "the weekly report…", "my daily standup notes…" and similar are no longer turned into recurring reminders

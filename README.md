@@ -97,6 +97,7 @@ With the Twilio settings above, set `MAESTRO_PUBLIC_URL` to the address the inte
 
 - `dentist next tue 3pm` → saved, with a reply confirming the time
 - `list`, `done 3`, `snooze 3 1h`, `rm 3`, `help`
+- Reply `done` or `snooze 1h` to a reminder text to act on it without its number (the same works in Telegram). `rm` always needs the number.
 
 Requests are verified with Twilio's signature, and only texts from `MAESTRO_SMS_TO` (your number) are acted on. `maestro doctor` prints the exact webhook URL to use.
 

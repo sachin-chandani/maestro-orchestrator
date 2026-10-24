@@ -39,7 +39,8 @@ def test_twilio_sends_sms_with_basic_auth():
     assert req.full_url == "https://api.twilio.com/2010-04-01/Accounts/AC123/Messages.json"
     assert req.get_header("Authorization") == "Basic " + base64.b64encode(b"AC123:secret").decode()
     form = urllib.parse.parse_qs(req.data.decode())
-    assert form == {"From": ["+15550001111"], "To": ["+15552223333"], "Body": ["Reminder: Call mom"]}
+    assert form == {"From": ["+15550001111"], "To": ["+15552223333"],
+                    "Body": ["Reminder: Call mom (reply done or snooze 1h)"]}
 
 
 def test_config_from_env():

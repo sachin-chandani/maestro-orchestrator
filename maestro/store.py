@@ -186,6 +186,15 @@ class Store:
         self.conn.commit()
         return cur.rowcount > 0
 
+    def last_delivered(self, channel: str) -> int | None:
+        """The item most recently delivered on `channel` that still exists (for "reply done")."""
+        row = self.conn.execute(
+            "SELECT d.item_id FROM deliveries d JOIN items i ON i.id = d.item_id"
+            " WHERE d.channel = ? AND d.delivered_at IS NOT NULL ORDER BY d.delivered_at DESC LIMIT 1",
+            (channel,),
+        ).fetchone()
+        return row[0] if row else None
+
     def deliveries(self, item_id: int, occurrence: datetime) -> dict[str, Delivery]:
         rows = self.conn.execute(
             "SELECT * FROM deliveries WHERE item_id = ? AND occurrence = ?",

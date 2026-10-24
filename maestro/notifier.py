@@ -79,7 +79,8 @@ class TwilioSMSNotifier:
 
     def send(self, item: Item) -> None:
         body = urllib.parse.urlencode(
-            {"From": self.from_number, "To": self.to_number, "Body": f"Reminder: {item.text}"}
+            {"From": self.from_number, "To": self.to_number,
+             "Body": f"Reminder: {item.text} (reply done or snooze 1h)"}
         ).encode()
         request = urllib.request.Request(
             self.url,

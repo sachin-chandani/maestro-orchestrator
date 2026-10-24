@@ -158,7 +158,8 @@ def _clean(text: str) -> str:
     return text.strip(" ,.;:-")
 
 
-DURATION_RE = re.compile(r"^\s*(\d+)\s*(m|min|mins|minutes?|h|hr|hrs|hours?|d|days?)\s*$", re.I)
+DURATION_UNITS = r"(?:m|min|mins|minutes?|h|hr|hrs|hours?|d|days?)"
+DURATION_RE = re.compile(rf"^\s*(\d+)\s*({DURATION_UNITS})\s*$", re.I)
 
 
 def parse_duration(text: str) -> timedelta:

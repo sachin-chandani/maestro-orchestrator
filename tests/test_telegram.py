@@ -102,11 +102,12 @@ def test_commands(setup):
     bot.handle(message("/rm 2"))
     assert store.get(2) is None
 
-    for bad in ["/done", "/done abc", "/snooze 1", "/done 99", "/frobnicate"]:
+    for bad in ["/done", "/done abc", "/snooze 1 soon", "/done 99", "/frobnicate"]:
         bot.handle(message(bad))
     replies = [r["text"] for r in transport.sent()[-5:]]
-    assert replies == ["Usage: /done <id>", "Usage: /done <id>", "Usage: /snooze <id> <10m|2h|1d>",
-                       "No item #99", "Unknown command /frobnicate. Try /help"]
+    assert replies == ["Which one? Add its number, e.g. /done 3 (see /list).", "Usage: /done <id>",
+                       "Can't read duration 'soon'; try 10m, 2h or 1d", "No item #99",
+                       "Unknown command /frobnicate. Try /help"]
 
 
 def test_buttons_act_and_replace_the_keyboard(setup):
