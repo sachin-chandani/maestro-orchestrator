@@ -8,7 +8,7 @@ connection is never used from two threads at once.
 import asyncio
 import hmac
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import datetime
 from importlib.resources import files
@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 from urllib.parse import parse_qs
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, status
-from fastapi.responses import HTMLResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
 from maestro import __version__, recurrence
@@ -24,6 +24,7 @@ from maestro.models import Item, Status
 from maestro.notifier import Notifier
 from maestro.observability import METRICS, Labels
 from maestro.parser import parse, parse_duration
+from maestro.ratelimit import RateLimits, TokenBucket
 from maestro.scheduler import Lease, tick
 from maestro.sms import WEBHOOK_PATH, SmsHandler
 from maestro.store import Store
@@ -94,11 +95,12 @@ class ItemOut(BaseModel):
 
 def create_app(store: Store, api_token: str | None = None, notifier: Notifier | None = None,
                interval: float = 30.0, bot: "TelegramBot | None" = None, sms: SmsHandler | None = None,
-               public_url: str | None = None) -> FastAPI:
+               public_url: str | None = None, limits: RateLimits | None = None) -> FastAPI:
     """Build the app. With a notifier, due reminders are also fired from a background task;
     with a bot (maestro.telegram.TelegramBot), chat messages are handled from another; with an
     SmsHandler (maestro.sms), the Twilio webhook is enabled. `public_url` is the externally visible
-    base URL, needed to verify webhook signatures behind a reverse proxy."""
+    base URL, needed to verify webhook signatures behind a reverse proxy. `limits` defaults to
+    RateLimits(): public endpoints and failed authentication are rate limited per client."""
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -114,12 +116,45 @@ def create_app(store: Store, api_token: str | None = None, notifier: Notifier | 
     app = FastAPI(title="Maestro", version=__version__, lifespan=lifespan,
                   description="Self-hosted second brain: capture things to remember, get reminded.")
 
-    async def require_token(authorization: str | None = Header(default=None)) -> None:
+    limits = limits or RateLimits()
+    webhook_bucket = TokenBucket(limits.webhook_per_minute) if limits.webhook_per_minute else None
+    failure_bucket = TokenBucket(limits.auth_failures_per_minute) if limits.auth_failures_per_minute else None
+
+    def client_of(request: Request) -> str:
+        return limits.client(request.client.host if request.client else None,
+                             request.headers.getlist("X-Forwarded-For"))
+
+    def too_many(bucket: TokenBucket, client: str, reason: str) -> HTTPException:
+        METRICS.inc("maestro_rate_limited_total", reason=reason)
+        log.warning("Rate limited %s (%s)", client, reason)
+        return HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Too many requests",
+                             headers={"Retry-After": str(bucket.retry_after(client))})
+
+    @app.middleware("http")
+    async def lockout(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
+        # A client locked out for guessing the API token is refused everywhere except webhooks, which
+        # carry their own signature auth and must keep working for the owner (e.g. behind shared NAT).
+        if failure_bucket and not request.url.path.startswith("/webhooks/"):
+            client = client_of(request)
+            if failure_bucket.is_empty(client):
+                error = too_many(failure_bucket, client, "auth_failures")
+                return JSONResponse({"detail": error.detail}, status_code=error.status_code,
+                                    headers=error.headers)
+        return await call_next(request)
+
+    async def require_token(request: Request, authorization: str | None = Header(default=None)) -> None:
         if api_token is None:
             return
-        expected = f"Bearer {api_token}"
-        if authorization is None or not hmac.compare_digest(authorization, expected):
-            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or missing API token")
+        if authorization is None:
+            # Not a guess (e.g. the web UI before a token is entered), so it doesn't count.
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Missing API token")
+        if not hmac.compare_digest(authorization, f"Bearer {api_token}"):
+            # Check and record in one step: no await in between, so concurrent guesses can't all
+            # slip past the limit before any failure is counted.
+            client = client_of(request)
+            if failure_bucket and not failure_bucket.take(client):
+                raise too_many(failure_bucket, client, "auth_failures")
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid API token")
 
     @app.post(WEBHOOK_PATH, include_in_schema=False)
     async def twilio_sms(request: Request) -> Response:
@@ -134,6 +169,11 @@ def create_app(store: Store, api_token: str | None = None, notifier: Notifier | 
             query = f"?{request.url.query}" if request.url.query else ""
             url = f"{public_url.rstrip('/')}{request.url.path}{query}"
         if not sms.verify(url, params, request.headers.get("X-Twilio-Signature")):
+            # Only unsigned/forged requests are limited: genuine Twilio callbacks are never throttled,
+            # and nothing reaches the parser without a valid signature.
+            client = client_of(request)
+            if webhook_bucket and not webhook_bucket.take(client):
+                raise too_many(webhook_bucket, client, "webhook")
             log.warning("Rejected SMS webhook with a bad signature (checked against %s)", url)
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Invalid Twilio signature")
         return Response(sms.handle(params), media_type="application/xml")
