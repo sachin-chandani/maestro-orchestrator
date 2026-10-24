@@ -68,7 +68,7 @@ Dates are targets, not promises. Work is tracked in [GitHub issues](https://gith
 - [ ] Reply-to-act: "done" or "snooze 1h" in reply to a reminder (#8)
 - [ ] Email-in via IMAP (#9)
 - [ ] Apple Shortcuts and Android Tasker recipes (#10)
-- [ ] More phrases: `in 3 days at 5pm`, `next month`, `every other week`… (#16)
+- [x] More phrases: parts of the day, end of day/week, weekends, `on the 5th`, every N days/weeks (#16)
 
 ## v0.4: More ways out (target Nov 29, 2026)
 - [ ] Voice-call reminders to your own phone (#11)

@@ -83,7 +83,8 @@ def fire_due(store: Store, notifier: Notifier, now: datetime | None = None) -> l
             # Schedule from now, not the old due time, so a long outage fires once rather than catching up.
             # Work in the item's timezone so the next occurrence keeps its wall-clock time.
             after = max(now, item.due_at).astimezone(item.due_at.tzinfo)
-            next_due = recurrence.next_occurrence(item.recurrence, after, item.due_at.time())
+            next_due = recurrence.next_occurrence(item.recurrence, after, item.due_at.time(),
+                                                  anchor=item.due_at)
             store.reschedule(item.id, next_due)
         else:
             store.set_status(item.id, Status.FIRED)
