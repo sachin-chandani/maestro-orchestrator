@@ -81,10 +81,16 @@ class Store:
         # The API server touches the connection from its event-loop thread, not the creating thread.
         self.conn = sqlite3.connect(str(path), check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
-        self._migrate()
+        self.closed = False
+        try:
+            self._migrate()
+        except BaseException:
+            self.close()  # the caller never gets the object, so it can't close it
+            raise
 
     def close(self) -> None:
         self.conn.close()
+        self.closed = True
 
     def __enter__(self) -> Store:
         return self

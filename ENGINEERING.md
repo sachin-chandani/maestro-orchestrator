@@ -19,7 +19,7 @@ These are the promises a self-hosted instance should keep. Each one has a metric
 A change is done when all of these hold:
 
 1. **Behaviour is tested.** New behaviour has tests, every bug fix has a regression test that fails without the fix, and nothing in the test suite touches the network.
-2. **CI is green.** Lint (ruff), types (mypy, #57), tests on Python 3.11–3.13, coverage at or above the gate (93%, only ever raised), dependency audit, and Docker build.
+2. **CI is green.** Lint (ruff), tests on Python 3.11–3.13, coverage at or above the gate (93%, only ever raised), dependency audit, and Docker build. Type checking joins the gate with #57.
 3. **Docs match.** README for anything user-visible, `.env.example` for new settings, `CHANGELOG.md` under `[Unreleased]`, `ROADMAP.md` checkbox.
 4. **Operable.** New background behaviour logs failures and has a metric if it can silently stop working.
 5. **Decisions are written down.** A choice that constrains future work gets an ADR in `docs/adr/`.
@@ -37,8 +37,9 @@ A change is done when all of these hold:
 ## Testing strategy
 - **Unit and integration tests** with fakes for every external service: each integration takes an injectable transport or opener.
 - **Signed-request tests** for webhooks, with signatures cross-checked against the provider's official SDK.
-- **Property-based tests** (Hypothesis) for invariants in recurrence and time handling (#56).
-- **Parser corpus** of realistic phrases with an accuracy target (#55).
+- **Property-based tests** (Hypothesis) for invariants in recurrence and time handling (planned, #56).
+- **Parser corpus** of realistic phrases with an accuracy target (planned, #55).
+- **No leaked connections:** a `Store` opened by product code and not closed fails the test that opened it.
 - **Live checks** only through `maestro doctor --send-test`, run by a person with real credentials.
 
 ## Workflow

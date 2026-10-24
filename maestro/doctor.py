@@ -46,8 +46,11 @@ def _database(config: Config) -> Check:
         store = Store(path, tz=get_timezone(config.timezone))
     except (sqlite3.Error, OSError, ValueError) as e:
         return Check(FAIL, "database", f"{path}: {e}")
-    with store:
-        version, total = store.schema_version, sum(store.counts().values())
+    try:
+        with store:
+            version, total = store.schema_version, sum(store.counts().values())
+    except sqlite3.Error as e:  # e.g. "database is locked" by another process
+        return Check(FAIL, "database", f"{path}: {e}")
     if version != len(MIGRATIONS):
         return Check(FAIL, "database", f"schema {version}, expected {len(MIGRATIONS)}")
     where = "in memory" if path == ":memory:" else str(Path(path).expanduser())

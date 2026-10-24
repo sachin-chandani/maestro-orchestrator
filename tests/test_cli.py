@@ -136,11 +136,12 @@ def test_load_dotenv(tmp_path, monkeypatch):
                    "MAESTRO_TEST_C=from-file\n")
     monkeypatch.setenv("MAESTRO_TEST_C", "from-env")
     for key in ("MAESTRO_TEST_A", "MAESTRO_TEST_B"):
-        monkeypatch.delenv(key, raising=False)
+        # setenv first so monkeypatch records the variable as absent and removes it on teardown,
+        # even if an assertion below fails.
+        monkeypatch.setenv(key, "")
+        monkeypatch.delenv(key)
     load_dotenv(env)
     assert os.environ["MAESTRO_TEST_A"] == "1"
     assert os.environ["MAESTRO_TEST_B"] == "quoted value"
     assert os.environ["MAESTRO_TEST_C"] == "from-env"  # real environment wins
     load_dotenv(tmp_path / "missing.env")  # no error
-    for key in ("MAESTRO_TEST_A", "MAESTRO_TEST_B"):
-        monkeypatch.delenv(key)

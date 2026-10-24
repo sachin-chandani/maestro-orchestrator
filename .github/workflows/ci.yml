@@ -29,9 +29,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -e '.[server]' pip-audit
-      # Fails on any known vulnerability in the installed dependencies.
-      - run: pip-audit --skip-editable
+      - run: pip install -e '.[server]'
+      # Audit exactly what Maestro installs at runtime. pip-audit runs from its own pipx environment,
+      # so its dependencies (and the runner's pip) can't fail the job.
+      - run: pip freeze --exclude-editable > runtime-requirements.txt
+      - run: pipx run pip-audit --requirement runtime-requirements.txt --no-deps --disable-pip
 
   docker:
     runs-on: ubuntu-latest
