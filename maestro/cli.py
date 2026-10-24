@@ -16,7 +16,7 @@ from maestro.models import Item, Kind, Status
 from maestro.notifier import ConfigError, Notifier, build_notifier, default_channels
 from maestro.observability import configure_logging
 from maestro.parser import parse, parse_duration
-from maestro.scheduler import fire_due, run_forever
+from maestro.scheduler import Lease, fire_due, run_forever
 from maestro.store import Store
 from maestro.tz import add_elapsed, get_timezone
 
@@ -131,7 +131,12 @@ def _dispatch(args: argparse.Namespace, config: Config, store: Store, tz: ZoneIn
         if args.command == "serve":
             return _serve(store, config, notifier, args, bot)
         if args.once:
-            fire_due(store, notifier)
+            # Respect a running server's lease, and hand it straight back afterwards.
+            lease = Lease()
+            try:
+                fire_due(store, notifier, lease=lease)
+            finally:
+                lease.release(store)
         else:
             extra = " and listening on Telegram" if bot else ""
             print(f"Watching for due reminders every {args.interval:g}s via {', '.join(config.channels)}"

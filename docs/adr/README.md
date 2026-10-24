@@ -11,3 +11,4 @@ Add a new numbered file for each decision; supersede rather than edit old ones.
 | [0004](0004-webhooks-authenticated-by-provider-signatures.md) | Authenticate webhooks by provider signatures, not the API token | Accepted |
 | [0005](0005-capture-by-default.md) | Anything that isn't exactly a command is captured | Accepted |
 | [0006](0006-sqlite-wal.md) | SQLite in WAL mode with a busy timeout | Accepted |
+| [0007](0007-scheduler-lease.md) | One scheduler fires at a time, chosen by a lease in the database | Accepted |

@@ -78,6 +78,14 @@ MIGRATIONS: list[list[str] | Callable[[sqlite3.Connection, ZoneInfo], None]] = [
     ],
     # 4: store UTC instead of naive local time
     _naive_local_to_utc,
+    # 5: one row naming the scheduler allowed to fire reminders, so several processes never double-send
+    [
+        """CREATE TABLE IF NOT EXISTS scheduler_lease (
+            id         INTEGER PRIMARY KEY CHECK (id = 1),
+            owner      TEXT NOT NULL,
+            expires_at TEXT NOT NULL
+        )""",
+    ],
 ]
 
 
@@ -258,6 +266,35 @@ class Store:
             (channel,),
         ).fetchone()
         return row[0] if row else None
+
+    def acquire_lease(self, owner: str, now: datetime, expires_at: datetime) -> tuple[bool, str]:
+        """Take or renew the scheduler lease if it is free, expired or already ours.
+
+        Returns (acquired, current holder). Runs under BEGIN IMMEDIATE, so two processes can't both
+        see the lease as free.
+        """
+        self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            row = self.conn.execute("SELECT owner, expires_at FROM scheduler_lease WHERE id = 1").fetchone()
+            if row is None or row["owner"] == owner or row["expires_at"] <= self._to_db(now):
+                self.conn.execute(
+                    "INSERT INTO scheduler_lease (id, owner, expires_at) VALUES (1, ?, ?)"
+                    " ON CONFLICT (id) DO UPDATE"
+                    " SET owner = excluded.owner, expires_at = excluded.expires_at",
+                    (owner, self._to_db(expires_at)),
+                )
+                self.conn.commit()
+                return True, owner
+            self.conn.commit()
+            return False, str(row["owner"])
+        except BaseException:
+            self.conn.rollback()
+            raise
+
+    def release_lease(self, owner: str) -> None:
+        """Give up the lease (on shutdown) so a standby scheduler can take over at once."""
+        self.conn.execute("DELETE FROM scheduler_lease WHERE id = 1 AND owner = ?", (owner,))
+        self.conn.commit()
 
     def deliveries(self, item_id: int, occurrence: datetime) -> dict[str, Delivery]:
         rows = self.conn.execute(

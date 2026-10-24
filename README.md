@@ -109,7 +109,7 @@ maestro search <text>         # find by text
 maestro snooze <id> <10m|2h|1d>
 maestro done <id>
 maestro rm <id>
-maestro run [--once]          # scheduler only
+maestro run [--once]          # scheduler only (safe alongside serve or cron: one scheduler fires at a time)
 maestro serve [--host --port] # API + scheduler (needs the [server] extra)
 maestro doctor [--send-test]  # check configuration and channels
 ```

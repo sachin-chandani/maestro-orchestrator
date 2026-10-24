@@ -3,11 +3,18 @@
 Delivery is tracked per channel for each occurrence. A channel that fails is retried with
 exponential backoff on later ticks without re-sending on channels that already succeeded.
 After MAX_ATTEMPTS a channel is given up on so one broken integration can't block a reminder forever.
+
+When several schedulers share a database (serve + run, or two replicas), a lease in the database lets
+only one of them fire; the others stand by and take over when the lease expires (see Lease).
 """
 
 import logging
+import os
+import socket
 import time
+import uuid
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 from maestro import recurrence
@@ -21,6 +28,45 @@ log = logging.getLogger(__name__)
 
 MAX_ATTEMPTS = 5
 MAX_BACKOFF = timedelta(minutes=30)
+
+
+def _default_owner() -> str:
+    return f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:8]}"
+
+
+@dataclass
+class Lease:
+    """Leadership among schedulers sharing one database.
+
+    The holder renews the lease every tick and before each reminder; if it stops (crash, kill, hang),
+    another scheduler takes over once `ttl` has passed. Exactly one scheduler fires in normal
+    operation. A leader frozen for longer than `ttl` mid-tick could still overlap with its successor
+    for one reminder, so keep `ttl` well above the tick interval (the default is three ticks).
+    """
+
+    ttl: timedelta = timedelta(seconds=90)
+    owner: str = field(default_factory=_default_owner)
+    held: bool | None = None  # last known state, to log only on changes
+
+    @classmethod
+    def for_interval(cls, interval: float) -> "Lease":
+        return cls(ttl=timedelta(seconds=max(3 * interval, 30)))
+
+    def acquire(self, store: Store, now: datetime) -> bool:
+        acquired, holder = store.acquire_lease(self.owner, now, now + self.ttl)
+        if acquired != self.held:
+            if acquired:
+                log.info("Scheduler %s is now firing reminders", self.owner)
+            else:
+                log.info("Scheduler %s is standing by: %s holds the lease", self.owner, holder)
+        self.held = acquired
+        METRICS.set("maestro_scheduler_leader", 1 if acquired else 0)
+        return acquired
+
+    def release(self, store: Store) -> None:
+        store.release_lease(self.owner)
+        self.held = False
+        METRICS.set("maestro_scheduler_leader", 0)
 
 
 def _backoff(attempts: int) -> timedelta:
@@ -73,9 +119,15 @@ def _deliver(store: Store, item: Item, item_id: int, due_at: datetime, channels:
     return not waiting
 
 
-def fire_due(store: Store, notifier: Notifier, now: datetime | None = None) -> list[Item]:
-    """Deliver due reminders. Returns the items whose occurrence is finished this tick."""
+def fire_due(store: Store, notifier: Notifier, now: datetime | None = None, lease: Lease | None = None
+             ) -> list[Item]:
+    """Deliver due reminders. Returns the items whose occurrence is finished this tick.
+
+    With a lease, nothing is sent unless this scheduler holds it, and it is renewed before each item.
+    """
     now = localize(now, store.tz) if now else datetime.now(UTC)
+    if lease and not lease.acquire(store, now):
+        return []
     channels = _channels(notifier)
     finished = []
     due: list[tuple[Item, int, datetime]] = []
@@ -90,6 +142,8 @@ def fire_due(store: Store, notifier: Notifier, now: datetime | None = None) -> l
     lag = max(((now - due_at).total_seconds() for _, _, due_at in due), default=0)
     METRICS.set("maestro_scheduler_lag_seconds", lag)
     for item, item_id, due_at in due:
+        if lease and not lease.acquire(store, now):
+            break  # lost the lease mid-tick: the new holder takes it from here
         try:
             if not _deliver(store, item, item_id, due_at, channels, now):
                 continue
@@ -110,19 +164,27 @@ def fire_due(store: Store, notifier: Notifier, now: datetime | None = None) -> l
     return finished
 
 
-def tick(store: Store, notifier: Notifier) -> None:
+def tick(store: Store, notifier: Notifier, lease: Lease | None = None) -> None:
     """One scheduler pass for a long-running loop: errors are logged and counted, never raised."""
     try:
-        fire_due(store, notifier)
+        fire_due(store, notifier, lease=lease)
     except Exception:
         METRICS.inc("maestro_scheduler_errors_total")
         log.exception("Scheduler tick failed; retrying next tick")
 
 
 def run_forever(store: Store, notifier: Notifier, interval: float = 30.0,
-                wait: Callable[[float], None] = time.sleep) -> None:
+                wait: Callable[[float], None] = time.sleep, lease: Lease | None = None) -> None:
     """Fire due reminders every `interval` seconds. `wait` can do useful work while it waits,
-    e.g. long-poll a chat bot for new messages."""
-    while True:
-        tick(store, notifier)
-        wait(interval)
+    e.g. long-poll a chat bot for new messages. The lease is released on the way out (Ctrl+C,
+    SIGTERM handled as an exception) so a standby scheduler can take over at once."""
+    lease = lease or Lease.for_interval(interval)
+    try:
+        while True:
+            tick(store, notifier, lease)
+            wait(interval)
+    finally:
+        try:
+            lease.release(store)
+        except Exception:
+            log.exception("Could not release the scheduler lease; it will expire on its own")

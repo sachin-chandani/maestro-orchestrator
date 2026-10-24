@@ -4,6 +4,7 @@ from maestro import doctor
 from maestro.cli import main
 from maestro.config import Config
 from maestro.notifier import CHANNELS
+from maestro.store import MIGRATIONS
 
 
 class Recorder:
@@ -29,7 +30,8 @@ def test_healthy_config(tmp_path):
     ok, lines = run(Config(db_path=str(tmp_path / "m.db"), channels=["console"], api_token="t"))
     assert ok
     assert lines[0] == "✓ timezone: America/New_York (system default)"
-    assert lines[1].startswith("✓ database: ") and "schema 4, wal journal, 0 items" in lines[1]
+    assert lines[1].startswith("✓ database: ")
+    assert f"schema {len(MIGRATIONS)}, wal journal, 0 items" in lines[1]
     assert "✓ API token: set" in lines
     assert "✓ channel console: configured" in lines
     assert lines[-1].startswith("0 failed, 0 warnings. Run with --send-test")

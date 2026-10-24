@@ -22,6 +22,7 @@ All notable changes to this project are documented here. The format follows
 - Reminder texts end with "(reply done or snooze 1h)"
 
 ### Fixed
+- Running more than one scheduler on a database (`serve` + `run`, cron `run --once`, two replicas) no longer delivers reminders twice: a lease in the database lets one fire while the others stand by and take over if it stops (#52). New metric `maestro_scheduler_leader`
 - Database connections are now closed (CLI, `maestro doctor`); `Store` is a context manager
 - API and CLI no longer crash if an item disappears between an update and the read-back (404 / exit 1 / "No item"); found by #57
 - One corrupt reminder or a failed tick no longer stops the scheduler, and one malformed Telegram update no longer stops the bot; new metric `maestro_scheduler_errors_total`
