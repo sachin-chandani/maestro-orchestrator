@@ -97,6 +97,9 @@
 <script>
 const $ = (id) => document.getElementById(id);
 const TOKEN_KEY = "maestro.token";
+// Set after a 401/429 so the 10 s auto-refresh doesn't keep sending a missing or wrong token;
+// cleared when a token is saved or the user acts.
+let locked = false;
 const readToken = () => { try { return localStorage.getItem(TOKEN_KEY); } catch { return null; } };
 const writeToken = (t) => { try { localStorage.setItem(TOKEN_KEY, t); } catch {} };
 
@@ -105,7 +108,11 @@ async function api(path, options = {}) {
   const token = readToken();
   if (token) headers.Authorization = `Bearer ${token}`;
   const res = await fetch(path, { ...options, headers });
-  if (res.status === 401) { $("auth").style.display = "block"; throw new Error("unauthorized"); }
+  if (res.status === 401) { $("auth").style.display = "block"; locked = true; throw new Error("unauthorized"); }
+  if (res.status === 429) {
+    locked = true;  // stop polling: every request would fail and keep the lockout going
+    throw new Error(`Too many attempts. Try again in ${res.headers.get("Retry-After") || 60} s.`);
+  }
   $("auth").style.display = "none";
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -194,7 +201,8 @@ async function refresh() {
     fill($("notes"), items.filter((i) => i.kind === "note"), q ? "No matching notes." : "No notes yet.");
     $("status").textContent = `updated ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`;
   } catch (e) {
-    $("status").textContent = e.message === "unauthorized" ? "locked" : "offline";
+    $("status").textContent = e.message === "unauthorized" ? "locked" : e.message.startsWith("Too many") ? "paused" : "offline";
+    if (e.message.startsWith("Too many")) toast(e.message);
   }
 }
 
@@ -215,13 +223,18 @@ for (const hint of document.querySelectorAll(".hints button")) {
   hint.addEventListener("click", () => { $("text").value = hint.textContent; $("text").focus(); });
 }
 
-$("auth-form").addEventListener("submit", (e) => { e.preventDefault(); writeToken($("token").value.trim()); refresh(); });
+$("auth-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  writeToken($("token").value.trim());
+  locked = false;
+  refresh();
+});
 let searchTimer;
 $("search").addEventListener("input", () => { clearTimeout(searchTimer); searchTimer = setTimeout(refresh, 200); });
 $("show-done").addEventListener("change", refresh);
 
 refresh();
-setInterval(refresh, 10000);
+setInterval(() => { if (!locked) refresh(); }, 10000);
 </script>
 </body>
 </html>

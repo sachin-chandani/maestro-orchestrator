@@ -1,11 +1,13 @@
 """In-process rate limiting for the HTTP server.
 
-Two limits, both per client address:
+Two limits, both per client address, both counted where authentication happens:
 
-- **Public endpoints** (`/webhooks/*`, reachable without the API token) allow `webhook_per_minute`
-  requests, so a flood can't run the parser or fill the database.
-- **Failed authentication** (401/403 responses) allows `auth_failures_per_minute`; past that the
-  client gets 429 on every route until the bucket refills, which stops token guessing.
+- **Wrong API tokens** allow `auth_failures_per_minute`; past that the client gets 429 on every
+  token-protected route until the bucket refills, which stops token guessing. A missing token is not
+  a guess and doesn't count.
+- **Webhook requests with an invalid signature** allow `webhook_per_minute`. Genuinely signed
+  provider callbacks are never limited, so the owner's messages aren't dropped and nothing unsigned
+  reaches the parser.
 
 Buckets live in memory and are capped at `max_clients` (least recently used evicted), so many
 distinct addresses can't exhaust memory. One server process is the deployment model (ADR 0003),
@@ -54,13 +56,20 @@ class TokenBucket:
         bucket.tokens -= 1
         return True
 
-    def has_tokens(self, key: str) -> bool:
-        """Whether a token is available, without spending it."""
-        return self._refilled(key).tokens >= 1
+    def _peek(self, key: str) -> float:
+        """Tokens available now, without creating or touching the bucket (so lookups from many
+        addresses can't evict the buckets of clients that are being limited)."""
+        bucket = self._buckets.get(key)
+        if bucket is None:
+            return float(self.capacity)
+        return min(self.capacity, bucket.tokens + (self.clock() - bucket.updated) * self.rate)
+
+    def is_empty(self, key: str) -> bool:
+        return self._peek(key) < 1
 
     def retry_after(self, key: str) -> int:
         """Whole seconds until one token is available."""
-        missing = 1 - self._refilled(key).tokens
+        missing = 1 - self._peek(key)
         return max(1, math.ceil(missing / self.rate)) if missing > 0 else 0
 
 
@@ -75,7 +84,11 @@ class RateLimits:
     # whatever the client sent, so they're never trusted).
     trust_proxy_headers: bool = False
 
-    def client(self, peer: str | None, forwarded_for: str | None) -> str:
+    def client(self, peer: str | None, forwarded_for: list[str]) -> str:
+        """`forwarded_for` holds every X-Forwarded-For header line: a proxy may append its own line
+        rather than extend the client's, so the last entry across all lines is the trusted one."""
         if self.trust_proxy_headers and forwarded_for:
-            return forwarded_for.split(",")[-1].strip() or (peer or "unknown")
+            entries = [e.strip() for line in forwarded_for for e in line.split(",") if e.strip()]
+            if entries:
+                return entries[-1]
         return peer or "unknown"

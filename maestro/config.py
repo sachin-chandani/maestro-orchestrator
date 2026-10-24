@@ -25,8 +25,8 @@ def load_dotenv(path: str | Path = ".env") -> None:
 
 
 def _count(env: Mapping[str, str], name: str, default: int) -> int:
-    value = env.get(name) or str(default)
-    if not value.isdigit():
+    value = (env.get(name) or str(default)).strip()
+    if not (value.isascii() and value.isdigit()):
         raise ValueError(f"{name} must be a whole number (0 turns it off), not {value!r}")
     return int(value)
 
