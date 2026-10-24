@@ -65,7 +65,7 @@ Dates are targets, not promises. Work is tracked in [GitHub issues](https://gith
 - [x] Telegram bot: capture, list, snooze and done from chat, plus a delivery channel with action buttons (#5)
 - [x] Inbound SMS to your Twilio number, with signature validation (#6)
 - [ ] Inbound voice: call your number and say the reminder (#7)
-- [ ] Reply-to-act: "done" or "snooze 1h" in reply to a reminder (#8)
+- [x] Reply-to-act: "done" or "snooze 1h" in reply to a reminder (#8)
 - [ ] Email-in via IMAP (#9)
 - [ ] Apple Shortcuts and Android Tasker recipes (#10)
 - [x] More phrases: parts of the day, end of day/week, weekends, `on the 5th`, every N days/weeks (#16)

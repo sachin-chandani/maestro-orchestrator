@@ -25,6 +25,7 @@ log = logging.getLogger(__name__)
 Transport = Callable[[str, dict, float], object]
 
 SNOOZE_CHOICES = ["10m", "1h", "1d"]
+CHANNEL = "telegram"  # replies act on the reminder last delivered on this channel
 
 
 class TelegramError(RuntimeError):
@@ -136,6 +137,10 @@ class TelegramBot:
                 log.warning("Ignoring Telegram message from unauthorised chat %s", chat_id)
             return
 
+        if command := commands.parse_command(text):
+            self.client.send(chat_id, commands.run(self.store, command, channel=CHANNEL, prefix="/"))
+            return
+
         if not text.startswith("/"):
             METRICS.inc("maestro_captures_total", source="telegram")
             item = self.store.add(parse(text, tz=self.store.tz))
@@ -143,16 +148,13 @@ class TelegramBot:
             self.client.send(chat_id, f"Saved {commands.line(item)}", buttons)
             return
 
-        command, *args = text.split()
-        command = command.split("@")[0].lower()  # "/list@MyMaestroBot" in group chats
-        if command in ("/start", "/help"):
-            self.client.send(chat_id, commands.help_text(prefix="/"))
-        elif command == "/list":
-            self.client.send(chat_id, commands.list_items(self.store))
-        elif command in ("/done", "/rm", "/snooze"):
-            self.client.send(chat_id, commands.act(self.store, command[1:], args, prefix="/"))
+        # A slash command that didn't parse: explain its usage, or that it doesn't exist.
+        word, *args = text.split()
+        word = word.split("@")[0].lower()  # "/done@MyMaestroBot" in group chats
+        if word in ("/done", "/rm", "/snooze"):
+            self.client.send(chat_id, commands.act(self.store, word[1:], args, prefix="/"))
         else:
-            self.client.send(chat_id, f"Unknown command {command}. Try /help")
+            self.client.send(chat_id, f"Unknown command {word}. Try /help")
 
     # --- buttons ---------------------------------------------------------------------------
 

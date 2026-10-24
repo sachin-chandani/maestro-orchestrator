@@ -2,7 +2,7 @@ from urllib.parse import urlencode
 
 import pytest
 
-from maestro.commands import parse_command
+from maestro.commands import Command, parse_command
 from maestro.models import Status
 from maestro.observability import METRICS
 from maestro.sms import WEBHOOK_PATH, SmsHandler, twilio_signature, twiml
@@ -25,15 +25,22 @@ def test_signature_matches_twilios_sdk():
 
 
 @pytest.mark.parametrize("text, expected", [
-    ("list", ("list", [])),
-    ("/list@MaestroBot", ("list", [])),
-    ("Done 3", ("done", ["3"])),
-    ("done #3", ("done", ["3"])),
-    ("delete 4", ("rm", ["4"])),
-    ("snooze 3 1h", ("snooze", ["3", "1h"])),
-    ("help", ("help", [])),
+    ("list", Command("list")),
+    ("/list@MaestroBot", Command("list")),
+    ("Done 3", Command("done", 3)),
+    ("done #3", Command("done", 3)),
+    ("done", Command("done")),
+    ("delete 4", Command("rm", 4)),
+    ("snooze 3 1h", Command("snooze", 3, "1h")),
+    ("snooze 1h", Command("snooze", None, "1h")),
+    ("snooze 2 hours", Command("snooze", None, "2 hours")),
+    ("snooze 3", Command("snooze", 3)),
+    ("snooze", Command("snooze")),
+    ("help", Command("help")),
+    ("start", Command("help")),
     ("done with taxes by friday", None),
-    ("snooze 3", None),
+    ("snooze the alarm", None),
+    ("snooze 1 soon", None),
     ("list my errands", None),
 ])
 def test_parse_command(text, expected):

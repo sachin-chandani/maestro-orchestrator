@@ -22,6 +22,7 @@ from maestro.store import Store
 log = logging.getLogger(__name__)
 
 WEBHOOK_PATH = "/webhooks/twilio/sms"
+CHANNEL = "twilio_sms"  # replies act on the reminder last delivered on this channel
 
 
 def twilio_signature(auth_token: str, url: str, params: dict[str, str]) -> str:
@@ -62,12 +63,7 @@ class SmsHandler:
             return twiml()
 
         if command := commands.parse_command(text):
-            action, args = command
-            if action in ("help", "start"):
-                return twiml(commands.help_text())
-            if action == "list":
-                return twiml(commands.list_items(self.store))
-            return twiml(commands.act(self.store, action, args))
+            return twiml(commands.run(self.store, command, channel=CHANNEL))
 
         METRICS.inc("maestro_captures_total", source="sms")
         item = self.store.add(parse(text, tz=self.store.tz))
