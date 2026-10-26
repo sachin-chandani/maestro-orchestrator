@@ -5,6 +5,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- The scheduler no longer overwrites a done or snooze that lands between delivering a reminder and finishing it (e.g. from another process)
+
+### Added
+- Acknowledgements: marking a recently delivered reminder done or snoozing it (from any interface, including `web`) is recorded per occurrence; deliveries from before the upgrade count as acknowledged; `GET /items?unacknowledged=true`, `awaiting_acknowledgement` on items, a web UI badge, and metrics `maestro_acknowledgements_total{via}` / `maestro_unacknowledged`. Groundwork for escalation (#19)
+
 ## [0.3.0] - 2026-10-26
 Capture from anywhere, hardened. Reminders can now come in by SMS, phone call, email and phone shortcuts, and the server behind them is built to run unattended: one scheduler fires at a time, bad data never stops it, and public endpoints are authenticated and rate limited.
 

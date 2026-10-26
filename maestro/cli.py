@@ -110,7 +110,7 @@ def _dispatch(args: argparse.Namespace, config: Config, store: Store, tz: ZoneIn
             print(f"No item #{args.id}", file=sys.stderr)
             return 1
         if args.command == "done":
-            store.set_status(args.id, Status.DONE)
+            store.complete(args.id, via="cli")
             print(f"Marked #{args.id} as done.")
         elif args.command == "rm":
             store.delete(args.id)
@@ -121,7 +121,7 @@ def _dispatch(args: argparse.Namespace, config: Config, store: Store, tz: ZoneIn
             except ValueError as e:
                 print(e, file=sys.stderr)
                 return 2
-            store.reschedule(args.id, add_elapsed(datetime.now(tz).replace(microsecond=0), delta))
+            store.snooze(args.id, add_elapsed(datetime.now(tz).replace(microsecond=0), delta), via="cli")
             if (snoozed := store.get(args.id)) is None:
                 print(f"No item #{args.id}", file=sys.stderr)
                 return 1

@@ -17,11 +17,12 @@ import sqlite3
 import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from maestro.models import Delivery, Item, Kind, Status
+from maestro.observability import METRICS
 from maestro.tz import UTC, get_timezone, localize
 
 log = logging.getLogger(__name__)
@@ -30,6 +31,9 @@ log = logging.getLogger(__name__)
 class SchemaTooNewError(RuntimeError):
     """The database was migrated by a newer Maestro than this one."""
 
+
+# A done/snooze acknowledges the latest delivery only if it was sent within this window.
+ACK_WINDOW = timedelta(hours=12)
 
 # Wait this long for another process's lock instead of failing with "database is locked".
 BUSY_TIMEOUT_SECONDS = 5.0
@@ -101,6 +105,22 @@ MIGRATIONS: list[list[str] | Callable[[sqlite3.Connection, ZoneInfo], None]] = [
             item_id     INTEGER NOT NULL,
             PRIMARY KEY (source, external_id)
         )""",
+    ],
+    # 7: acknowledgements of delivered reminders (done, snooze, reply), per occurrence; escalation
+    # (#12) acts on deliveries that stay unacknowledged
+    [
+        """CREATE TABLE IF NOT EXISTS acknowledgements (
+            item_id         INTEGER NOT NULL,
+            occurrence      TEXT NOT NULL,
+            acknowledged_at TEXT NOT NULL,
+            via             TEXT NOT NULL,
+            PRIMARY KEY (item_id, occurrence)
+        )""",
+        # Everything delivered before this version counts as handled, so escalation doesn't fire on
+        # the whole history at once after an upgrade.
+        """INSERT OR IGNORE INTO acknowledgements (item_id, occurrence, acknowledged_at, via)
+           SELECT item_id, occurrence, MAX(delivered_at), 'migration' FROM deliveries
+           WHERE delivered_at IS NOT NULL GROUP BY item_id, occurrence""",
     ],
 ]
 
@@ -304,22 +324,106 @@ class Store:
         )
         return [self._item(r) for r in rows]
 
+    # Row updates shared by the public methods below; callers hold the transaction.
+    def _set_status(self, item_id: int, status: Status) -> int:
+        return self.conn.execute("UPDATE items SET status = ? WHERE id = ?", (status, item_id)).rowcount
+
+    def _move(self, item_id: int, due_at: datetime) -> int:
+        return self.conn.execute(
+            "UPDATE items SET due_at = ?, status = ?, kind = ? WHERE id = ?",
+            (self._to_db(due_at), Status.PENDING, Kind.REMINDER, item_id),
+        ).rowcount
+
     def set_status(self, item_id: int, status: Status) -> bool:
         with self._transaction():
-            cur = self.conn.execute("UPDATE items SET status = ? WHERE id = ?", (status, item_id))
-        return cur.rowcount > 0
+            changed = self._set_status(item_id, status)
+        return changed > 0
 
     def reschedule(self, item_id: int, due_at: datetime) -> bool:
-        """Move an item to a new due time and make it pending again (snooze, next recurrence)."""
+        """Move an item to a new due time and make it pending again."""
         with self._transaction():
-            cur = self.conn.execute(
-                "UPDATE items SET due_at = ?, status = ?, kind = ? WHERE id = ?",
-                (self._to_db(due_at), Status.PENDING, Kind.REMINDER, item_id),
-            )
+            changed = self._move(item_id, due_at)
+        return changed > 0
+
+    def finish_occurrence(self, item_id: int, occurrence: datetime, next_due: datetime | None) -> bool:
+        """The scheduler's update after delivering `occurrence`: mark it fired, or move a recurring item
+        on to `next_due`. Only if the item is still pending at that occurrence, so a done or snooze that
+        landed in the meantime (e.g. from another process) is never overwritten."""
+        with self._transaction():
+            if next_due is None:
+                cur = self.conn.execute(
+                    "UPDATE items SET status = ? WHERE id = ? AND status = ? AND due_at = ?",
+                    (Status.FIRED, item_id, Status.PENDING, self._to_db(occurrence)),
+                )
+            else:
+                cur = self.conn.execute(
+                    "UPDATE items SET due_at = ? WHERE id = ? AND status = ? AND due_at = ?",
+                    (self._to_db(next_due), item_id, Status.PENDING, self._to_db(occurrence)),
+                )
         return cur.rowcount > 0
+
+    def complete(self, item_id: int, via: str, now: datetime | None = None) -> bool:
+        """Mark an item done because the person said so, acknowledging what was delivered."""
+        with self._transaction():
+            changed = self._set_status(item_id, Status.DONE)
+            acknowledged = bool(changed) and self._acknowledge(item_id, via, now)
+        if acknowledged:
+            METRICS.inc("maestro_acknowledgements_total", via=via)  # only once committed
+        return changed > 0
+
+    def snooze(self, item_id: int, until: datetime, via: str, now: datetime | None = None) -> bool:
+        """Push an item to `until` because the person asked, acknowledging what was delivered."""
+        with self._transaction():
+            changed = self._move(item_id, until)
+            acknowledged = bool(changed) and self._acknowledge(item_id, via, now)
+        if acknowledged:
+            METRICS.inc("maestro_acknowledgements_total", via=via)
+        return changed > 0
+
+    def _acknowledge(self, item_id: int, via: str, now: datetime | None) -> bool:
+        """Acknowledge the item's latest delivery if it was recent (inside a transaction). For a
+        recurring item the due time has already moved on, so the occurrence comes from the delivery
+        records. Deliveries older than ACK_WINDOW aren't what the person is reacting to (e.g. snoozing
+        today's reminder after ignoring yesterday's), so they stay unacknowledged."""
+        now = now or datetime.now(self.tz)
+        row = self.conn.execute(
+            "SELECT occurrence FROM deliveries WHERE item_id = ? AND delivered_at IS NOT NULL"
+            " AND delivered_at >= ? ORDER BY occurrence DESC LIMIT 1",
+            (item_id, self._to_db(now - ACK_WINDOW)),
+        ).fetchone()
+        if row is None:
+            return False  # nothing sent recently: nothing to acknowledge
+        cur = self.conn.execute(
+            "INSERT OR IGNORE INTO acknowledgements (item_id, occurrence, acknowledged_at, via)"
+            " VALUES (?, ?, ?, ?)",
+            (item_id, row["occurrence"], self._to_db(now), via),
+        )
+        return cur.rowcount > 0
+
+    _UNACKNOWLEDGED = """
+        FROM items i
+        JOIN (SELECT item_id, MAX(occurrence) AS occurrence FROM deliveries
+              WHERE delivered_at IS NOT NULL GROUP BY item_id) d ON d.item_id = i.id
+        LEFT JOIN acknowledgements a ON a.item_id = i.id AND a.occurrence = d.occurrence
+        WHERE a.item_id IS NULL AND i.status != ?"""
+
+    def unacknowledged(self) -> builtins.list[tuple[Item, datetime]]:
+        """Items whose latest delivered occurrence nobody has acknowledged yet, with that occurrence,
+        oldest delivery first."""
+        rows = self.conn.execute(
+            f"SELECT i.*, d.occurrence AS delivered_occurrence {self._UNACKNOWLEDGED} ORDER BY d.occurrence",
+            (Status.DONE,),
+        )
+        return [(self._item(r), self._required_from_db(r["delivered_occurrence"])) for r in rows]
+
+    def unacknowledged_ids(self) -> frozenset[int]:
+        """Cheap form of unacknowledged() for flags and counts."""
+        rows = self.conn.execute(f"SELECT i.id {self._UNACKNOWLEDGED}", (Status.DONE,))
+        return frozenset(r[0] for r in rows)
 
     def delete(self, item_id: int) -> bool:
         with self._transaction():
+            self.conn.execute("DELETE FROM acknowledgements WHERE item_id = ?", (item_id,))
             self.conn.execute("DELETE FROM deliveries WHERE item_id = ?", (item_id,))
             self.conn.execute("DELETE FROM inbound_messages WHERE item_id = ?", (item_id,))
             cur = self.conn.execute("DELETE FROM items WHERE id = ?", (item_id,))

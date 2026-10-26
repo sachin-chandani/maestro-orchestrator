@@ -88,7 +88,7 @@ maestro doctor --send-test  # also delivers a test message on each channel
 It exits non-zero if anything fails, so you can run it before a deploy (`docker compose run --rm maestro maestro doctor`).
 
 ### Monitoring
-`GET /metrics` serves Prometheus metrics (same bearer token as the API): captures by source, deliveries by channel and result, reminders fired, scheduler ticks and lag, and item counts by kind and status. Alert on `time() - maestro_scheduler_last_tick_timestamp_seconds > 120` to catch a stuck scheduler.
+`GET /metrics` serves Prometheus metrics (same bearer token as the API): captures by source, deliveries by channel and result, reminders fired, acknowledgements and reminders still awaiting one, scheduler ticks and lag, and item counts by kind and status. `GET /items?unacknowledged=true` lists reminders that were sent but not yet marked done or snoozed. Alert on `time() - maestro_scheduler_last_tick_timestamp_seconds > 120` to catch a stuck scheduler.
 
 ### Telegram
 1. Create a bot with [@BotFather](https://t.me/BotFather) and set `TELEGRAM_BOT_TOKEN`.

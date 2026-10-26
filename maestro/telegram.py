@@ -158,7 +158,7 @@ class TelegramBot:
         word, *args = text.split()
         word = word.split("@")[0].lower()  # "/done@MyMaestroBot" in group chats
         if word in ("/done", "/rm", "/snooze"):
-            self.client.send(chat_id, commands.act(self.store, word[1:], args, prefix="/"))
+            self.client.send(chat_id, commands.act(self.store, word[1:], args, prefix="/", via=CHANNEL))
         else:
             self.client.send(chat_id, f"Unknown command {word}. Try /help")
 
@@ -172,7 +172,8 @@ class TelegramBot:
             return
         action, _, rest = query.get("data", "").partition(":")
         args = rest.split(":") if rest else []
-        result = commands.act(self.store, action, args) if action in ("done", "snooze") else "Unknown action"
+        result = commands.act(self.store, action, args, via=CHANNEL) if action in ("done", "snooze") \
+            else "Unknown action"
         self.client.call("answerCallbackQuery", {"callback_query_id": query["id"], "text": result[:200]})
         # Replace the buttons with the outcome so old reminders can't be acted on twice by accident.
         self.client.call("editMessageText", {"chat_id": chat_id, "message_id": message.get("message_id"),

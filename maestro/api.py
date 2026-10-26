@@ -20,7 +20,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
 from maestro import __version__, commands, recurrence
-from maestro.models import Item, Status
+from maestro.models import Item
 from maestro.notifier import Notifier
 from maestro.observability import METRICS, Labels
 from maestro.parser import parse, parse_duration
@@ -89,10 +89,11 @@ class ItemOut(BaseModel):
     recurrence: str | None
     recurrence_label: str | None
     when: str  # human-readable, in the server's timezone: "Wed 28 Oct 17:00, every Monday" or "note"
+    awaiting_acknowledgement: bool  # delivered, and nobody has said done or snooze yet
     source_text: str
 
     @classmethod
-    def of(cls, item: Item) -> "ItemOut":
+    def of(cls, item: Item, awaiting: frozenset[int] = frozenset()) -> "ItemOut":
         if item.id is None:
             raise ValueError("Only stored items can be returned from the API")
         return cls(
@@ -100,6 +101,7 @@ class ItemOut(BaseModel):
             due_at=item.due_at, created_at=item.created_at, recurrence=item.recurrence,
             recurrence_label=recurrence.describe(item.recurrence) if item.recurrence else None,
             when=commands.when(item),
+            awaiting_acknowledgement=item.id in awaiting,
             source_text=item.source_text,
         )
 
@@ -217,6 +219,10 @@ def create_app(store: Store, api_token: str | None = None, notifier: Notifier | 
         async def twilio_voice_capture(request: Request) -> Response:
             return twiml_response(voice_handler.capture(await twilio_params(request, voice_handler)))
 
+    def client_name(request: Request) -> str:
+        """Which interface acted, for acknowledgements: the bundled web UI says so; anything else is api."""
+        return "web" if request.headers.get("X-Maestro-Client") == "web" else "api"
+
     def get_or_404(item_id: int) -> Item:
         if (item := store.get(item_id)) is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, f"No item #{item_id}")
@@ -237,7 +243,9 @@ def create_app(store: Store, api_token: str | None = None, notifier: Notifier | 
         items: dict[Labels, float] = {
             (("kind", kind), ("status", status)): n for (kind, status), n in store.counts().items()
         }
-        return PlainTextResponse(METRICS.render(extra={"maestro_items": items}),
+        unacknowledged: dict[Labels, float] = {(): float(len(store.unacknowledged_ids()))}
+        return PlainTextResponse(METRICS.render(extra={"maestro_items": items,
+                                                       "maestro_unacknowledged": unacknowledged}),
                                  media_type="text/plain; version=0.0.4")
 
     @app.post("/items", status_code=201, dependencies=[Depends(require_token)])
@@ -246,29 +254,37 @@ def create_app(store: Store, api_token: str | None = None, notifier: Notifier | 
         return ItemOut.of(store.add(parse(body.text, tz=store.tz)))
 
     @app.get("/items", dependencies=[Depends(require_token)])
-    async def list_items(include_done: bool = False, q: str | None = None) -> list[ItemOut]:
-        items = store.search(q) if q else store.list(include_done=include_done)
-        return [ItemOut.of(i) for i in items]
+    async def list_items(include_done: bool = False, q: str | None = None,
+                         unacknowledged: bool = False) -> list[ItemOut]:
+        awaiting = store.unacknowledged_ids()
+        if unacknowledged:
+            items = [item for item, _ in store.unacknowledged()]
+            if q:  # filters combine rather than being silently dropped
+                items = [item for item in items if q.lower() in item.text.lower()]
+        else:
+            items = store.search(q) if q else store.list(include_done=include_done)
+        return [ItemOut.of(i, awaiting) for i in items]
 
     @app.get("/items/{item_id}", dependencies=[Depends(require_token)])
     async def get_item(item_id: int) -> ItemOut:
-        return ItemOut.of(get_or_404(item_id))
+        return ItemOut.of(get_or_404(item_id), store.unacknowledged_ids())
 
     @app.post("/items/{item_id}/done", dependencies=[Depends(require_token)])
-    async def complete(item_id: int) -> ItemOut:
+    async def complete(item_id: int, request: Request) -> ItemOut:
         get_or_404(item_id)
-        store.set_status(item_id, Status.DONE)
-        return ItemOut.of(get_or_404(item_id))
+        store.complete(item_id, via=client_name(request))
+        return ItemOut.of(get_or_404(item_id), store.unacknowledged_ids())
 
     @app.post("/items/{item_id}/snooze", dependencies=[Depends(require_token)])
-    async def snooze(item_id: int, body: SnoozeIn) -> ItemOut:
+    async def snooze(item_id: int, body: SnoozeIn, request: Request) -> ItemOut:
         get_or_404(item_id)
         try:
             delta = parse_duration(body.duration)
         except ValueError as e:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(e)) from e
-        store.reschedule(item_id, add_elapsed(datetime.now(store.tz).replace(microsecond=0), delta))
-        return ItemOut.of(get_or_404(item_id))
+        store.snooze(item_id, add_elapsed(datetime.now(store.tz).replace(microsecond=0), delta),
+                     via=client_name(request))
+        return ItemOut.of(get_or_404(item_id), store.unacknowledged_ids())
 
     @app.delete("/items/{item_id}", status_code=204, dependencies=[Depends(require_token)])
     async def delete(item_id: int) -> None:
