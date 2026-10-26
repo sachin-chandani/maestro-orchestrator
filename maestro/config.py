@@ -66,7 +66,7 @@ class Config:
     ntfy_topic: str | None = None
 
     smtp_host: str | None = None
-    smtp_port: int = 587
+    smtp_port: int | None = None  # None: 465 for ssl, 587 otherwise
     smtp_security: str = "starttls"  # starttls, ssl or none
     smtp_user: str | None = None
     smtp_password: str | None = None
@@ -108,7 +108,7 @@ class Config:
             ntfy_url=env.get("NTFY_URL", "https://ntfy.sh").rstrip("/"),
             ntfy_topic=env.get("NTFY_TOPIC") or None,
             smtp_host=env.get("SMTP_HOST") or None,
-            smtp_port=_count(env, "SMTP_PORT", 587),
+            smtp_port=_count(env, "SMTP_PORT", 0) or None,
             smtp_security=(env.get("SMTP_SECURITY") or "starttls").strip().lower(),
             smtp_user=env.get("SMTP_USER") or None,
             smtp_password=env.get("SMTP_PASSWORD") or None,

@@ -7,6 +7,7 @@ switched on by name with MAESTRO_CHANNELS, e.g. `MAESTRO_CHANNELS=console,ntfy,t
 import base64
 import platform
 import re
+import secrets
 import smtplib
 import ssl
 import subprocess
@@ -96,26 +97,37 @@ class TwilioSMSNotifier:
         self.opener(request)
 
 
-REMINDER_MESSAGE_ID_RE = re.compile(r"<reminder-(\d+)-\d+@maestro>")
+# <reminder-<item id>-<occurrence, unix seconds>-<unique>@maestro>
+REMINDER_MESSAGE_ID_RE = re.compile(r"<reminder-(\d+)-(\d+)-[0-9a-f]+@maestro>")
 
 
 def reminder_message_id(item: Item) -> str:
-    """Message-ID for a reminder email. Replies quote it (In-Reply-To), which lets email-in act on
-    exactly this reminder; see maestro.email_in."""
+    """Message-ID for a reminder email. Replies quote it (In-Reply-To), which tells email-in exactly
+    which reminder and occurrence a reply is about. Unique per send: escalation re-sends the same
+    occurrence, and mail providers drop a second message with a Message-ID they've seen."""
     stamp = int(item.due_at.timestamp()) if item.due_at else 0
-    return f"<reminder-{item.id}-{stamp}@maestro>"
+    return f"<reminder-{item.id}-{stamp}-{secrets.token_hex(4)}@maestro>"
 
 
 SmtpFactory = Callable[[Config], smtplib.SMTP]
 
 
+def smtp_port(config: Config) -> int:
+    """SMTP_PORT, or the conventional port for the security mode: 465 for ssl, 587 otherwise."""
+    return config.smtp_port or (465 if config.smtp_security == "ssl" else 587)
+
+
 def _smtp(config: Config) -> smtplib.SMTP:
     if config.smtp_security == "ssl":
-        return smtplib.SMTP_SSL(config.smtp_host or "", config.smtp_port, timeout=15,
+        return smtplib.SMTP_SSL(config.smtp_host or "", smtp_port(config), timeout=15,
                                 context=ssl.create_default_context())
-    client = smtplib.SMTP(config.smtp_host or "", config.smtp_port, timeout=15)
+    client = smtplib.SMTP(config.smtp_host or "", smtp_port(config), timeout=15)
     if config.smtp_security == "starttls":
-        client.starttls(context=ssl.create_default_context())
+        try:
+            client.starttls(context=ssl.create_default_context())
+        except BaseException:
+            client.close()  # don't leak the socket when the server can't do TLS
+            raise
     return client
 
 
@@ -130,7 +142,8 @@ class EmailNotifier:
         message = EmailMessage()
         message["From"] = self.config.smtp_from or ""
         message["To"] = self.config.email_to or ""
-        message["Subject"] = f"Reminder: {item.text}"
+        # Header values can't contain line breaks; reminders captured from chat or the API can.
+        message["Subject"] = "Reminder: " + " ".join(item.text.split())
         message["Message-ID"] = reminder_message_id(item)
         lines = [item.text, ""]
         if self.config.imap_host:
@@ -199,6 +212,8 @@ def _telegram(config: Config) -> Notifier:
 def _email(config: Config) -> Notifier:
     _require("email", {"SMTP_HOST": config.smtp_host, "SMTP_FROM": config.smtp_from,
                        "MAESTRO_EMAIL_TO": config.email_to})
+    if bool(config.smtp_user) != bool(config.smtp_password):
+        raise ConfigError("set both SMTP_USER and SMTP_PASSWORD, or neither")
     if config.smtp_security not in ("starttls", "ssl", "none"):
         raise ConfigError(f"SMTP_SECURITY must be starttls, ssl or none, not {config.smtp_security!r}")
     if config.smtp_security == "none" and config.smtp_password:

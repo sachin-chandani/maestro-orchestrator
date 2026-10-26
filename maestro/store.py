@@ -292,9 +292,21 @@ class Store:
             )
         return item, True
 
+    def is_claimed(self, source: str, external_id: str) -> bool:
+        return self.conn.execute(
+            "SELECT 1 FROM inbound_messages WHERE source = ? AND external_id = ?", (source, external_id)
+        ).fetchone() is not None
+
+    def latest_delivered_occurrence(self, item_id: int) -> datetime | None:
+        row = self.conn.execute(
+            "SELECT MAX(occurrence) FROM deliveries WHERE item_id = ? AND delivered_at IS NOT NULL",
+            (item_id,),
+        ).fetchone()
+        return self._from_db(row[0]) if row else None
+
     def claim_inbound(self, source: str, external_id: str, item_id: int) -> bool:
-        """Record an inbound message that acted on an existing item (e.g. an email reply 'done').
-        False if it was already handled, so a retried delivery doesn't act twice."""
+        """Record an inbound message that acted on an existing item (e.g. an email reply 'done'), once
+        the action succeeded. False if it was already recorded."""
         with self._transaction():
             cur = self.conn.execute(
                 "INSERT OR IGNORE INTO inbound_messages (source, external_id, item_id) VALUES (?, ?, ?)",

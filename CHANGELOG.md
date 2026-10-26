@@ -6,7 +6,7 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
-- `email` channel: reminder emails over SMTP (STARTTLS by default; refuses to send a password without TLS). With email-in on, replying `done` or `snooze 1h` acts on exactly that reminder (the reply quotes its Message-ID); other replies are ignored instead of captured (#17)
+- `email` channel: reminder emails over SMTP (STARTTLS by default; refuses to send a password without TLS). With email-in on, replying `done` or `snooze 1h` acts on exactly that reminder and occurrence (the reply quotes its Message-ID; replies to an older occurrence are ignored); other replies are ignored instead of captured; HTML-only replies work (#17)
 - Escalation: `MAESTRO_ESCALATION=10m=twilio_sms, 30m=telegram+twilio_sms` re-sends unacknowledged reminders on louder channels, once per stage, timed from when the first notice went out, until someone says done or snooze; only within 12 hours of the due time; works with `run`, `run --once` and `serve`; replies to escalation messages act on the reminder; metric `maestro_escalations_total{stage}` (#12)
 
 ### Fixed

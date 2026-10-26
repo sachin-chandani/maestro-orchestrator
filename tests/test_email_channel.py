@@ -1,5 +1,6 @@
 """#17: reminder emails over SMTP, and acting on them by replying."""
 
+import re
 import smtplib
 from datetime import UTC, datetime, timedelta
 from email.message import EmailMessage
@@ -48,7 +49,7 @@ def test_reminder_email(monkeypatch):
     (message,) = smtp.sent
     assert message["Subject"] == "Reminder: Call mom"
     assert (message["From"], message["To"]) == ("maestro@example.com", "me@example.com")
-    assert message["Message-ID"] == "<reminder-7-1793091600@maestro>"
+    assert re.fullmatch(r"<reminder-7-1793091600-[0-9a-f]{8}@maestro>", message["Message-ID"])
     body = message.get_content()
     assert "Reply 'done', or 'snooze 1h'" in body and "https://maestro.example.com/" in body
     assert smtp.logins == [("maestro", "pw")] and smtp.closed
@@ -128,7 +129,7 @@ def setup():
     smtp = FakeSMTP()
     email = EmailNotifier(Config(**CONFIG), connect=lambda _: smtp)
     fire_due(store, MultiNotifier({"email": email}), now=now)
-    assert smtp.sent[0]["Message-ID"] == reminder_message_id(reminder)  # what a reply will quote
+    assert smtp.sent[0]["Message-ID"].startswith(f"<reminder-{reminder.id}-")  # what a reply will quote
     settings = EmailSettings(host="imap", user="u", password="p", authserv_id="mx.example.com",
                              allowed_senders=frozenset({"me@example.com"}))
     return store, EmailPoller(store, settings), reminder
@@ -165,3 +166,104 @@ def test_other_replies_are_ignored_not_captured(setup):
     assert handle(poller, reply(sent_as, "thanks!\n\n> Call mom")).done
     assert len(store.list(include_done=True)) == 1
     assert store.get(sent_as.id).status != Status.DONE
+
+
+def test_each_send_gets_a_new_message_id():
+    # Escalation re-sends the same occurrence; providers drop a repeated Message-ID.
+    smtp = FakeSMTP()
+    sender = EmailNotifier(Config(**CONFIG), connect=lambda _: smtp)
+    sender.send(item())
+    sender.send(item())
+    assert smtp.sent[0]["Message-ID"] != smtp.sent[1]["Message-ID"]
+
+
+def test_multi_line_reminders_can_be_emailed():
+    smtp = FakeSMTP()
+    EmailNotifier(Config(**CONFIG), connect=lambda _: smtp).send(
+        Item(id=1, text="Buy\nmilk\r\n at 5pm", kind=Kind.REMINDER, created_at=datetime.now(UTC)))
+    assert smtp.sent[0]["Subject"] == "Reminder: Buy milk at 5pm"
+
+
+def test_default_port_follows_security():
+    assert notifier_module.smtp_port(Config(**CONFIG, smtp_security="ssl")) == 465
+    assert notifier_module.smtp_port(Config(**CONFIG)) == 587
+    assert notifier_module.smtp_port(Config(**CONFIG, smtp_security="ssl", smtp_port=2465)) == 2465
+    assert Config.from_env({"SMTP_SECURITY": "ssl"}).smtp_port is None
+
+
+def test_failed_starttls_closes_the_socket(monkeypatch):
+    closed = []
+
+    class NoTls:
+        def __init__(self, host, port, timeout):
+            pass
+
+        def starttls(self, context):
+            raise smtplib.SMTPNotSupportedError("STARTTLS extension not supported by server")
+
+        def close(self):
+            closed.append(True)
+
+    monkeypatch.setattr(notifier_module.smtplib, "SMTP", NoTls)
+    with pytest.raises(smtplib.SMTPNotSupportedError):
+        notifier_module._smtp(Config(**CONFIG))
+    assert closed == [True]
+
+
+def test_half_set_credentials_are_a_config_error():
+    with pytest.raises(ConfigError, match="both SMTP_USER and SMTP_PASSWORD"):
+        CHANNELS["email"](Config(**{**CONFIG, "smtp_password": None}))
+
+
+def test_replies_about_an_earlier_occurrence_are_ignored(setup):
+    from datetime import timedelta as td
+
+    store, poller, sent_as = setup
+    # The reminder has been delivered again since (e.g. a daily one): an old email's reply is stale.
+    later = store.get(sent_as.id).due_at + td(days=1)
+    store.reschedule(sent_as.id, later)
+    fire_due(store, MultiNotifier({"push": FakePush()}), now=later)
+    handle(poller, reply(sent_as, "done"))
+    assert store.get(sent_as.id).status != Status.DONE
+
+
+class FakePush:
+    def send(self, item):
+        pass
+
+
+def test_a_number_that_disagrees_with_the_reply_is_refused(setup):
+    store, poller, sent_as = setup
+    other = store.add(Item(text="Pay rent", kind=Kind.REMINDER, created_at=datetime.now(UTC)))
+    handle(poller, reply(sent_as, f"done {other.id}"))
+    assert store.get(sent_as.id).status != Status.DONE
+    assert store.get(other.id).status != Status.DONE
+
+
+def test_a_failed_action_is_retried_not_lost(setup, monkeypatch):
+    import sqlite3
+
+    store, poller, sent_as = setup
+    raw = reply(sent_as, "done")
+    real = store.complete
+
+    def locked(*args, **kwargs):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(store, "complete", locked)
+    assert not handle(poller, raw).done  # stays unread
+    monkeypatch.setattr(store, "complete", real)
+    assert handle(poller, raw).done  # the retry acts
+    assert store.get(sent_as.id).status == Status.DONE
+
+
+def test_html_only_replies_work(setup):
+    store, poller, sent_as = setup
+    message = EmailMessage()
+    message["Authentication-Results"] = "mx.example.com; dmarc=pass"
+    message["From"] = "me@example.com"
+    message["Subject"] = "Re: Reminder: Call mom"
+    message["In-Reply-To"] = reminder_message_id(sent_as)
+    message.set_content("<div>Done</div><blockquote>Call mom</blockquote>", subtype="html")
+    handle(poller, bytes(message))
+    assert store.get(sent_as.id).status == Status.DONE
