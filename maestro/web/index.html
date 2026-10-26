@@ -104,7 +104,7 @@ const readToken = () => { try { return localStorage.getItem(TOKEN_KEY); } catch 
 const writeToken = (t) => { try { localStorage.setItem(TOKEN_KEY, t); } catch {} };
 
 async function api(path, options = {}) {
-  const headers = { "Content-Type": "application/json" };
+  const headers = { "Content-Type": "application/json", "X-Maestro-Client": "web" };
   const token = readToken();
   if (token) headers.Authorization = `Bearer ${token}`;
   const res = await fetch(path, { ...options, headers });

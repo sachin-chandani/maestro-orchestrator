@@ -219,8 +219,9 @@ def create_app(store: Store, api_token: str | None = None, notifier: Notifier | 
         async def twilio_voice_capture(request: Request) -> Response:
             return twiml_response(voice_handler.capture(await twilio_params(request, voice_handler)))
 
-    def awaiting_ids() -> frozenset[int]:
-        return frozenset(item.id for item, _ in store.unacknowledged() if item.id is not None)
+    def client_name(request: Request) -> str:
+        """Which interface acted, for acknowledgements: the bundled web UI says so; anything else is api."""
+        return "web" if request.headers.get("X-Maestro-Client") == "web" else "api"
 
     def get_or_404(item_id: int) -> Item:
         if (item := store.get(item_id)) is None:
@@ -242,7 +243,7 @@ def create_app(store: Store, api_token: str | None = None, notifier: Notifier | 
         items: dict[Labels, float] = {
             (("kind", kind), ("status", status)): n for (kind, status), n in store.counts().items()
         }
-        unacknowledged: dict[Labels, float] = {(): float(len(store.unacknowledged()))}
+        unacknowledged: dict[Labels, float] = {(): float(len(store.unacknowledged_ids()))}
         return PlainTextResponse(METRICS.render(extra={"maestro_items": items,
                                                        "maestro_unacknowledged": unacknowledged}),
                                  media_type="text/plain; version=0.0.4")
@@ -255,32 +256,35 @@ def create_app(store: Store, api_token: str | None = None, notifier: Notifier | 
     @app.get("/items", dependencies=[Depends(require_token)])
     async def list_items(include_done: bool = False, q: str | None = None,
                          unacknowledged: bool = False) -> list[ItemOut]:
-        awaiting = awaiting_ids()
+        awaiting = store.unacknowledged_ids()
         if unacknowledged:
             items = [item for item, _ in store.unacknowledged()]
+            if q:  # filters combine rather than being silently dropped
+                items = [item for item in items if q.lower() in item.text.lower()]
         else:
             items = store.search(q) if q else store.list(include_done=include_done)
         return [ItemOut.of(i, awaiting) for i in items]
 
     @app.get("/items/{item_id}", dependencies=[Depends(require_token)])
     async def get_item(item_id: int) -> ItemOut:
-        return ItemOut.of(get_or_404(item_id), awaiting_ids())
+        return ItemOut.of(get_or_404(item_id), store.unacknowledged_ids())
 
     @app.post("/items/{item_id}/done", dependencies=[Depends(require_token)])
-    async def complete(item_id: int) -> ItemOut:
+    async def complete(item_id: int, request: Request) -> ItemOut:
         get_or_404(item_id)
-        store.complete(item_id, via="api")
-        return ItemOut.of(get_or_404(item_id), awaiting_ids())
+        store.complete(item_id, via=client_name(request))
+        return ItemOut.of(get_or_404(item_id), store.unacknowledged_ids())
 
     @app.post("/items/{item_id}/snooze", dependencies=[Depends(require_token)])
-    async def snooze(item_id: int, body: SnoozeIn) -> ItemOut:
+    async def snooze(item_id: int, body: SnoozeIn, request: Request) -> ItemOut:
         get_or_404(item_id)
         try:
             delta = parse_duration(body.duration)
         except ValueError as e:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(e)) from e
-        store.snooze(item_id, add_elapsed(datetime.now(store.tz).replace(microsecond=0), delta), via="api")
-        return ItemOut.of(get_or_404(item_id), awaiting_ids())
+        store.snooze(item_id, add_elapsed(datetime.now(store.tz).replace(microsecond=0), delta),
+                     via=client_name(request))
+        return ItemOut.of(get_or_404(item_id), store.unacknowledged_ids())
 
     @app.delete("/items/{item_id}", status_code=204, dependencies=[Depends(require_token)])
     async def delete(item_id: int) -> None:

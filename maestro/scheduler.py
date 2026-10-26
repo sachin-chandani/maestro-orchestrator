@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 from maestro import recurrence
-from maestro.models import Delivery, Item, Status
+from maestro.models import Delivery, Item
 from maestro.notifier import MultiNotifier, Notifier
 from maestro.observability import METRICS
 from maestro.store import Store
@@ -177,9 +177,9 @@ def fire_due(store: Store, notifier: Notifier, now: datetime | None = None, leas
                 # up. Work in the item's timezone so the next occurrence keeps its wall-clock time.
                 after = max(now, due_at).astimezone(due_at.tzinfo)
                 next_due = recurrence.next_occurrence(item.recurrence, after, due_at.time(), anchor=due_at)
-                store.reschedule(item_id, next_due)
+                store.finish_occurrence(item_id, due_at, next_due)
             else:
-                store.set_status(item_id, Status.FIRED)
+                store.finish_occurrence(item_id, due_at, None)
             finished.append(item)
         except Exception:
             # One broken item (e.g. a corrupt recurrence rule) must not stop the others.
