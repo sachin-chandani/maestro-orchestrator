@@ -65,6 +65,14 @@ class Config:
     ntfy_url: str = "https://ntfy.sh"
     ntfy_topic: str | None = None
 
+    smtp_host: str | None = None
+    smtp_port: int | None = None  # None: 465 for ssl, 587 otherwise
+    smtp_security: str = "starttls"  # starttls, ssl or none
+    smtp_user: str | None = None
+    smtp_password: str | None = None
+    smtp_from: str | None = None
+    email_to: str | None = None  # where reminder emails go
+
     telegram_bot_token: str | None = None
     telegram_chat_id: str | None = None
 
@@ -99,6 +107,13 @@ class Config:
             sms_to=env.get("MAESTRO_SMS_TO") or None,
             ntfy_url=env.get("NTFY_URL", "https://ntfy.sh").rstrip("/"),
             ntfy_topic=env.get("NTFY_TOPIC") or None,
+            smtp_host=env.get("SMTP_HOST") or None,
+            smtp_port=_count(env, "SMTP_PORT", 0) or None,
+            smtp_security=(env.get("SMTP_SECURITY") or "starttls").strip().lower(),
+            smtp_user=env.get("SMTP_USER") or None,
+            smtp_password=env.get("SMTP_PASSWORD") or None,
+            smtp_from=env.get("SMTP_FROM") or None,
+            email_to=env.get("MAESTRO_EMAIL_TO") or None,
             telegram_bot_token=env.get("TELEGRAM_BOT_TOKEN") or None,
             telegram_chat_id=env.get("TELEGRAM_CHAT_ID") or None,
             imap_host=env.get("IMAP_HOST") or None,

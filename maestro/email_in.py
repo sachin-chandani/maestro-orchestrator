@@ -18,6 +18,7 @@ server never delays the scheduler; captures happen on the thread that owns the s
 import email
 import email.policy
 import hashlib
+import html
 import imaplib
 import logging
 import queue
@@ -26,11 +27,14 @@ import threading
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from email.message import EmailMessage
 from email.utils import parseaddr
 from typing import Protocol
 
+from maestro import commands
 from maestro.models import Item
+from maestro.notifier import REMINDER_MESSAGE_ID_RE
 from maestro.observability import METRICS
 from maestro.parser import parse
 from maestro.store import Store
@@ -89,17 +93,26 @@ class Outcome:
     done: bool
 
 
+def body_lines(message: EmailMessage) -> list[str]:
+    """Non-empty lines of the plain-text body, or of the HTML body with tags removed when there is no
+    plain part (some mobile clients send HTML only)."""
+    body = message.get_body(preferencelist=("plain", "html"))
+    if body is None:
+        return []
+    content = str(body.get_content())
+    if body.get_content_type() == "text/html":
+        content = re.sub(r"(?i)<br\s*/?>|</(?:p|div|blockquote)>", "\n", content)
+        content = html.unescape(re.sub(r"<[^>]+>", "", content))
+    return [line.strip() for line in content.splitlines() if line.strip()]
+
+
 def capture_text(message: EmailMessage) -> str:
-    """The subject without reply/forward prefixes, or the first non-empty line of the plain body."""
+    """The subject without reply/forward prefixes, or the first line of the body."""
     subject = _REPLY_PREFIX_RE.sub("", str(message.get("Subject", ""))).strip()
     if subject:
         return subject[:MAX_TEXT]
-    body = message.get_body(preferencelist=("plain",))
-    content = body.get_content() if body is not None else ""
-    for line in str(content).splitlines():
-        if line.strip():
-            return line.strip()[:MAX_TEXT]
-    return ""
+    lines = body_lines(message)
+    return lines[0][:MAX_TEXT] if lines else ""
 
 
 def _authserv_id(header: str) -> str:
@@ -125,6 +138,18 @@ def is_authorised(message: EmailMessage, allowed: frozenset[str], require_dmarc:
         if not re.search(r"\bdmarc=pass\b", ours.lower()):
             return False, f"{authserv_id} did not report dmarc=pass (From may be forged)"
     return True, ""
+
+
+def first_reply_line(message: EmailMessage) -> str:
+    """The first line someone typed in a reply: skips quoted ('>') lines, stops at the usual
+    'On ... wrote:' quote header."""
+    for line in body_lines(message):
+        if line.startswith(">"):
+            continue
+        if re.match(r"^On .+wrote:$", line):
+            break
+        return line
+    return ""
 
 
 def dedupe_key(message: EmailMessage, raw: bytes) -> str:
@@ -213,6 +238,12 @@ class EmailPoller:
             if not allowed:
                 log.warning("Ignoring email %s: %s", fetched.uid, reason)
                 return Outcome(None, done=True)
+            if reply := REMINDER_MESSAGE_ID_RE.search(
+                f"{message.get('In-Reply-To', '')} {message.get('References', '')}"
+            ):
+                occurrence = datetime.fromtimestamp(int(reply[2]), UTC)
+                key = dedupe_key(message, fetched.raw)
+                return self._reply(message, int(reply[1]), occurrence, key, fetched.uid)
             text = capture_text(message)
             if not text:
                 log.info("Ignoring email %s: no subject or text", fetched.uid)
@@ -232,6 +263,33 @@ class EmailPoller:
                 return Outcome(None, done=True)
             log.exception("Failed to handle email %s; leaving it unread to retry", fetched.uid)
             return Outcome(None, done=False)
+
+    def _reply(self, message: EmailMessage, item_id: int, occurrence: datetime, key: str,
+               uid: str) -> Outcome:
+        """A reply to a reminder email: its first line is a command for that reminder ('done',
+        'snooze 1h'). Anything else is ignored rather than captured as a new item.
+
+        Only acts if the email was about the item's latest delivered occurrence: replying 'done' on
+        Wednesday to Monday's email of a daily reminder must not end the series."""
+        command = commands.parse_command(first_reply_line(message))
+        if command is None or command.action not in ("done", "snooze"):
+            log.info("Ignoring reply %s to reminder #%s: no done/snooze on the first line", uid, item_id)
+            return Outcome(None, done=True)
+        if command.item_id is not None and command.item_id != item_id:
+            log.warning("Ignoring reply %s: it answers reminder #%s but says %s %s", uid, item_id,
+                        command.action, command.item_id)
+            return Outcome(None, done=True)
+        if self.store.is_claimed("email-reply", key):
+            return Outcome(None, done=True)  # already handled on an earlier poll
+        latest = self.store.latest_delivered_occurrence(item_id)
+        if latest is None or int(latest.timestamp()) != int(occurrence.timestamp()):
+            log.info("Ignoring reply %s: it is about an earlier occurrence of reminder #%s", uid, item_id)
+            return Outcome(None, done=True)
+        command.item_id = item_id
+        result = commands.run(self.store, command, channel="email")
+        self.store.claim_inbound("email-reply", key, item_id)  # only after the action succeeded
+        log.info("Email reply %s on reminder #%s: %s", uid, item_id, result)
+        return Outcome(self.store.get(item_id), done=True)
 
     def handle_all(self, fetched: list[Fetched]) -> tuple[list[Item], list[str]]:
         """Captured items, and the uids that can be marked read."""
