@@ -14,6 +14,8 @@ All notable changes to this project are documented here. The format follows
 - Inbound SMS: text your Twilio number to capture, or `list` / `done 3` / `snooze 3 1h` / `rm 3`; verified with Twilio's signature and limited to your own number (#6)
 - `MAESTRO_PUBLIC_URL` for verifying webhooks behind a reverse proxy
 - Inbound voice: call your Twilio number, say the reminder, hear it read back; signed webhooks, owner only, other callers and caller IDs that failed STIR/SHAKEN rejected unanswered, low-confidence transcripts not saved (#7)
+- Guide: capture from your phone with Apple Shortcuts or Android Tasker (`docs/integrations/phone-shortcuts.md`); its examples and claims are tested against the API (#10)
+- API items include `when`, a ready-to-show description of the due time ("Wed 28 Oct 17:00, every Monday", or "note")
 - Email-in: a dedicated inbox polled over IMAP in a background worker; subject (or first body line) captured; only `MAESTRO_EMAIL_FROM` senders with DMARC confirmed by your provider's own header (`MAESTRO_EMAIL_AUTHSERV_ID`); once per Message-ID (or content hash); failures retried up to 3 times (#9)
 - Inbound SMS and calls are captured once per Twilio message/call id, so provider retries don't create duplicates (migration 6)
 - Parser understands dictated `a.m.`/`p.m.` after a time ("5 p.m.", "5p.m.", "4 P.M."), without touching other text ("the P.M.")

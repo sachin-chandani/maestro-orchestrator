@@ -60,7 +60,7 @@ curl -X POST localhost:8000/items \
   -H "Content-Type: application/json" \
   -d '{"text": "dentist next tuesday at 3pm"}'
 ```
-Open `http://localhost:8000` for the web UI (capture, browse, search, done/snooze/delete). Interactive API docs are at `http://localhost:8000/docs`.
+Open `http://localhost:8000` for the web UI (capture, browse, search, done/snooze/delete). Interactive API docs are at `http://localhost:8000/docs`. To capture from your phone with Apple Shortcuts or Android Tasker, see [docs/integrations/phone-shortcuts.md](docs/integrations/phone-shortcuts.md).
 
 ### Configuration
 All settings come from environment variables or a `.env` file. See [.env.example](.env.example).

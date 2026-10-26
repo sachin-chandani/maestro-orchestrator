@@ -19,7 +19,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, 
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
-from maestro import __version__, recurrence
+from maestro import __version__, commands, recurrence
 from maestro.models import Item, Status
 from maestro.notifier import Notifier
 from maestro.observability import METRICS, Labels
@@ -88,6 +88,7 @@ class ItemOut(BaseModel):
     created_at: datetime
     recurrence: str | None
     recurrence_label: str | None
+    when: str  # human-readable, in the server's timezone: "Wed 28 Oct 17:00, every Monday" or "note"
     source_text: str
 
     @classmethod
@@ -98,6 +99,7 @@ class ItemOut(BaseModel):
             id=item.id, text=item.text, kind=item.kind, status=item.status,
             due_at=item.due_at, created_at=item.created_at, recurrence=item.recurrence,
             recurrence_label=recurrence.describe(item.recurrence) if item.recurrence else None,
+            when=commands.when(item),
             source_text=item.source_text,
         )
 
