@@ -407,12 +407,15 @@ class Store:
         LEFT JOIN acknowledgements a ON a.item_id = i.id AND a.occurrence = d.occurrence
         WHERE a.item_id IS NULL AND i.status != ?"""
 
-    def unacknowledged(self) -> builtins.list[tuple[Item, datetime]]:
+    def unacknowledged(self, since: datetime | None = None) -> builtins.list[tuple[Item, datetime]]:
         """Items whose latest delivered occurrence nobody has acknowledged yet, with that occurrence,
-        oldest delivery first."""
+        oldest delivery first; optionally only occurrences from `since` on."""
+        recent = " AND d.occurrence >= ?" if since else ""
+        params: tuple[object, ...] = (Status.DONE, self._to_db(since)) if since else (Status.DONE,)
         rows = self.conn.execute(
-            f"SELECT i.*, d.occurrence AS delivered_occurrence {self._UNACKNOWLEDGED} ORDER BY d.occurrence",
-            (Status.DONE,),
+            f"SELECT i.*, d.occurrence AS delivered_occurrence {self._UNACKNOWLEDGED}{recent}"
+            " ORDER BY d.occurrence",
+            params,
         )
         return [(self._item(r), self._required_from_db(r["delivered_occurrence"])) for r in rows]
 
@@ -433,9 +436,10 @@ class Store:
         """The item most recently delivered on `channel` that still exists (for "reply done")."""
         row = self.conn.execute(
             "SELECT d.item_id FROM deliveries d JOIN items i ON i.id = d.item_id"
-            " WHERE (d.channel = ? OR d.channel LIKE ?) AND d.delivered_at IS NOT NULL"
-            " ORDER BY d.delivered_at DESC LIMIT 1",
-            (channel, f"escalation%:{channel}"),  # escalation stages on the same channel count too
+            " WHERE (d.channel = ? OR (d.channel LIKE 'escalation%' AND"
+            "        substr(d.channel, instr(d.channel, ':') + 1) = ?))"
+            " AND d.delivered_at IS NOT NULL ORDER BY d.delivered_at DESC LIMIT 1",
+            (channel, channel),  # escalation stages on the same channel ("escalation2:<channel>") count too
         ).fetchone()
         return row[0] if row else None
 

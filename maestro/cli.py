@@ -149,7 +149,7 @@ def _dispatch(args: argparse.Namespace, config: Config, store: Store, tz: ZoneIn
             # Respect a running server's lease, and hand it straight back afterwards.
             lease = Lease()
             try:
-                fire_due(store, notifier, lease=lease)
+                fire_due(store, notifier, lease=lease, escalation=escalation)
             finally:
                 lease.release(store)
         else:

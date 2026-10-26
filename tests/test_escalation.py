@@ -179,3 +179,98 @@ def test_doctor_shows_the_plan(channels, tmp_path):
     doctor.run(Config(db_path=str(tmp_path / "m.db"), channels=["console"], api_token="t",
                       escalation="10m=pager"), out=lines.append)
     assert any(line.startswith("✗ escalation: MAESTRO_ESCALATION: unknown channel 'pager'") for line in lines)
+
+
+def test_stages_count_from_the_first_notice_not_the_due_time(channels):
+    # The first notice went out 40 minutes late (downtime): stages still wait their delays after it.
+    store = Store()
+    reminder(store)
+    late = DUE + timedelta(minutes=40)
+    tick(store, Recorder(), late)
+    assert channels["sms"].sent == [] and channels["call"].sent == []  # not everything at once
+    tick(store, Recorder(), late + timedelta(minutes=10))
+    assert channels["sms"].sent == ["Still waiting: Take pills"] and channels["call"].sent == []
+
+
+def test_cron_run_once_escalates(channels, tmp_path, monkeypatch):
+    from datetime import UTC, datetime
+
+    from maestro.cli import main
+
+    monkeypatch.setitem(CHANNELS, "console", lambda _config: Recorder())
+    path = tmp_path / "m.db"
+    now = datetime.now(UTC).replace(microsecond=0)
+    with Store(path) as store:
+        reminder(store, due=now - timedelta(minutes=20))
+        fire_due(store, MultiNotifier({"push": Recorder()}), now=now - timedelta(minutes=15))
+    monkeypatch.setenv("MAESTRO_CHANNELS", "console")
+    monkeypatch.setenv("MAESTRO_ESCALATION", "10m=sms")
+    monkeypatch.chdir(tmp_path)
+    assert main(["--db", str(path), "run", "--once"]) == 0
+    assert channels["sms"].sent == ["Still waiting: Take pills"]
+
+
+def test_escalation_stops_when_the_lease_is_lost(channels, tmp_path):
+    path = tmp_path / "m.db"
+    store = Store(path)
+    for n in range(3):
+        reminder(store, f"R{n}")
+    tick(store, Recorder(), DUE)
+    calls = {"n": 0}
+    leader = Lease(owner="a", clock=lambda: DUE + timedelta(minutes=10), ttl=timedelta(hours=1))
+    real = leader.acquire
+
+    def acquire(store_, now):
+        calls["n"] += 1
+        return real(store_, now) if calls["n"] <= 3 else False  # lost after the first reminder
+
+    leader.acquire = acquire
+    fire_due(store, MultiNotifier({"push": Recorder()}), now=DUE + timedelta(minutes=10), lease=leader,
+             escalation=stages("10m=sms"))
+    assert channels["sms"].sent == ["Still waiting: R0"]
+
+
+def test_one_broken_item_does_not_stop_escalation_for_others(channels, monkeypatch):
+    store = Store()
+    reminder(store, "A")
+    reminder(store, "B")
+    tick(store, Recorder(), DUE)
+    real = store.deliveries
+
+    def broken_for_a(item_id, occurrence):
+        if item_id == 1:
+            raise RuntimeError("corrupt row")
+        return real(item_id, occurrence)
+
+    monkeypatch.setattr(store, "deliveries", broken_for_a)
+    tick(store, Recorder(), DUE + timedelta(minutes=10), spec="10m=sms")
+    assert channels["sms"].sent == ["Still waiting: B"]
+
+
+def test_reply_matching_is_exact_per_channel():
+    store = Store()
+    item = reminder(store)
+    store.record_delivery(item.id, DUE, _delivered("escalation1:twilioXsms"))
+    assert store.last_delivered("twilio_sms") is None  # '_' is not a wildcard
+    store.record_delivery(item.id, DUE, _delivered("escalation12:twilio_sms"))
+    assert store.last_delivered("twilio_sms") == item.id
+
+
+def _delivered(channel):
+    from maestro.models import Delivery
+
+    return Delivery(channel=channel, attempts=1, delivered_at=DUE)
+
+
+def test_a_channel_listed_twice_in_a_stage_is_an_error():
+    with pytest.raises(ConfigError, match="lists a channel twice"):
+        parse_spec("10m=sms+sms")
+
+
+def test_doctor_send_test_covers_escalation_only_channels(channels, tmp_path):
+    from maestro import doctor
+
+    lines = []
+    doctor.run(Config(db_path=str(tmp_path / "m.db"), channels=["console"], api_token="t",
+                      escalation="10m=sms"), send_test=True, out=lines.append)
+    assert "✓ send sms: delivered" in lines

@@ -88,7 +88,7 @@ If a reminder isn't acknowledged (marked done or snoozed, from anywhere), Maestr
 MAESTRO_ESCALATION="10m=twilio_sms, 30m=telegram+twilio_sms"
 ```
 
-That sends an SMS 10 minutes after the due time, then Telegram and another SMS at 30 minutes, each once, prefixed "Still waiting:". Replying `done` to any of them stops the rest. Only reminders from the last 12 hours escalate, so turning this on never pages you about old ones. `maestro doctor` prints the plan.
+That sends an SMS 10 minutes after the first notice went out, then Telegram and another SMS at 30 minutes, each once, prefixed "Still waiting:". Replying `done` to any of them stops the rest. Only reminders from the last 12 hours escalate, so turning this on never pages you about old ones. `maestro doctor` prints the plan.
 
 ### Checking your setup
 ```bash

@@ -124,8 +124,7 @@ def _escalation(config: Config) -> list[Check]:
         stages = build_stages(config)
     except ConfigError as e:
         return [Check(FAIL, "escalation", str(e))]
-    plan = "; ".join(f"after {int(s.delay.total_seconds() // 60)}m: "
-                     f"{', '.join(k.split(':', 1)[1] for k in s.channels)}" for s in stages)
+    plan = "; ".join(f"after {int(s.delay.total_seconds() // 60)}m: {', '.join(s.names)}" for s in stages)
     return [Check(OK, "escalation", plan)]
 
 
@@ -168,6 +167,16 @@ def run(config: Config, send_test: bool = False, out: Callable[[str], None] = pr
               *_inbound_sms(config), *_email_in(config, connect=send_test), *_escalation(config)]
     channel_checks, built = _channels(config)
     checks += channel_checks
+    # Channels used only for escalation still need a test message, or a broken one is found mid-escalation.
+    if config.escalation:
+        from maestro.escalation import build_stages
+
+        try:
+            for stage in build_stages(config):
+                built.update({name: notifier for name, notifier in zip(stage.names, stage.channels.values(),
+                                                                         strict=True) if name not in built})
+        except ConfigError:
+            pass  # already reported by _escalation
     if send_test:
         checks += _send_tests(built)
 

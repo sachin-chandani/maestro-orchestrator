@@ -193,7 +193,8 @@ def fire_due(store: Store, notifier: Notifier, now: datetime | None = None, leas
     if escalation and (not lease or lease.acquire(store, now)):
         from maestro.escalation import escalate
 
-        escalate(store, escalation, now, _deliver, MAX_ATTEMPTS)
+        escalate(store, escalation, now, _deliver, MAX_ATTEMPTS,
+                 renew=(lambda: lease.acquire(store, now)) if lease else (lambda: True))
     return finished
 
 
