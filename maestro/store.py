@@ -22,6 +22,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from maestro.models import Delivery, Item, Kind, Status
+from maestro.observability import METRICS
 from maestro.tz import UTC, get_timezone, localize
 
 log = logging.getLogger(__name__)
@@ -100,6 +101,17 @@ MIGRATIONS: list[list[str] | Callable[[sqlite3.Connection, ZoneInfo], None]] = [
             external_id TEXT NOT NULL,
             item_id     INTEGER NOT NULL,
             PRIMARY KEY (source, external_id)
+        )""",
+    ],
+    # 7: acknowledgements of delivered reminders (done, snooze, reply), per occurrence; escalation
+    # (#12) acts on deliveries that stay unacknowledged
+    [
+        """CREATE TABLE IF NOT EXISTS acknowledgements (
+            item_id         INTEGER NOT NULL,
+            occurrence      TEXT NOT NULL,
+            acknowledged_at TEXT NOT NULL,
+            via             TEXT NOT NULL,
+            PRIMARY KEY (item_id, occurrence)
         )""",
     ],
 ]
@@ -318,8 +330,60 @@ class Store:
             )
         return cur.rowcount > 0
 
+    def complete(self, item_id: int, via: str, now: datetime | None = None) -> bool:
+        """Mark an item done because the person said so, acknowledging what was delivered."""
+        with self._transaction():
+            cur = self.conn.execute("UPDATE items SET status = ? WHERE id = ?", (Status.DONE, item_id))
+            if cur.rowcount:
+                self._acknowledge(item_id, via, now)
+        return cur.rowcount > 0
+
+    def snooze(self, item_id: int, until: datetime, via: str, now: datetime | None = None) -> bool:
+        """Push an item to `until` because the person asked, acknowledging what was delivered."""
+        with self._transaction():
+            cur = self.conn.execute(
+                "UPDATE items SET due_at = ?, status = ?, kind = ? WHERE id = ?",
+                (self._to_db(until), Status.PENDING, Kind.REMINDER, item_id),
+            )
+            if cur.rowcount:
+                self._acknowledge(item_id, via, now)
+        return cur.rowcount > 0
+
+    def _acknowledge(self, item_id: int, via: str, now: datetime | None) -> None:
+        """Acknowledge the item's latest delivered occurrence (inside a transaction). For a recurring
+        item the due time has already moved on, so the occurrence comes from the delivery records."""
+        row = self.conn.execute(
+            "SELECT MAX(occurrence) FROM deliveries WHERE item_id = ? AND delivered_at IS NOT NULL",
+            (item_id,),
+        ).fetchone()
+        if row is None or row[0] is None:
+            return  # acted on before anything was sent: nothing to acknowledge
+        cur = self.conn.execute(
+            "INSERT OR IGNORE INTO acknowledgements (item_id, occurrence, acknowledged_at, via)"
+            " VALUES (?, ?, ?, ?)",
+            (item_id, row[0], self._to_db(now or datetime.now(self.tz)), via),
+        )
+        if cur.rowcount:
+            METRICS.inc("maestro_acknowledgements_total", via=via)
+
+    def unacknowledged(self) -> builtins.list[tuple[Item, datetime]]:
+        """Items whose latest delivered occurrence nobody has acknowledged yet, with that occurrence,
+        oldest delivery first."""
+        rows = self.conn.execute(
+            """SELECT i.*, d.occurrence AS delivered_occurrence
+               FROM items i
+               JOIN (SELECT item_id, MAX(occurrence) AS occurrence FROM deliveries
+                     WHERE delivered_at IS NOT NULL GROUP BY item_id) d ON d.item_id = i.id
+               LEFT JOIN acknowledgements a ON a.item_id = i.id AND a.occurrence = d.occurrence
+               WHERE a.item_id IS NULL AND i.status != ?
+               ORDER BY d.occurrence""",
+            (Status.DONE,),
+        )
+        return [(self._item(r), self._required_from_db(r["delivered_occurrence"])) for r in rows]
+
     def delete(self, item_id: int) -> bool:
         with self._transaction():
+            self.conn.execute("DELETE FROM acknowledgements WHERE item_id = ?", (item_id,))
             self.conn.execute("DELETE FROM deliveries WHERE item_id = ?", (item_id,))
             self.conn.execute("DELETE FROM inbound_messages WHERE item_id = ?", (item_id,))
             cur = self.conn.execute("DELETE FROM items WHERE id = ?", (item_id,))

@@ -165,6 +165,7 @@ function row(item) {
   }
   if (item.recurrence_label) meta.append(el("span", { textContent: `↻ ${item.recurrence_label}` }));
   if (item.status === "fired") meta.append(el("span", { className: "badge fired", textContent: "sent" }));
+  if (item.awaiting_acknowledgement) meta.append(el("span", { className: "badge overdue", textContent: "not acknowledged" }));
   if (item.status === "done") meta.append(el("span", { className: "badge", textContent: "done" }));
 
   const actions = el("div", { className: "actions" });

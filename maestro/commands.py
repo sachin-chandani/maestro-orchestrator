@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from maestro import recurrence
-from maestro.models import Item, Kind, Status
+from maestro.models import Item, Kind
 from maestro.parser import DURATION_UNITS, parse_duration
 from maestro.store import Store
 from maestro.tz import add_elapsed
@@ -77,7 +77,7 @@ def list_items(store: Store) -> str:
     return "\n".join(line(i) for i in store.list()[:LIST_LIMIT]) or "Nothing to remember yet."
 
 
-def act(store: Store, action: str, args: list[str], prefix: str = "") -> str:
+def act(store: Store, action: str, args: list[str], prefix: str = "", via: str = "chat") -> str:
     """Run done / rm / snooze on an item and describe the outcome."""
     expected = 2 if action == "snooze" else 1
     if len(args) != expected or not args[0].lstrip("#").isdigit():
@@ -87,7 +87,7 @@ def act(store: Store, action: str, args: list[str], prefix: str = "") -> str:
     if (item := store.get(item_id)) is None:
         return f"No item #{item_id}"
     if action == "done":
-        store.set_status(item_id, Status.DONE)
+        store.complete(item_id, via=via)
         return f"✅ Done: {item.text}"
     if action == "rm":
         store.delete(item_id)
@@ -96,7 +96,7 @@ def act(store: Store, action: str, args: list[str], prefix: str = "") -> str:
         delta = parse_duration(args[1])
     except ValueError as e:
         return str(e)
-    store.reschedule(item_id, add_elapsed(datetime.now(store.tz).replace(microsecond=0), delta))
+    store.snooze(item_id, add_elapsed(datetime.now(store.tz).replace(microsecond=0), delta), via=via)
     if (snoozed := store.get(item_id)) is None:  # deleted in the meantime, e.g. from another device
         return f"No item #{item_id}"
     return f"😴 Snoozed: {line(snoozed)}"
@@ -118,4 +118,4 @@ def run(store: Store, command: Command, channel: str | None = None, prefix: str 
     args = [str(item_id)]
     if command.action == "snooze":
         args.append(command.duration or DEFAULT_SNOOZE)
-    return act(store, command.action, args, prefix)
+    return act(store, command.action, args, prefix, via=channel or "chat")

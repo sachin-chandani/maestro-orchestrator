@@ -81,8 +81,8 @@ def test_bot_survives_malformed_updates(update, caplog):
 def _vanish_on(monkeypatch, store_or_cls, method):
     original = getattr(store_or_cls, method)
 
-    def and_delete(self, item_id, *args):
-        original(self, item_id, *args)
+    def and_delete(self, item_id, *args, **kwargs):
+        original(self, item_id, *args, **kwargs)
         self.delete(item_id)
 
     monkeypatch.setattr(store_or_cls, method, and_delete)
@@ -93,7 +93,7 @@ def test_chat_snooze_reports_a_vanished_item(monkeypatch):
 
     store = Store()
     reminder(store, "Call mom")
-    _vanish_on(monkeypatch, Store, "reschedule")
+    _vanish_on(monkeypatch, Store, "snooze")
     assert commands.act(store, "snooze", ["1", "1h"]) == "No item #1"
 
 
@@ -103,14 +103,14 @@ def test_cli_snooze_fails_for_a_vanished_item(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("MAESTRO_CHANNELS", "console")
     db = str(tmp_path / "m.db")
     main(["--db", db, "add", "call", "mom", "tomorrow", "at", "5pm"])
-    _vanish_on(monkeypatch, Store, "reschedule")
+    _vanish_on(monkeypatch, Store, "snooze")
     assert main(["--db", db, "snooze", "1", "1h"]) == 1
     assert "No item #1" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("route, method, body", [
-    ("/items/1/done", "set_status", None),
-    ("/items/1/snooze", "reschedule", {"duration": "10m"}),
+    ("/items/1/done", "complete", None),
+    ("/items/1/snooze", "snooze", {"duration": "10m"}),
 ])
 def test_api_returns_404_for_a_vanished_item(monkeypatch, route, method, body):
     pytest.importorskip("fastapi")
