@@ -92,6 +92,16 @@ MIGRATIONS: list[list[str] | Callable[[sqlite3.Connection, ZoneInfo], None]] = [
             expires_at TEXT NOT NULL
         )""",
     ],
+    # 6: inbound messages already captured (Twilio MessageSid/CallSid...), so provider retries don't
+    # create duplicates
+    [
+        """CREATE TABLE IF NOT EXISTS inbound_messages (
+            source      TEXT NOT NULL,
+            external_id TEXT NOT NULL,
+            item_id     INTEGER NOT NULL,
+            PRIMARY KEY (source, external_id)
+        )""",
+    ],
 ]
 
 
@@ -234,6 +244,34 @@ class Store:
         item.id = cur.lastrowid
         return item
 
+    def add_once(self, source: str, external_id: str, item: Item) -> tuple[Item, bool]:
+        """Add an item for an inbound message unless that message was already captured.
+
+        Returns (item, created). A retried webhook gets back the item from the first delivery. The
+        check, the insert and the record happen in one transaction.
+        """
+        with self._transaction(immediate=True):
+            row = self.conn.execute(
+                "SELECT item_id FROM inbound_messages WHERE source = ? AND external_id = ?",
+                (source, external_id),
+            ).fetchone()
+            if row is not None:
+                existing = self.conn.execute("SELECT * FROM items WHERE id = ?", (row["item_id"],)).fetchone()
+                if existing is not None:
+                    return self._item(existing), False
+            cur = self.conn.execute(
+                "INSERT INTO items (text, kind, status, due_at, created_at, source_text, recurrence)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (item.text, item.kind, item.status, self._to_db(item.due_at),
+                 self._to_db(item.created_at), item.source_text, item.recurrence),
+            )
+            item.id = cur.lastrowid
+            self.conn.execute(
+                "INSERT OR REPLACE INTO inbound_messages (source, external_id, item_id) VALUES (?, ?, ?)",
+                (source, external_id, item.id),
+            )
+        return item, True
+
     def get(self, item_id: int) -> Item | None:
         row = self.conn.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
         return self._item(row) if row else None
@@ -283,6 +321,7 @@ class Store:
     def delete(self, item_id: int) -> bool:
         with self._transaction():
             self.conn.execute("DELETE FROM deliveries WHERE item_id = ?", (item_id,))
+            self.conn.execute("DELETE FROM inbound_messages WHERE item_id = ?", (item_id,))
             cur = self.conn.execute("DELETE FROM items WHERE id = ?", (item_id,))
         return cur.rowcount > 0
 

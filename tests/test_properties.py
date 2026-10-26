@@ -116,7 +116,9 @@ def test_storage_round_trips_any_instant_in_any_zone(when, write_zone, read_zone
         item = store.add(Item(text="x", kind=Kind.REMINDER, created_at=due, due_at=due))
         store.tz = read_zone  # same database, read by a user in another zone
         loaded = store.get(item.id)
-    assert loaded.due_at == due  # same instant
+    # Same instant. (Compared in UTC: Python treats cross-zone == involving a repeated DST hour as
+    # unequal even for the same instant, PEP 495.)
+    assert utc(loaded.due_at) == utc(due)
     assert loaded.due_at.tzinfo is read_zone
 
 

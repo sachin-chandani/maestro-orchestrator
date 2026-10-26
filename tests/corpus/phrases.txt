@@ -240,3 +240,13 @@ pay the monthly on the 1st | Pay the monthly | 2026-11-01T09:00 | -
 work from 9am to 5pm | Work | 2026-10-27T09:00 | -
 pick up the kids before 3pm | Pick up the kids | 2026-10-27T14:30 | -
 call mom morning | Call mom | 2026-10-27T09:00 | -
+
+# --- dictated text (speech-to-text output, #7)
+Remind me to call mom tomorrow at 5 p.m. | Call mom | 2026-10-28T17:00 | -
+Dentist appointment on Friday at 10:30 a.m. | Dentist appointment | 2026-10-30T10:30 | -
+Take out the trash tonight. | Take out the trash | 2026-10-27T20:00 | -
+Pay rent on the 1st of every month. | Pay rent | 2026-11-01T09:00 | monthly:1
+Remember that the spare key is under the mat. | The spare key is under the mat | - | -
+Call the bank at 4 P.M. | Call the bank | 2026-10-27T16:00 | -
+Call mom at 5p.m. | Call mom | 2026-10-27T17:00 | -
+email the P.M. about the budget tomorrow | Email the P.M. about the budget | 2026-10-28T09:00 | -

@@ -26,6 +26,8 @@ PREFIX_RE = re.compile(
     r"|don'?t forget(?:\s+(?:to|that))?)\s+",
     re.I,
 )
+# "5 p.m.", "5p.m.", "10:30 A.M." -> "5 pm": only right after a number, so "email the P.M." keeps its text.
+MERIDIEM_RE = re.compile(r"(\d)\s?([ap])\.\s?m\.?(?=\W|$)", re.I)
 # "at", "around", "after", "by" lead a time and leave the text with it. ("from" and "before" are not
 # here: ranges and lead times aren't modelled, see KNOWN_GAPS in tests/test_corpus.py.)
 _TIME_LEAD = r"(?:(?:at|around|about|after|by)\s+)"
@@ -264,7 +266,9 @@ def parse(source: str, now: datetime | None = None, tz: tzinfo | None = None) ->
     # "remind me in 15 minutes to check the oven": the prefix had no connector, so once the time is
     # removed a leading "to" is left over. ("remind me about that email" keeps "that".)
     strip_connector = prefix is not None and not re.search(r"\b(?:to|that|about)\s*$", prefix[0], re.I)
-    parts = _Parts(text=PREFIX_RE.sub("", source, count=1))
+    # Dictation and careful typists write "5 p.m."; the rules below expect "5 pm".
+    text = MERIDIEM_RE.sub(lambda m: f"{m[1]} {m[2]}m", source)
+    parts = _Parts(text=PREFIX_RE.sub("", text, count=1))
 
     rule, matches = recurrence.extract(parts.text, now.date())
     if rule:
