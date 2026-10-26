@@ -81,7 +81,7 @@ Exit criteria: capture from every source above, parser corpus >= 95%, exactly-on
 ## v0.4: More ways out (target Nov 22, 2026)
 - [ ] Voice-call reminders to your own phone (#11)
 - [x] Email (SMTP) channel, with reply-to-act through email-in (#17)
-- [ ] Generic webhook channel for Slack, Discord, Home Assistant (#18)
+- [x] Generic webhook channel for Slack, Discord, Home Assistant (#18)
 - [x] Acknowledgement tracking (#19)
 - [x] Escalation policies: push, then SMS, then more (#12); voice-call reminders (#11) will plug in as a channel
 - [ ] Quiet hours (#13)

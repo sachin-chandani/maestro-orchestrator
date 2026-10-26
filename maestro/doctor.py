@@ -148,8 +148,9 @@ def _channels(config: Config) -> tuple[list[Check], dict[str, Notifier]]:
 
 
 def _send_tests(built: dict[str, Notifier]) -> list[Check]:
+    now = datetime.now().astimezone()
     test = Item(id=0, text="Maestro test message: if you can read this, the channel works",
-                kind=Kind.REMINDER, created_at=datetime.now())
+                kind=Kind.REMINDER, created_at=now, due_at=now)
     checks = []
     for name, channel in built.items():
         try:

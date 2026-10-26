@@ -65,6 +65,10 @@ class Config:
     ntfy_url: str = "https://ntfy.sh"
     ntfy_topic: str | None = None
 
+    webhook_url: str | None = None
+    webhook_secret: str | None = None  # signs requests (HMAC-SHA256) so receivers can verify them
+    webhook_format: str = "json"  # json, slack or discord
+
     smtp_host: str | None = None
     smtp_port: int | None = None  # None: 465 for ssl, 587 otherwise
     smtp_security: str = "starttls"  # starttls, ssl or none
@@ -107,6 +111,9 @@ class Config:
             sms_to=env.get("MAESTRO_SMS_TO") or None,
             ntfy_url=env.get("NTFY_URL", "https://ntfy.sh").rstrip("/"),
             ntfy_topic=env.get("NTFY_TOPIC") or None,
+            webhook_url=(env.get("MAESTRO_WEBHOOK_URL") or "").strip() or None,
+            webhook_secret=env.get("MAESTRO_WEBHOOK_SECRET") or None,
+            webhook_format=(env.get("MAESTRO_WEBHOOK_FORMAT") or "json").strip().lower(),
             smtp_host=env.get("SMTP_HOST") or None,
             smtp_port=_count(env, "SMTP_PORT", 0) or None,
             smtp_security=(env.get("SMTP_SECURITY") or "starttls").strip().lower(),
