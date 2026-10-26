@@ -47,6 +47,7 @@ def _csv(value: str) -> list[str]:
 class Config:
     db_path: str = str(DEFAULT_DB)
     channels: list[str] = field(default_factory=lambda: ["console"])
+    escalation: str = ""  # e.g. "10m=twilio_sms, 30m=telegram+twilio_sms"; see maestro/escalation.py
     api_token: str | None = None
     timezone: str | None = None  # IANA name; None means the system timezone
     public_url: str | None = None  # how the outside world reaches this server, e.g. https://maestro.example.com
@@ -83,6 +84,7 @@ class Config:
         return cls(
             db_path=env.get("MAESTRO_DB", str(DEFAULT_DB)),
             channels=_csv(env.get("MAESTRO_CHANNELS", "console")),
+            escalation=env.get("MAESTRO_ESCALATION", "").strip(),
             api_token=env.get("MAESTRO_API_TOKEN") or None,
             timezone=env.get("MAESTRO_TIMEZONE") or None,
             public_url=(env.get("MAESTRO_PUBLIC_URL") or "").rstrip("/") or None,

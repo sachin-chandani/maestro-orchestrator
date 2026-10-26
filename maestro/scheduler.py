@@ -16,6 +16,7 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from typing import TYPE_CHECKING
 
 from maestro import recurrence
 from maestro.models import Delivery, Item
@@ -23,6 +24,9 @@ from maestro.notifier import MultiNotifier, Notifier
 from maestro.observability import METRICS
 from maestro.store import Store
 from maestro.tz import UTC, localize
+
+if TYPE_CHECKING:
+    from maestro.escalation import Stage
 
 log = logging.getLogger(__name__)
 
@@ -143,9 +147,10 @@ def _deliver(store: Store, item: Item, item_id: int, due_at: datetime, channels:
     return not waiting
 
 
-def fire_due(store: Store, notifier: Notifier, now: datetime | None = None, lease: Lease | None = None
-             ) -> list[Item]:
-    """Deliver due reminders. Returns the items whose occurrence is finished this tick.
+def fire_due(store: Store, notifier: Notifier, now: datetime | None = None, lease: Lease | None = None,
+             escalation: "list[Stage] | None" = None) -> list[Item]:
+    """Deliver due reminders, then any escalation stages that are due. Returns the items whose
+    occurrence is finished this tick.
 
     With a lease, nothing is sent unless this scheduler holds it, and it is renewed before each item.
     """
@@ -185,27 +190,33 @@ def fire_due(store: Store, notifier: Notifier, now: datetime | None = None, leas
             # One broken item (e.g. a corrupt recurrence rule) must not stop the others.
             METRICS.inc("maestro_scheduler_errors_total")
             log.exception("Failed to process reminder #%s", item_id)
+    if escalation and (not lease or lease.acquire(store, now)):
+        from maestro.escalation import escalate
+
+        escalate(store, escalation, now, _deliver, MAX_ATTEMPTS)
     return finished
 
 
-def tick(store: Store, notifier: Notifier, lease: Lease | None = None) -> None:
+def tick(store: Store, notifier: Notifier, lease: Lease | None = None,
+         escalation: "list[Stage] | None" = None) -> None:
     """One scheduler pass for a long-running loop: errors are logged and counted, never raised."""
     try:
-        fire_due(store, notifier, lease=lease)
+        fire_due(store, notifier, lease=lease, escalation=escalation)
     except Exception:
         METRICS.inc("maestro_scheduler_errors_total")
         log.exception("Scheduler tick failed; retrying next tick")
 
 
 def run_forever(store: Store, notifier: Notifier, interval: float = 30.0,
-                wait: Callable[[float], None] = time.sleep, lease: Lease | None = None) -> None:
+                wait: Callable[[float], None] = time.sleep, lease: Lease | None = None,
+                escalation: "list[Stage] | None" = None) -> None:
     """Fire due reminders every `interval` seconds. `wait` can do useful work while it waits,
     e.g. long-poll a chat bot for new messages. The lease is released on the way out (Ctrl+C,
     SIGTERM handled as an exception) so a standby scheduler can take over at once."""
     lease = lease or Lease.for_interval(interval)
     try:
         while True:
-            tick(store, notifier, lease)
+            tick(store, notifier, lease, escalation)
             wait(interval)
     finally:
         lease.release(store)

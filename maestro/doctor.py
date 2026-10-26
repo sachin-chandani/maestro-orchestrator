@@ -115,6 +115,20 @@ def _email_in(config: Config, connect: bool) -> list[Check]:
     return [*checks, Check(OK, "email-in", f"connected to {settings.host}, {unread} unread")]
 
 
+def _escalation(config: Config) -> list[Check]:
+    if not config.escalation:
+        return []
+    from maestro.escalation import build_stages
+
+    try:
+        stages = build_stages(config)
+    except ConfigError as e:
+        return [Check(FAIL, "escalation", str(e))]
+    plan = "; ".join(f"after {int(s.delay.total_seconds() // 60)}m: "
+                     f"{', '.join(k.split(':', 1)[1] for k in s.channels)}" for s in stages)
+    return [Check(OK, "escalation", plan)]
+
+
 def _channels(config: Config) -> tuple[list[Check], dict[str, Notifier]]:
     checks: list[Check] = []
     built: dict[str, Notifier] = {}
@@ -151,7 +165,7 @@ def _send_tests(built: dict[str, Notifier]) -> list[Check]:
 def run(config: Config, send_test: bool = False, out: Callable[[str], None] = print) -> bool:
     """Run every check, print each result, and return True when nothing failed."""
     checks = [_timezone(config), _database(config), _api_token(config), *_telegram_bot(config),
-              *_inbound_sms(config), *_email_in(config, connect=send_test)]
+              *_inbound_sms(config), *_email_in(config, connect=send_test), *_escalation(config)]
     channel_checks, built = _channels(config)
     checks += channel_checks
     if send_test:

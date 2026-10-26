@@ -433,8 +433,9 @@ class Store:
         """The item most recently delivered on `channel` that still exists (for "reply done")."""
         row = self.conn.execute(
             "SELECT d.item_id FROM deliveries d JOIN items i ON i.id = d.item_id"
-            " WHERE d.channel = ? AND d.delivered_at IS NOT NULL ORDER BY d.delivered_at DESC LIMIT 1",
-            (channel,),
+            " WHERE (d.channel = ? OR d.channel LIKE ?) AND d.delivered_at IS NOT NULL"
+            " ORDER BY d.delivered_at DESC LIMIT 1",
+            (channel, f"escalation%:{channel}"),  # escalation stages on the same channel count too
         ).fetchone()
         return row[0] if row else None
 

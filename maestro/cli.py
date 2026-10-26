@@ -23,6 +23,7 @@ from maestro.tz import add_elapsed, get_timezone
 
 if TYPE_CHECKING:
     from maestro.email_in import EmailWorker
+    from maestro.escalation import Stage
     from maestro.telegram import TelegramBot
 
 
@@ -130,6 +131,9 @@ def _dispatch(args: argparse.Namespace, config: Config, store: Store, tz: ZoneIn
         try:
             configure_logging(config.log_format, config.log_level)
             notifier = build_notifier(config)
+            from maestro.escalation import build_stages
+
+            escalation = build_stages(config)
         except (ConfigError, ValueError) as e:
             print(f"Config error: {e}", file=sys.stderr)
             return 2
@@ -140,7 +144,7 @@ def _dispatch(args: argparse.Namespace, config: Config, store: Store, tz: ZoneIn
             print(f"Config error: {e}", file=sys.stderr)
             return 2
         if args.command == "serve":
-            return _serve(store, config, notifier, args, bot, email)
+            return _serve(store, config, notifier, args, bot, email, escalation)
         if args.once:
             # Respect a running server's lease, and hand it straight back afterwards.
             lease = Lease()
@@ -158,7 +162,8 @@ def _dispatch(args: argparse.Namespace, config: Config, store: Store, tz: ZoneIn
             if email:
                 email.start()
             try:
-                run_forever(store, notifier, args.interval, wait=_wait_with(bot, email))
+                run_forever(store, notifier, args.interval, wait=_wait_with(bot, email),
+                            escalation=escalation)
             except KeyboardInterrupt:
                 pass
             finally:
@@ -216,7 +221,8 @@ def _bot_wait(bot: "TelegramBot") -> Callable[[float], None]:
 
 
 def _serve(store: Store, config: Config, notifier: Notifier, args: argparse.Namespace,
-           bot: "TelegramBot | None" = None, email: "EmailWorker | None" = None) -> int:
+           bot: "TelegramBot | None" = None, email: "EmailWorker | None" = None,
+           escalation: "list[Stage] | None" = None) -> int:
     try:
         import uvicorn
 
@@ -236,7 +242,7 @@ def _serve(store: Store, config: Config, notifier: Notifier, args: argparse.Name
         sms = SmsHandler(store, config.twilio_auth_token, config.sms_to)
         voice = VoiceHandler(store, config.twilio_auth_token, config.sms_to)
     app = create_app(store, api_token=config.api_token, notifier=notifier, interval=args.interval, bot=bot,
-                     sms=sms, voice=voice, email=email,
+                     sms=sms, voice=voice, email=email, escalation=escalation,
                      public_url=config.public_url,
                      limits=RateLimits(config.rate_limit_webhook, config.rate_limit_auth_failures,
                                        config.trust_proxy_headers))

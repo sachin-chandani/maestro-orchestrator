@@ -116,6 +116,8 @@ METRICS.describe("maestro_items", "gauge", "Items in the store, by kind and stat
 METRICS.describe("maestro_acknowledgements_total", "counter",
                  "Delivered reminders acknowledged (done or snooze), by channel or interface.")
 METRICS.describe("maestro_unacknowledged", "gauge", "Delivered reminders nobody has acknowledged yet.")
+METRICS.describe("maestro_escalations_total", "counter",
+                 "Unacknowledged reminders escalated, by stage (first attempt of each stage).")
 METRICS.describe("maestro_email_given_up_total", "counter",
                  "Emails that failed to process repeatedly and were marked read without being captured.")
 METRICS.describe("maestro_rate_limited_total", "counter",

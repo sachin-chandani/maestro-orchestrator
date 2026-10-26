@@ -82,7 +82,7 @@ Exit criteria: capture from every source above, parser corpus >= 95%, exactly-on
 - [ ] Voice-call reminders to your own phone (#11)
 - [ ] Email (SMTP) channel (#17) and a generic webhook channel for Slack, Discord, Home Assistant (#18)
 - [x] Acknowledgement tracking (#19)
-- [ ] Escalation policies: push, then SMS, then a call (#12)
+- [x] Escalation policies: push, then SMS, then more (#12); voice-call reminders (#11) will plug in as a channel
 - [ ] Quiet hours (#13)
 - [ ] Per-item channel choice: "text me", "call me", "email me" (#20)
 - [ ] Channel plugins via entry points (#14)
