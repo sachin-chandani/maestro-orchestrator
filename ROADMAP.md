@@ -66,7 +66,7 @@ Dates are targets, not promises. Work is tracked in [GitHub issues](https://gith
 - [x] Inbound SMS to your Twilio number, with signature validation (#6)
 - [x] Inbound voice: call your number and say the reminder (#7)
 - [x] Reply-to-act: "done" or "snooze 1h" in reply to a reminder (#8)
-- [ ] Email-in via IMAP (#9)
+- [x] Email-in via IMAP (#9)
 - [ ] Apple Shortcuts and Android Tasker recipes (#10)
 - [x] Exactly-once scheduling when more than one process runs (#52)
 - [x] SQLite durability: WAL and busy timeout (#53)

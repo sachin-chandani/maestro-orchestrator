@@ -90,6 +90,31 @@ def _inbound_sms(config: Config) -> list[Check]:
             Check(OK, "inbound voice", f"set the number's voice webhook to {base}{VOICE_PATH}")]
 
 
+def _email_in(config: Config, connect: bool) -> list[Check]:
+    from maestro.config import email_settings
+    from maestro.email_in import EmailPoller
+
+    try:
+        settings = email_settings(config)
+    except ValueError as e:
+        return [Check(FAIL, "email-in", str(e))]
+    if settings is None:
+        return []
+    checks = []
+    if not settings.require_dmarc:
+        checks.append(Check(WARN, "email-in", "MAESTRO_EMAIL_REQUIRE_DMARC=false: anyone can forge an "
+                                              "allowed sender; only use with a private mail server"))
+    if not connect:
+        return [*checks, Check(OK, "email-in", f"{settings.user} on {settings.host} ({settings.folder}), "
+                                               f"senders: {', '.join(sorted(settings.allowed_senders))}")]
+    try:
+        with Store() as scratch:  # only counts unread mail (one SEARCH); nothing is fetched or saved
+            unread = EmailPoller(scratch, settings).count_unread()
+    except Exception as e:
+        return [*checks, Check(FAIL, "email-in", f"IMAP login/fetch failed: {type(e).__name__}: {e}")]
+    return [*checks, Check(OK, "email-in", f"connected to {settings.host}, {unread} unread")]
+
+
 def _channels(config: Config) -> tuple[list[Check], dict[str, Notifier]]:
     checks: list[Check] = []
     built: dict[str, Notifier] = {}
@@ -126,7 +151,7 @@ def _send_tests(built: dict[str, Notifier]) -> list[Check]:
 def run(config: Config, send_test: bool = False, out: Callable[[str], None] = print) -> bool:
     """Run every check, print each result, and return True when nothing failed."""
     checks = [_timezone(config), _database(config), _api_token(config), *_telegram_bot(config),
-              *_inbound_sms(config)]
+              *_inbound_sms(config), *_email_in(config, connect=send_test)]
     channel_checks, built = _channels(config)
     checks += channel_checks
     if send_test:

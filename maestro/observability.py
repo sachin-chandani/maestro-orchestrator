@@ -113,5 +113,7 @@ METRICS.describe("maestro_scheduler_last_tick_timestamp_seconds", "gauge",
 METRICS.describe("maestro_scheduler_lag_seconds", "gauge",
                  "How late the most overdue reminder handled in the last tick was.")
 METRICS.describe("maestro_items", "gauge", "Items in the store, by kind and status.")
+METRICS.describe("maestro_email_given_up_total", "counter",
+                 "Emails that failed to process repeatedly and were marked read without being captured.")
 METRICS.describe("maestro_rate_limited_total", "counter",
                  "Requests answered with 429, by reason (webhook, auth_failures).")
