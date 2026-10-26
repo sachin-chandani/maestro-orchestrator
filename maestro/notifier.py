@@ -16,12 +16,14 @@ import smtplib
 import ssl
 import subprocess
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable
-from email.message import EmailMessage
-from typing import Protocol
+from email.message import EmailMessage, Message
+from typing import IO, Protocol
 
+from maestro.commands import when
 from maestro.config import Config
 from maestro.models import Item
 
@@ -172,18 +174,52 @@ class EmailNotifier:
 
 
 WEBHOOK_FORMATS = ("json", "slack", "discord")
+DISCORD_LIMIT = 2000  # characters per message; longer is rejected with 400
+SLACK_LIMIT = 40000
 
 
 def _is_local(host: str) -> bool:
-    """Hosts on the owner's own network, where plain HTTP is acceptable (e.g. Home Assistant)."""
-    host = host.strip("[]").lower()
-    if host == "localhost" or host.endswith((".local", ".lan", ".internal", ".home.arpa")):
+    """Hosts on the owner's own network, where plain HTTP is acceptable (e.g. Home Assistant): single-label
+    names (Docker Compose services), local suffixes, and non-public addresses (private, loopback,
+    link-local, Tailscale's 100.64.0.0/10). `host` is a parsed hostname (no brackets or port)."""
+    host = host.rstrip(".")
+    if "." not in host or host.endswith((".local", ".lan", ".internal", ".home.arpa")):
         return True
     try:
         address = ipaddress.ip_address(host)
     except ValueError:
         return False
-    return address.is_private or address.is_loopback
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
+        address = address.ipv4_mapped  # ::ffff:8.8.8.8 is the public 8.8.8.8
+    return not address.is_global
+
+
+class _RefuseRedirects(urllib.request.HTTPRedirectHandler):
+    """urllib would turn a redirected POST into a body-less GET (possibly to plain http) and call it a
+    success. A webhook that redirects is a misconfiguration: fail so it's retried and visible."""
+
+    def redirect_request(self, req: urllib.request.Request, fp: IO[bytes], code: int, msg: str,
+                         headers: Message, newurl: str) -> None:
+        raise urllib.error.HTTPError(req.full_url, code, f"refusing to follow redirect ({msg})", headers, fp)
+
+
+_webhook_opener = urllib.request.build_opener(_RefuseRedirects())
+
+
+def _post_without_redirects(request: urllib.request.Request) -> object:
+    with _webhook_opener.open(request, timeout=10) as response:
+        return response.status
+
+
+def _redacted(url: str) -> str:
+    """Webhook URLs often carry a secret in the path (Slack, Discord): show only scheme and host."""
+    parts = urllib.parse.urlsplit(url)
+    return f"{parts.scheme}://{parts.hostname}/…" if parts.hostname else "(unparseable URL)"
+
+
+def _slack_escape(text: str) -> str:
+    # Slack reads <...> as links and mentions (<!channel>); & < > must be entities.
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
 class WebhookNotifier:
@@ -196,7 +232,7 @@ class WebhookNotifier:
     """
 
     def __init__(self, url: str, fmt: str = "json", secret: str | None = None,
-                 opener: Opener = _default_opener, clock: Callable[[], float] = time.time):
+                 opener: Opener = _post_without_redirects, clock: Callable[[], float] = time.time):
         self.url = url
         self.format = fmt
         self.secret = secret
@@ -204,14 +240,16 @@ class WebhookNotifier:
         self.clock = clock
 
     def payload(self, item: Item) -> dict[str, object]:
-        from maestro.commands import when  # human-readable due time, as in the API
-
-        summary = f"⏰ {item.text}"
         if self.format == "slack":
-            return {"text": summary}
+            return {"text": _slack_escape(f"⏰ {item.text}")[:SLACK_LIMIT]}
         if self.format == "discord":
-            return {"content": summary}
+            # No @everyone/@here/role pings from reminder text.
+            return {"content": f"⏰ {item.text}"[:DISCORD_LIMIT], "allowed_mentions": {"parse": []}}
+        stamp = int(item.due_at.timestamp()) if item.due_at else 0
         return {"event": "reminder.due", "id": item.id, "text": item.text,
+                # Same for every send of this occurrence (retries, escalation): receivers can de-duplicate
+                # retries by (occurrence_id, text); escalations carry different text ("Still waiting: ...").
+                "occurrence_id": f"{item.id}:{stamp}",
                 "due_at": item.due_at.isoformat() if item.due_at else None, "when": when(item),
                 "recurrence": item.recurrence}
 
@@ -285,7 +323,7 @@ def _webhook(config: Config) -> Notifier:
     url = _require("webhook", {"MAESTRO_WEBHOOK_URL": config.webhook_url})["MAESTRO_WEBHOOK_URL"]
     parts = urllib.parse.urlsplit(url)
     if parts.scheme not in ("http", "https") or not parts.hostname:
-        raise ConfigError(f"MAESTRO_WEBHOOK_URL must be an http(s) URL, not {url!r}")
+        raise ConfigError(f"MAESTRO_WEBHOOK_URL must be an http(s) URL, not {_redacted(url)}")
     if parts.scheme == "http" and not _is_local(parts.hostname):
         raise ConfigError("MAESTRO_WEBHOOK_URL must use https unless it points at your own network")
     if config.webhook_format not in WEBHOOK_FORMATS:

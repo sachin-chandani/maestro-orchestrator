@@ -37,14 +37,15 @@ def test_json_payload():
     assert request.get_method() == "POST" and request.full_url == "https://hooks.example.com/maestro"
     assert request.get_header("Content-type") == "application/json"
     assert json.loads(request.data) == {
-        "event": "reminder.due", "id": 7, "text": "Call mom", "due_at": "2026-10-27T09:00:00+00:00",
-        "when": "Tue 27 Oct 09:00, daily", "recurrence": "daily",
+        "event": "reminder.due", "id": 7, "text": "Call mom", "occurrence_id": "7:1793091600",
+        "due_at": "2026-10-27T09:00:00+00:00", "when": "Tue 27 Oct 09:00, daily", "recurrence": "daily",
     }
     assert request.get_header("X-maestro-signature") is None  # no secret configured
 
 
 @pytest.mark.parametrize("fmt, expected", [
-    ("slack", {"text": "⏰ Call mom"}), ("discord", {"content": "⏰ Call mom"}),
+    ("slack", {"text": "⏰ Call mom"}),
+    ("discord", {"content": "⏰ Call mom", "allowed_mentions": {"parse": []}}),
 ])
 def test_service_formats(fmt, expected):
     opener = Recorder()
@@ -115,3 +116,80 @@ def test_config():
                               "MAESTRO_WEBHOOK_FORMAT": "Slack", "MAESTRO_WEBHOOK_SECRET": "s"})
     notifier = CHANNELS["webhook"](config)
     assert (notifier.format, notifier.secret) == ("slack", "s")
+
+
+def test_mentions_and_markup_in_reminder_text_are_neutralised():
+    text = "tell @everyone <!channel> a<b>c & d"
+    item = Item(id=1, text=text, kind=Kind.REMINDER, created_at=DUE, due_at=DUE)
+    slack, discord = Recorder(), Recorder()
+    WebhookNotifier("https://x.example.com", fmt="slack", opener=slack).send(item)
+    WebhookNotifier("https://x.example.com", fmt="discord", opener=discord).send(item)
+    escaped = "⏰ tell @everyone &lt;!channel&gt; a&lt;b&gt;c &amp; d"
+    assert json.loads(slack.requests[0].data)["text"] == escaped
+    assert json.loads(discord.requests[0].data)["allowed_mentions"] == {"parse": []}
+
+
+def test_long_reminders_fit_discords_limit():
+    item = Item(id=1, text="x" * 2000, kind=Kind.REMINDER, created_at=DUE, due_at=DUE)
+    opener = Recorder()
+    WebhookNotifier("https://discord.com/api/webhooks/1/x", fmt="discord", opener=opener).send(item)
+    assert len(json.loads(opener.requests[0].data)["content"]) == 2000
+
+
+def test_redirects_are_refused_not_followed():
+    import http.server
+    import threading
+
+    hits = []
+
+    class Redirecting(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            hits.append(("POST", self.path))
+            self.send_response(301)
+            self.send_header("Location", "/elsewhere")
+            self.end_headers()
+
+        def do_GET(self):
+            hits.append(("GET", self.path))
+            self.send_response(200)
+            self.end_headers()
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Redirecting)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        notifier = CHANNELS["webhook"](Config(webhook_url=f"http://127.0.0.1:{server.server_port}/hook"))
+        with pytest.raises(urllib.error.HTTPError, match="refusing to follow redirect"):
+            notifier.send(ITEM)
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert hits == [("POST", "/hook")]  # no silent GET to the redirect target
+
+
+def test_errors_never_print_the_secret_url():
+    with pytest.raises(ConfigError) as error:
+        CHANNELS["webhook"](Config(webhook_url="hooks.slack.com/services/T000/B000/XXXXSECRET"))
+    assert "XXXXSECRET" not in str(error.value)
+
+
+@pytest.mark.parametrize("url, local", [
+    ("http://homeassistant:8123/api/webhook/x", True),        # Docker Compose service name
+    ("http://100.101.2.3:8123/api/webhook/x", True),          # Tailscale
+    ("http://homeassistant.local.:8123/x", True),             # trailing dot
+    ("http://[::ffff:8.8.8.8]/hook", False),                   # IPv4-mapped public address
+    ("http://[::ffff:192.168.1.2]/hook", True),
+])
+def test_own_network_detection(url, local):
+    if local:
+        assert isinstance(CHANNELS["webhook"](Config(webhook_url=url)), WebhookNotifier)
+    else:
+        with pytest.raises(ConfigError, match="must use https"):
+            CHANNELS["webhook"](Config(webhook_url=url))
+
+
+def test_whitespace_around_the_url_is_ignored():
+    assert Config.from_env({"MAESTRO_WEBHOOK_URL": "  https://x.example.com/h \n"}).webhook_url == \
+        "https://x.example.com/h"

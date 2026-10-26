@@ -111,7 +111,7 @@ class Config:
             sms_to=env.get("MAESTRO_SMS_TO") or None,
             ntfy_url=env.get("NTFY_URL", "https://ntfy.sh").rstrip("/"),
             ntfy_topic=env.get("NTFY_TOPIC") or None,
-            webhook_url=env.get("MAESTRO_WEBHOOK_URL") or None,
+            webhook_url=(env.get("MAESTRO_WEBHOOK_URL") or "").strip() or None,
             webhook_secret=env.get("MAESTRO_WEBHOOK_SECRET") or None,
             webhook_format=(env.get("MAESTRO_WEBHOOK_FORMAT") or "json").strip().lower(),
             smtp_host=env.get("SMTP_HOST") or None,
