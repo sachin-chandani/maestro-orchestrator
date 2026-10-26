@@ -5,12 +5,17 @@ switched on by name with MAESTRO_CHANNELS, e.g. `MAESTRO_CHANNELS=console,ntfy,t
 """
 
 import base64
+import hashlib
+import hmac
+import ipaddress
+import json
 import platform
 import re
 import secrets
 import smtplib
 import ssl
 import subprocess
+import time
 import urllib.parse
 import urllib.request
 from collections.abc import Callable
@@ -166,6 +171,61 @@ class EmailNotifier:
                 client.close()
 
 
+WEBHOOK_FORMATS = ("json", "slack", "discord")
+
+
+def _is_local(host: str) -> bool:
+    """Hosts on the owner's own network, where plain HTTP is acceptable (e.g. Home Assistant)."""
+    host = host.strip("[]").lower()
+    if host == "localhost" or host.endswith((".local", ".lan", ".internal", ".home.arpa")):
+        return True
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return address.is_private or address.is_loopback
+
+
+class WebhookNotifier:
+    """POSTs each reminder as JSON to MAESTRO_WEBHOOK_URL.
+
+    `json` sends {"event", "id", "text", "due_at", "when", "recurrence"}; `slack` and `discord` send
+    the message shape those services' incoming webhooks expect. With MAESTRO_WEBHOOK_SECRET, the
+    request carries X-Maestro-Timestamp and X-Maestro-Signature: sha256=HMAC(secret, "<timestamp>.<body>"),
+    so a receiver can check it came from this server and reject old (replayed) requests.
+    """
+
+    def __init__(self, url: str, fmt: str = "json", secret: str | None = None,
+                 opener: Opener = _default_opener, clock: Callable[[], float] = time.time):
+        self.url = url
+        self.format = fmt
+        self.secret = secret
+        self.opener = opener
+        self.clock = clock
+
+    def payload(self, item: Item) -> dict[str, object]:
+        from maestro.commands import when  # human-readable due time, as in the API
+
+        summary = f"⏰ {item.text}"
+        if self.format == "slack":
+            return {"text": summary}
+        if self.format == "discord":
+            return {"content": summary}
+        return {"event": "reminder.due", "id": item.id, "text": item.text,
+                "due_at": item.due_at.isoformat() if item.due_at else None, "when": when(item),
+                "recurrence": item.recurrence}
+
+    def send(self, item: Item) -> None:
+        body = json.dumps(self.payload(item), ensure_ascii=False).encode()
+        headers = {"Content-Type": "application/json", "User-Agent": "maestro-orchestrator"}
+        if self.secret:
+            timestamp = str(int(self.clock()))
+            digest = hmac.new(self.secret.encode(), timestamp.encode() + b"." + body, hashlib.sha256)
+            headers["X-Maestro-Timestamp"] = timestamp
+            headers["X-Maestro-Signature"] = f"sha256={digest.hexdigest()}"
+        self.opener(urllib.request.Request(self.url, data=body, headers=headers, method="POST"))
+
+
 class MultiNotifier:
     """Named channels. The scheduler delivers to each separately so one failure doesn't re-send the rest."""
 
@@ -221,6 +281,18 @@ def _email(config: Config) -> Notifier:
     return EmailNotifier(config)
 
 
+def _webhook(config: Config) -> Notifier:
+    url = _require("webhook", {"MAESTRO_WEBHOOK_URL": config.webhook_url})["MAESTRO_WEBHOOK_URL"]
+    parts = urllib.parse.urlsplit(url)
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        raise ConfigError(f"MAESTRO_WEBHOOK_URL must be an http(s) URL, not {url!r}")
+    if parts.scheme == "http" and not _is_local(parts.hostname):
+        raise ConfigError("MAESTRO_WEBHOOK_URL must use https unless it points at your own network")
+    if config.webhook_format not in WEBHOOK_FORMATS:
+        raise ConfigError(f"MAESTRO_WEBHOOK_FORMAT must be one of {', '.join(WEBHOOK_FORMATS)}")
+    return WebhookNotifier(url, config.webhook_format, config.webhook_secret)
+
+
 CHANNELS: dict[str, Callable[[Config], Notifier]] = {
     "console": lambda _: ConsoleNotifier(),
     "macos": lambda _: MacNotifier(),
@@ -228,6 +300,7 @@ CHANNELS: dict[str, Callable[[Config], Notifier]] = {
     "twilio_sms": _twilio_sms,
     "telegram": _telegram,
     "email": _email,
+    "webhook": _webhook,
 }
 
 
