@@ -67,7 +67,7 @@ Dates are targets, not promises. Work is tracked in [GitHub issues](https://gith
 - [x] Inbound voice: call your number and say the reminder (#7)
 - [x] Reply-to-act: "done" or "snooze 1h" in reply to a reminder (#8)
 - [x] Email-in via IMAP (#9)
-- [ ] Apple Shortcuts and Android Tasker recipes (#10)
+- [x] Apple Shortcuts and Android Tasker recipes (#10)
 - [x] Exactly-once scheduling when more than one process runs (#52)
 - [x] SQLite durability: WAL and busy timeout (#53)
 - [x] Rate limits on public endpoints (#54)
