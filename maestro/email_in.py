@@ -30,7 +30,9 @@ from email.message import EmailMessage
 from email.utils import parseaddr
 from typing import Protocol
 
+from maestro import commands
 from maestro.models import Item
+from maestro.notifier import REMINDER_MESSAGE_ID_RE
 from maestro.observability import METRICS
 from maestro.parser import parse
 from maestro.store import Store
@@ -127,6 +129,21 @@ def is_authorised(message: EmailMessage, allowed: frozenset[str], require_dmarc:
     return True, ""
 
 
+def first_reply_line(message: EmailMessage) -> str:
+    """The first line someone typed in a reply: skips blank and quoted ('>') lines, stops at the
+    usual 'On ... wrote:' quote header."""
+    body = message.get_body(preferencelist=("plain",))
+    content = str(body.get_content()) if body is not None else ""
+    for line in content.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith(">"):
+            continue
+        if re.match(r"^On .+wrote:$", stripped):
+            break
+        return stripped
+    return ""
+
+
 def dedupe_key(message: EmailMessage, raw: bytes) -> str:
     """Message-ID, or a hash of the message: IMAP UIDs are reused across folders and mailbox rebuilds."""
     message_id = str(message.get("Message-ID", "")).strip()
@@ -213,6 +230,10 @@ class EmailPoller:
             if not allowed:
                 log.warning("Ignoring email %s: %s", fetched.uid, reason)
                 return Outcome(None, done=True)
+            if reply := REMINDER_MESSAGE_ID_RE.search(
+                f"{message.get('In-Reply-To', '')} {message.get('References', '')}"
+            ):
+                return self._reply(message, int(reply[1]), dedupe_key(message, fetched.raw), fetched.uid)
             text = capture_text(message)
             if not text:
                 log.info("Ignoring email %s: no subject or text", fetched.uid)
@@ -232,6 +253,20 @@ class EmailPoller:
                 return Outcome(None, done=True)
             log.exception("Failed to handle email %s; leaving it unread to retry", fetched.uid)
             return Outcome(None, done=False)
+
+    def _reply(self, message: EmailMessage, item_id: int, key: str, uid: str) -> Outcome:
+        """A reply to a reminder email: its first line is a command for that reminder ('done',
+        'snooze 1h'). Anything else is ignored rather than captured as a new item."""
+        command = commands.parse_command(first_reply_line(message))
+        if command is None or command.action not in ("done", "snooze"):
+            log.info("Ignoring reply %s to reminder #%s: no done/snooze on the first line", uid, item_id)
+            return Outcome(None, done=True)
+        if not self.store.claim_inbound("email-reply", key, item_id):
+            return Outcome(None, done=True)  # already handled on an earlier poll
+        command.item_id = item_id  # the reply says exactly which reminder
+        log.info("Email reply %s on reminder #%s: %s", uid, item_id,
+                 commands.run(self.store, command, channel="email"))
+        return Outcome(self.store.get(item_id), done=True)
 
     def handle_all(self, fetched: list[Fetched]) -> tuple[list[Item], list[str]]:
         """Captured items, and the uids that can be marked read."""

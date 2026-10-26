@@ -292,6 +292,16 @@ class Store:
             )
         return item, True
 
+    def claim_inbound(self, source: str, external_id: str, item_id: int) -> bool:
+        """Record an inbound message that acted on an existing item (e.g. an email reply 'done').
+        False if it was already handled, so a retried delivery doesn't act twice."""
+        with self._transaction():
+            cur = self.conn.execute(
+                "INSERT OR IGNORE INTO inbound_messages (source, external_id, item_id) VALUES (?, ?, ?)",
+                (source, external_id, item_id),
+            )
+        return cur.rowcount > 0
+
     def get(self, item_id: int) -> Item | None:
         row = self.conn.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
         return self._item(row) if row else None

@@ -6,10 +6,14 @@ switched on by name with MAESTRO_CHANNELS, e.g. `MAESTRO_CHANNELS=console,ntfy,t
 
 import base64
 import platform
+import re
+import smtplib
+import ssl
 import subprocess
 import urllib.parse
 import urllib.request
 from collections.abc import Callable
+from email.message import EmailMessage
 from typing import Protocol
 
 from maestro.config import Config
@@ -92,6 +96,63 @@ class TwilioSMSNotifier:
         self.opener(request)
 
 
+REMINDER_MESSAGE_ID_RE = re.compile(r"<reminder-(\d+)-\d+@maestro>")
+
+
+def reminder_message_id(item: Item) -> str:
+    """Message-ID for a reminder email. Replies quote it (In-Reply-To), which lets email-in act on
+    exactly this reminder; see maestro.email_in."""
+    stamp = int(item.due_at.timestamp()) if item.due_at else 0
+    return f"<reminder-{item.id}-{stamp}@maestro>"
+
+
+SmtpFactory = Callable[[Config], smtplib.SMTP]
+
+
+def _smtp(config: Config) -> smtplib.SMTP:
+    if config.smtp_security == "ssl":
+        return smtplib.SMTP_SSL(config.smtp_host or "", config.smtp_port, timeout=15,
+                                context=ssl.create_default_context())
+    client = smtplib.SMTP(config.smtp_host or "", config.smtp_port, timeout=15)
+    if config.smtp_security == "starttls":
+        client.starttls(context=ssl.create_default_context())
+    return client
+
+
+class EmailNotifier:
+    """Reminder emails over SMTP to MAESTRO_EMAIL_TO. Reply 'done' or 'snooze 1h' (with email-in on)."""
+
+    def __init__(self, config: Config, connect: SmtpFactory = _smtp):
+        self.config = config
+        self.connect = connect
+
+    def message(self, item: Item) -> EmailMessage:
+        message = EmailMessage()
+        message["From"] = self.config.smtp_from or ""
+        message["To"] = self.config.email_to or ""
+        message["Subject"] = f"Reminder: {item.text}"
+        message["Message-ID"] = reminder_message_id(item)
+        lines = [item.text, ""]
+        if self.config.imap_host:
+            lines.append("Reply 'done', or 'snooze 1h', on the first line to act on this reminder.")
+        if self.config.public_url:
+            lines.append(f"Open Maestro: {self.config.public_url}/")
+        message.set_content("\n".join(lines))
+        return message
+
+    def send(self, item: Item) -> None:
+        client = self.connect(self.config)
+        try:
+            if self.config.smtp_user and self.config.smtp_password:
+                client.login(self.config.smtp_user, self.config.smtp_password)
+            client.send_message(self.message(item))
+        finally:
+            try:
+                client.quit()
+            except smtplib.SMTPException:
+                client.close()
+
+
 class MultiNotifier:
     """Named channels. The scheduler delivers to each separately so one failure doesn't re-send the rest."""
 
@@ -135,12 +196,23 @@ def _telegram(config: Config) -> Notifier:
     return TelegramNotifier(TelegramClient.for_token(s["TELEGRAM_BOT_TOKEN"]), s["TELEGRAM_CHAT_ID"])
 
 
+def _email(config: Config) -> Notifier:
+    _require("email", {"SMTP_HOST": config.smtp_host, "SMTP_FROM": config.smtp_from,
+                       "MAESTRO_EMAIL_TO": config.email_to})
+    if config.smtp_security not in ("starttls", "ssl", "none"):
+        raise ConfigError(f"SMTP_SECURITY must be starttls, ssl or none, not {config.smtp_security!r}")
+    if config.smtp_security == "none" and config.smtp_password:
+        raise ConfigError("SMTP_SECURITY=none would send SMTP_PASSWORD in clear text; use starttls or ssl")
+    return EmailNotifier(config)
+
+
 CHANNELS: dict[str, Callable[[Config], Notifier]] = {
     "console": lambda _: ConsoleNotifier(),
     "macos": lambda _: MacNotifier(),
     "ntfy": _ntfy,
     "twilio_sms": _twilio_sms,
     "telegram": _telegram,
+    "email": _email,
 }
 
 
