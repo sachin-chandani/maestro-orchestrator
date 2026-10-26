@@ -18,7 +18,7 @@ Saved: 3  📝 —                 My passport is in the blue drawer
 
 **Who it's for:** people who forget things and want a private, scriptable place to dump them, plus developers who want a reminder engine they can host or embed.
 
-**Status:** early but usable (v0.2). CLI, web UI, REST API, recurring reminders, timezones, and delivery via desktop, ntfy, Twilio SMS and Telegram work today. See the [roadmap](ROADMAP.md) for SMS and voice capture, escalation, calendar feeds and more.
+**Status:** usable (v0.3). Capture from the CLI, web UI, API, Telegram, SMS, phone calls, email and phone shortcuts; recurring reminders and timezones; delivery via desktop, ntfy, Twilio SMS and Telegram; exactly-once scheduling. See the [roadmap](ROADMAP.md) for escalation, calendar feeds, a PWA and more.
 
 ## Features
 - **Plain language:** `tomorrow at 5pm`, `in 2 hours`, `next friday at 10am`, `on Nov 1`, `tonight`, `at noon`, `tomorrow morning`, `by end of day`, `eow`, `this weekend`, `on the 5th`, `around 5pm`, and hours without am/pm the way people say them (`at 6` is evening, `at 9` morning, `at 8 tonight` 20:00). `next friday` means the coming Friday. Measured against a 200+ phrase corpus (`tests/corpus/phrases.txt`)

@@ -61,7 +61,7 @@ Dates are targets, not promises. Work is tracked in [GitHub issues](https://gith
 - [x] `maestro doctor` to validate config and test each channel (#15)
 - [x] Release workflow on tags: GitHub release from the changelog, multi-arch GHCR image, PyPI once enabled (#4)
 
-## v0.3: Capture from anywhere, hardened (target Nov 8, 2026)
+## v0.3: Capture from anywhere, hardened (released Oct 26, 2026)
 - [x] Telegram bot: capture, list, snooze and done from chat, plus a delivery channel with action buttons (#5)
 - [x] Inbound SMS to your Twilio number, with signature validation (#6)
 - [x] Inbound voice: call your number and say the reminder (#7)
