@@ -106,7 +106,7 @@ With the Twilio settings above, set `MAESTRO_PUBLIC_URL` to the address the inte
 Requests are verified with Twilio's signature, and only texts from `MAESTRO_SMS_TO` (your number) are acted on. `maestro doctor` prints the exact webhook URL to use.
 
 ### Call your reminders in (inbound voice)
-With the same Twilio settings, point the number's "A call comes in" webhook at `https://<your-server>/webhooks/twilio/voice`. Call it from your phone, say "remind me to call mom tomorrow at 5 p.m.", and Maestro reads back what it saved. Calls from other numbers are rejected without being answered.
+With the same Twilio settings, point the number's "A call comes in" webhook at `https://<your-server>/webhooks/twilio/voice`. Call it from your phone, say "remind me to call mom tomorrow at 5 p.m.", and Maestro reads back what it saved. Calls from other numbers are rejected without being answered, and so are calls whose caller ID failed the carrier's STIR/SHAKEN check. Caller ID can still be spoofed where carriers don't check it, so treat voice capture as convenient rather than strongly authenticated; a PIN option is tracked in the issues.
 
 ## CLI reference
 ```bash

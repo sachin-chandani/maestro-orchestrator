@@ -85,7 +85,7 @@ def _inbound_sms(config: Config) -> list[Check]:
     if not config.public_url:
         return [Check(WARN, "inbound SMS and voice", "set MAESTRO_PUBLIC_URL so Twilio webhook signatures "
                                                      "can be verified behind a proxy")]
-    base = config.public_url
+    base = config.public_url.rstrip("/")
     return [Check(OK, "inbound SMS", f"set the number's messaging webhook to {base}{WEBHOOK_PATH}"),
             Check(OK, "inbound voice", f"set the number's voice webhook to {base}{VOICE_PATH}")]
 

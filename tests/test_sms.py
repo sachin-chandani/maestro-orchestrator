@@ -142,3 +142,18 @@ def test_webhook_is_404_when_not_configured():
 
     with TestClient(create_app(Store())) as c:
         assert c.post(WEBHOOK_PATH, content="Body=hi").status_code == 404
+
+
+def test_a_retried_sms_is_saved_once(handler):
+    params = {**sms("buy milk at 6pm"), "MessageSid": "SM42"}
+    first, second = handler.handle(params), handler.handle(params)
+    assert first == second
+    assert len(handler.store.list()) == 1
+
+
+def test_deleting_an_item_forgets_its_inbound_id(handler):
+    params = {**sms("buy milk at 6pm"), "MessageSid": "SM43"}
+    handler.handle(params)
+    handler.store.delete(handler.store.list()[0].id)
+    handler.handle(params)  # not a retry of anything that still exists
+    assert len(handler.store.list()) == 1

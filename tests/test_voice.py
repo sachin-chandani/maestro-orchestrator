@@ -2,7 +2,7 @@
 
 import xml.etree.ElementTree as ET
 from datetime import datetime
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urljoin
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -24,15 +24,21 @@ def voice():
     return VoiceHandler(Store(), TOKEN, OWNER)
 
 
+_call_ids = iter(range(1, 10_000))
+
+
 def call(**params):
-    return {"From": OWNER, "To": "+15550001111", "CallSid": "CA1", **params}
+    """A fresh call (unique CallSid) unless one is given."""
+    return {"From": OWNER, "To": "+15550001111", "CallSid": f"CA{next(_call_ids)}", **params}
 
 
 def test_owner_is_asked_what_to_remember(voice):
     root = xml(voice.incoming(call()))
     gather = root.find("Gather")
     assert gather.get("input") == "speech"
-    assert gather.get("action") == VOICE_CAPTURE_PATH
+    # Relative, so Twilio keeps any path prefix of the public URL when it resolves it.
+    resolved = urljoin(f"{PUBLIC}/maestro{VOICE_PATH}", gather.get("action"))
+    assert resolved == f"{PUBLIC}/maestro{VOICE_CAPTURE_PATH}"
     assert gather.find("Say").text == "What should I remember?"
     assert root.find("Hangup") is not None  # after the fallback message if nothing is said
 
@@ -114,7 +120,8 @@ def post(client, path, params, signature=None):
 def test_full_call_through_the_webhooks(client):
     answered = post(client, VOICE_PATH, call())
     assert answered.status_code == 200 and answered.headers["content-type"].startswith("application/xml")
-    action = xml(answered.text).find("Gather").get("action")
+    action = urljoin(VOICE_PATH, xml(answered.text).find("Gather").get("action"))  # as Twilio resolves it
+    assert action == VOICE_CAPTURE_PATH
     captured = post(client, action, call(SpeechResult="Dentist on Friday at 10:30 a.m."))
     assert captured.status_code == 200
     assert "Got it: Dentist" in xml(captured.text).find("Say").text
@@ -145,3 +152,34 @@ def test_doctor_prints_both_webhook_urls(tmp_path):
     doctor.run(Config(db_path=str(tmp_path / "m.db"), channels=["console"], api_token="t",
                       twilio_auth_token="t", sms_to=OWNER, public_url=PUBLIC), out=lines.append)
     assert f"✓ inbound voice: set the number's voice webhook to {PUBLIC}{VOICE_PATH}" in lines
+
+
+def test_a_retried_capture_is_saved_once(voice):
+    params = call(SpeechResult="Call mom at 5 p.m.")
+    first = xml(voice.capture(params)).find("Say").text
+    second = xml(voice.capture(params)).find("Say").text  # Twilio retries the same CallSid
+    assert first == second
+    assert len(voice.store.list()) == 1
+    assert METRICS.get("maestro_captures_total", source="voice") == 1
+
+
+def test_low_confidence_is_not_saved(voice):
+    unsure = call(SpeechResult="call bomb tomorrow at 15", Confidence="0.21")
+    said = xml(voice.capture(unsure)).find("Say").text
+    assert "not sure I heard that right" in said and "call bomb tomorrow at 15" in said
+    assert voice.store.list() == []
+    sure = call(SpeechResult="call mom at 5 p.m.", Confidence="0.85")
+    assert xml(voice.capture(sure)).find("Say") is not None
+    assert len(voice.store.list()) == 1
+
+
+@pytest.mark.parametrize("verdict, answered", [
+    ("TN-Validation-Passed-A", True),
+    ("", True),                              # carrier didn't check: allowed
+    ("TN-Validation-Failed-A", False),       # spoofed caller ID
+    ("TN-Validation-Failed-B", False),
+])
+def test_calls_whose_caller_id_failed_verification_are_rejected(voice, verdict, answered):
+    root = xml(voice.incoming(call(StirVerstat=verdict)))
+    assert (root.find("Gather") is not None) == answered
+    assert (root.find("Reject") is not None) == (not answered)

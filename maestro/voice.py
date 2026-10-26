@@ -12,16 +12,19 @@ from xml.sax.saxutils import escape, quoteattr
 
 from maestro import recurrence
 from maestro.models import Item, Kind
-from maestro.observability import METRICS
-from maestro.parser import parse
-from maestro.sms import normalise_number, verify_signature
-from maestro.store import Store
+from maestro.sms import TwilioHandler
 
 log = logging.getLogger(__name__)
 
 VOICE_PATH = "/webhooks/twilio/voice"
 VOICE_CAPTURE_PATH = "/webhooks/twilio/voice/capture"
+# Relative to VOICE_PATH, so Twilio keeps any path prefix in MAESTRO_PUBLIC_URL (e.g. /maestro).
+CAPTURE_ACTION = "voice/capture"
 LANGUAGE = "en-US"
+# Below this, Twilio's transcript is more likely wrong than right: ask again instead of saving it.
+MIN_CONFIDENCE = 0.3
+# STIR/SHAKEN results that mean the caller ID was checked by the carrier and failed.
+FAILED_ATTESTATION = ("TN-Validation-Failed",)
 
 
 def _twiml(*verbs: str) -> str:
@@ -46,38 +49,44 @@ def confirmation(item: Item) -> str:
     return f"Got it: {item.text}, {spoken_time(item.due_at)}{repeat}."
 
 
-class VoiceHandler:
-    def __init__(self, store: Store, auth_token: str, owner_number: str):
-        self.store = store
-        self.auth_token = auth_token
-        self.owner = normalise_number(owner_number)
+class VoiceHandler(TwilioHandler):
+    """Caller ID can be spoofed. Calls whose caller ID failed the carrier's STIR/SHAKEN check
+    (StirVerstat) are rejected; see the README for the residual risk."""
 
-    def verify(self, url: str, params: dict[str, str], signature: str | None) -> bool:
-        return verify_signature(self.auth_token, url, params, signature)
+    kind = "call"
 
-    def _is_owner(self, params: dict[str, str]) -> bool:
-        caller = normalise_number(params.get("From", ""))
-        if caller == self.owner:
-            return True
-        log.warning("Rejecting call from unknown number ending %s", caller[-4:])
-        return False
+    def _is_trusted_owner(self, params: dict[str, str]) -> bool:
+        if not self.is_owner(params):
+            return False
+        verdict = params.get("StirVerstat", "")
+        if verdict.startswith(FAILED_ATTESTATION):
+            log.warning("Rejecting a call from the owner's number whose caller ID failed verification (%s)",
+                        verdict)
+            return False
+        return True
 
     def incoming(self, params: dict[str, str]) -> str:
         """Answer the owner's call with a prompt and speech recognition."""
-        if not self._is_owner(params):
+        if not self._is_trusted_owner(params):
             return _twiml('<Reject reason="rejected"/>')
-        gather = (f'<Gather input="speech" action={quoteattr(VOICE_CAPTURE_PATH)} method="POST" '
+        gather = (f'<Gather input="speech" action={quoteattr(CAPTURE_ACTION)} method="POST" '
                   f'speechTimeout="auto" language={quoteattr(LANGUAGE)}>'
                   f"{_say('What should I remember?')}</Gather>")
         return _twiml(gather, _say("I didn't hear anything. Goodbye."), "<Hangup/>")
 
     def capture(self, params: dict[str, str]) -> str:
-        """Save what was said and read back how it was understood."""
-        if not self._is_owner(params):
+        """Save what was said (once per call) and read back how it was understood."""
+        if not self._is_trusted_owner(params):
             return _twiml("<Hangup/>")
         speech = params.get("SpeechResult", "").strip()
         if not speech:
             return _twiml(_say("Sorry, I didn't catch that. Please call again."), "<Hangup/>")
-        METRICS.inc("maestro_captures_total", source="voice")
-        item = self.store.add(parse(speech, tz=self.store.tz))
+        try:
+            confidence = float(params.get("Confidence") or 1)
+        except ValueError:
+            confidence = 1.0
+        if confidence < MIN_CONFIDENCE:
+            return _twiml(_say(f"I'm not sure I heard that right. I heard: {speech}. Nothing was saved. "
+                               "Please call again."), "<Hangup/>")
+        item = self.save(speech, params.get("CallSid"), source="voice")
         return _twiml(_say(confirmation(item)), "<Hangup/>")

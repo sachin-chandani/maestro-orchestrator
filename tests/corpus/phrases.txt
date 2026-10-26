@@ -248,3 +248,5 @@ Take out the trash tonight. | Take out the trash | 2026-10-27T20:00 | -
 Pay rent on the 1st of every month. | Pay rent | 2026-11-01T09:00 | monthly:1
 Remember that the spare key is under the mat. | The spare key is under the mat | - | -
 Call the bank at 4 P.M. | Call the bank | 2026-10-27T16:00 | -
+Call mom at 5p.m. | Call mom | 2026-10-27T17:00 | -
+email the P.M. about the budget tomorrow | Email the P.M. about the budget | 2026-10-28T09:00 | -
