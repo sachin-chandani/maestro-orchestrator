@@ -5,43 +5,50 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-**Upgrading:** stop every running Maestro process (server, `run`, cron jobs) before starting the new version. Older versions don't know about the scheduler lease (#52) and would keep delivering in parallel. From this version on, an older Maestro refuses to open a newer database.
+## [0.3.0] - 2026-10-26
+Capture from anywhere, hardened. Reminders can now come in by SMS, phone call, email and phone shortcuts, and the server behind them is built to run unattended: one scheduler fires at a time, bad data never stops it, and public endpoints are authenticated and rate limited.
 
-### Added
-- Phrases: `tomorrow morning` / `afternoon` / `evening` / `night`, `by end of day` / `eod`, `end of week` / `eow`, `this weekend`, `on the 5th` (#16)
-- Recurrences: `every 3 days`, `every other day`, `every other friday`, `every 2 weeks on monday`, `biweekly` / `fortnightly` (with `on <weekday>` anywhere in the phrase), `every night` / `every morning` (#16)
-- Every-N-days/weeks reminders step from their previous occurrence, so they keep their rhythm after downtime
-- Inbound SMS: text your Twilio number to capture, or `list` / `done 3` / `snooze 3 1h` / `rm 3`; verified with Twilio's signature and limited to your own number (#6)
-- `MAESTRO_PUBLIC_URL` for verifying webhooks behind a reverse proxy
-- Inbound voice: call your Twilio number, say the reminder, hear it read back; signed webhooks, owner only, other callers and caller IDs that failed STIR/SHAKEN rejected unanswered, low-confidence transcripts not saved (#7)
-- Guide: capture from your phone with Apple Shortcuts or Android Tasker (`docs/integrations/phone-shortcuts.md`); its examples and claims are tested against the API (#10)
-- API items include `when`, a ready-to-show description of the due time ("Wed 28 Oct 17:00, every Monday", or "note")
-- Email-in: a dedicated inbox polled over IMAP in a background worker; subject (or first body line) captured; only `MAESTRO_EMAIL_FROM` senders with DMARC confirmed by your provider's own header (`MAESTRO_EMAIL_AUTHSERV_ID`); once per Message-ID (or content hash); failures retried up to 3 times (#9)
-- Inbound SMS and calls are captured once per Twilio message/call id, so provider retries don't create duplicates (migration 6)
-- Parser understands dictated `a.m.`/`p.m.` after a time ("5 p.m.", "5p.m.", "4 P.M."), without touching other text ("the P.M.")
-- Parser understands bare hours and times without am/pm the way people say them (`at 6` and `6:30` → evening, `at 9` → morning, `at 8 tonight` → 20:00, `at 6 tomorrow morning` → 06:00), `at 3 o'clock`, `around`/`after 5pm`, and `monthly on the 5th` (#55)
-- Rate limits per client (#54): wrong API tokens (10/min, then the client is locked out of the API, so the token can't be brute-forced, even with parallel requests) and webhook requests with invalid signatures (60/min). Genuine Twilio callbacks and requests without a token are never limited; the web UI stops polling after a 401/429. `MAESTRO_TRUST_PROXY_HEADERS` for reverse proxies; metric `maestro_rate_limited_total`
-- Reply-to-act: `done`, `snooze 1h` or just `snooze` (10 minutes) without a number act on the reminder last delivered on that channel, by SMS or Telegram; `rm` always needs a number (#8)
+**Upgrading:** stop every running Maestro process (server, `run`, cron jobs) before starting 0.3. Older versions don't know about the scheduler lease and would keep delivering in parallel. From 0.3 on, an older Maestro refuses to open a newer database. The database migrates automatically (schema 4 → 6).
 
-### Changed
-- Engineering standards (`ENGINEERING.md`), architecture decision records (`docs/adr/`) and a PR template; CI now enforces a coverage floor (93%) and a dependency vulnerability audit (#58)
-- Telegram and SMS share one command implementation (`maestro/commands.py`)
-- The package type-checks cleanly with mypy, enforced in CI (#57)
-- The database runs in WAL mode (with `synchronous=NORMAL` once WAL is confirmed) and a 5 s busy timeout, so separate processes (`maestro add`, backup tools, a second instance) no longer hit "database is locked" against a running server (#53). Keep `MAESTRO_DB` on a local disk or Docker volume, not a network share; `maestro doctor` warns otherwise
-- Telegram `/done` without a number now acts on the latest reminder instead of printing usage; `/snooze 3` defaults to 10 minutes
-- Reminder texts end with "(reply done or snooze 1h)"
+### Capture from anywhere
+- **SMS:** text your Twilio number to capture; `list`, `done 3`, `snooze 3 1h`, `rm 3` (#6)
+- **Voice:** call your Twilio number, say the reminder, hear it read back (#7)
+- **Email:** send or forward mail to a dedicated inbox polled over IMAP (#9)
+- **Phone shortcuts:** Apple Shortcuts and Android Tasker guide, with its examples tested against the API (#10)
+- **Reply to act:** reply `done` or `snooze 1h` to a reminder by SMS or Telegram, no number needed; `rm` always needs one (#8)
+- API items include `when`, a ready-to-show description of the due time
+
+### Understands more
+- Parts of the day, `eod`/`eow`, `this weekend`, `on the 5th`, `every other friday`, `every 3 days`, `biweekly on tuesday`, `every night` (#16)
+- Hours without am/pm the way people say them (`at 6` → 18:00, `at 8 tonight`, `6:30`), dictated `a.m.`/`p.m.`, `around 5pm`, `monthly on the 5th` (#55)
+- Measured against a 225-phrase corpus: 98.7%, with 3 documented gaps (#55)
+- New one-off reminders are never overdue: a time today that has passed means tomorrow (#56)
+
+### Reliable
+- **Exactly-once delivery** when several schedulers share a database (`serve` + `run`, cron, replicas), via a lease in the database (#52)
+- **WAL mode** with a busy timeout: other processes no longer hit "database is locked" (#53)
+- One corrupt reminder, failed tick or malformed message never stops the scheduler, the bot or the email worker
+- Every write is atomic; inbound SMS, calls and emails are captured once even when the provider retries
+- `maestro run` exits cleanly on SIGTERM and hands over at once
+- Metrics: `maestro_scheduler_leader`, `maestro_scheduler_errors_total`, `maestro_rate_limited_total`, `maestro_email_given_up_total`
+
+### Secure by default
+- Webhooks are authenticated by provider signatures and accept only the owner; calls whose caller ID failed STIR/SHAKEN are rejected
+- Email senders must be confirmed by DMARC in your own provider's header, so forged senders and headers are ignored
+- Rate limits: 10 wrong API tokens per minute per client, then a lockout (safe against parallel guessing); forged webhooks limited; genuine callbacks never (#54)
+
+### Engineering
+- `ENGINEERING.md` (service objectives, definition of done), 8 architecture decision records, PR template (#58)
+- CI gates: ruff, mypy (#57), tests on Python 3.11–3.13, coverage ≥ 96%, dependency audit, Docker build
+- Property-based tests (#56) and a parser accuracy corpus (#55); every pull request self-reviewed before merge
 
 ### Fixed
-- Parser (found by the new 200-phrase corpus, #55): "movie night saturday" no longer loses "night" (parts of the day now need "this", "in the", "at" or a day word); "remind me in 15 minutes to check the oven" no longer leaves "To"; "form 1040 by april 15" is no longer dated the year 1040 and "form 1999 by april 15" keeps its date; "movie night every friday" and "the morning standup every monday" keep their names; "remind me about that email" keeps "that"; "the dentist is at 5 main street" stays a note; text with unusual whitespace (tabs, form feeds) around a date no longer crashes the parser (found by property tests)
-- New one-off reminders are never overdue: "this weekend" said on a Saturday or Sunday from 10:00, and "tonight", "today" or "today at 9am" after that time, used to produce a time in the past that fired at once. A time today that has passed now means tomorrow; "this weekend" moves to the next unpassed weekend slot (found by property tests, #56)
-- Running more than one scheduler on a database (`serve` + `run`, cron `run --once`, two replicas) no longer delivers reminders twice: a lease in the database lets one fire while the others stand by and take over if it stops (#52). New metric `maestro_scheduler_leader`
-- Database connections are now closed (CLI, `maestro doctor`); `Store` is a context manager
-- Every write runs in a transaction that commits or rolls back as a whole; a write that failed half way can no longer leave the shared connection unusable
-- `maestro run` exits cleanly on SIGTERM (`docker stop`, `systemctl stop`) and hands the scheduler lease over immediately
-- API and CLI no longer crash if an item disappears between an update and the read-back (404 / exit 1 / "No item"); found by #57
-- One corrupt reminder or a failed tick no longer stops the scheduler, and one malformed Telegram update no longer stops the bot; new metric `maestro_scheduler_errors_total`
-- "the weekly report…", "my daily standup notes…" and similar are no longer turned into recurring reminders
-- "the 5th element…" is no longer read as a date
+- "this weekend", "tonight" and "today at 9am" could produce a time in the past that fired at once
+- "movie night", "the weekly report", "the 5th element", "form 1040" and similar no longer misread as times or schedules
+- Text with tabs or form feeds near a date no longer crashes the parser
+- Database connections are closed; a failed write can no longer leave the shared connection unusable
+- API and CLI no longer crash if an item disappears between an update and the read-back
+- Telegram `/done` without a number acts on the latest reminder; `/snooze 3` defaults to 10 minutes
 
 ## [0.2.0] - 2026-10-24
 Self-hosting essentials.
@@ -75,6 +82,7 @@ First release.
 - Dockerfile and docker-compose
 - Versioned SQLite migrations, safe under concurrent startup
 
-[Unreleased]: https://github.com/sachin-chandani/maestro-orchestrator/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/sachin-chandani/maestro-orchestrator/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/sachin-chandani/maestro-orchestrator/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/sachin-chandani/maestro-orchestrator/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/sachin-chandani/maestro-orchestrator/releases/tag/v0.1.0
