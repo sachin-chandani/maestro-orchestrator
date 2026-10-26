@@ -4,21 +4,27 @@ Maestro polls the inbox over IMAP (IMAP_HOST, IMAP_USER, IMAP_PASSWORD; IMAP_FOL
 INBOX). The subject is captured ("Re:"/"Fwd:" stripped); if it's empty, the first line of the body.
 
 Who may capture: only senders in MAESTRO_EMAIL_FROM, and, because the From header is trivially
-forged, only when the receiving mail provider reports `dmarc=pass` in the **topmost**
-Authentication-Results header (the one it added; lower ones can be written by the sender). Set
-MAESTRO_EMAIL_REQUIRE_DMARC=false only for a private mail server that doesn't add that header.
+forged, only when an Authentication-Results header from **your provider** (its authserv-id, set in
+MAESTRO_EMAIL_AUTHSERV_ID, e.g. mx.google.com) reports `dmarc=pass`. Headers from any other server
+are ignored: a sender can write those (ADR 0008). Set MAESTRO_EMAIL_REQUIRE_DMARC=false only for a
+private mail server that doesn't add the header.
 
-Each message is captured once per Message-ID, so a failure between saving and marking it read can't
-create duplicates. Network work (fetch, mark read) and store work (parse, save) are separate steps so
-the server can run the first in a thread and the second on its event loop (ADR 0003).
+Each message is captured once (per Message-ID, or a hash of the message when it has none), so a
+failure between saving and marking it read can't create duplicates. A message that keeps failing is
+given up on after MAX_FAILURES polls. IMAP runs in a background worker (EmailWorker) so a slow mail
+server never delays the scheduler; captures happen on the thread that owns the store (ADR 0003).
 """
 
 import email
 import email.policy
+import hashlib
 import imaplib
 import logging
+import queue
 import re
-from collections.abc import Callable
+import threading
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from email.message import EmailMessage
 from email.utils import parseaddr
@@ -39,7 +45,7 @@ class Mailbox(Protocol):
     """The slice of imaplib.IMAP4 that the poller uses (so tests can pass a fake)."""
 
     def login(self, user: str, password: str) -> object: ...
-    def select(self, mailbox: str = ...) -> object: ...
+    def select(self, mailbox: str = ...) -> tuple[str, list]: ...
     def uid(self, command: str, *args: str) -> tuple[str, list]: ...
     def logout(self) -> object: ...
 
@@ -53,10 +59,20 @@ class EmailSettings:
     folder: str = "INBOX"
     port: int = 993
     require_dmarc: bool = True
+    authserv_id: str | None = None  # your provider's id in Authentication-Results, e.g. mx.google.com
+    poll_seconds: int = 60
+
+
+MAX_FAILURES = 3  # polls a message may fail before it's given up on (marked read, logged)
+IMAP_TIMEOUT = 20
+
+
+class MailboxError(RuntimeError):
+    pass
 
 
 def _connect(settings: EmailSettings) -> Mailbox:
-    return imaplib.IMAP4_SSL(settings.host, settings.port, timeout=30)
+    return imaplib.IMAP4_SSL(settings.host, settings.port, timeout=IMAP_TIMEOUT)
 
 
 @dataclass
@@ -86,17 +102,35 @@ def capture_text(message: EmailMessage) -> str:
     return ""
 
 
-def is_authorised(message: EmailMessage, allowed: frozenset[str], require_dmarc: bool) -> tuple[bool, str]:
-    """(allowed, reason). Only the topmost Authentication-Results header is trusted."""
+def _authserv_id(header: str) -> str:
+    return header.split(";", 1)[0].strip().lower()
+
+
+def is_authorised(message: EmailMessage, allowed: frozenset[str], require_dmarc: bool,
+                  authserv_id: str | None = None) -> tuple[bool, str]:
+    """(allowed, reason).
+
+    The trusted Authentication-Results header is the topmost one written by your provider
+    (`authserv_id`). Your provider adds it above everything else, so a header the sender forged with
+    the same id sits below it and is never the first match; headers with other ids are ignored.
+    """
     sender = parseaddr(str(message.get("From", "")))[1].lower()
     if sender not in allowed:
         return False, f"sender {sender or '(none)'} is not in MAESTRO_EMAIL_FROM"
     if require_dmarc:
-        results = message.get_all("Authentication-Results") or []
-        topmost = str(results[0]).lower() if results else ""
-        if not re.search(r"\bdmarc=pass\b", topmost):
-            return False, "no dmarc=pass from the receiving server (From may be forged)"
+        headers = [str(h) for h in message.get_all("Authentication-Results") or []]
+        ours = next((h for h in headers if _authserv_id(h) == (authserv_id or "").lower()), None)
+        if ours is None:
+            return False, f"no Authentication-Results from {authserv_id} (From may be forged)"
+        if not re.search(r"\bdmarc=pass\b", ours.lower()):
+            return False, f"{authserv_id} did not report dmarc=pass (From may be forged)"
     return True, ""
+
+
+def dedupe_key(message: EmailMessage, raw: bytes) -> str:
+    """Message-ID, or a hash of the message: IMAP UIDs are reused across folders and mailbox rebuilds."""
+    message_id = str(message.get("Message-ID", "")).strip()
+    return message_id or f"sha256:{hashlib.sha256(raw).hexdigest()}"
 
 
 class EmailPoller:
@@ -105,41 +139,66 @@ class EmailPoller:
         self.store = store
         self.settings = settings
         self.connect = connect or _connect  # looked up at construction, so it can be swapped in tests
+        self.failures: dict[str, int] = {}  # by message hash: how many polls each has failed
 
-    # --- network (safe in a worker thread) ------------------------------------------------------
+    # --- network (any thread) -----------------------------------------------------------------------
 
-    def fetch(self) -> list[Fetched]:
-        """Unread messages, without marking them read."""
-        box = self._open()
+    @contextmanager
+    def session(self) -> Iterator[Mailbox]:
+        """A logged-in, selected mailbox; always logged out (or at least closed) afterwards."""
+        box = self.connect(self.settings)
         try:
-            status, data = box.uid("SEARCH", "UNSEEN")
-            if status != "OK" or not data or not data[0]:
-                return []
-            fetched = []
-            for uid in data[0].split():
-                uid_text = uid.decode() if isinstance(uid, bytes) else str(uid)
-                status, parts = box.uid("FETCH", uid_text, "(BODY.PEEK[])")
-                raw = next((p[1] for p in parts if isinstance(p, tuple) and len(p) > 1), None)
-                if status == "OK" and isinstance(raw, bytes):
-                    fetched.append(Fetched(uid_text, raw))
-            return fetched
+            box.login(self.settings.user, self.settings.password)
+            status, data = box.select(self.settings.folder)
+            if status != "OK":
+                raise MailboxError(f"cannot open folder {self.settings.folder!r}: {data!r}")
+            yield box
         finally:
-            box.logout()
+            try:
+                box.logout()
+            except Exception:  # e.g. login failed: close the socket anyway
+                shutdown = getattr(box, "shutdown", None)
+                if shutdown:
+                    shutdown()
 
-    def mark_read(self, uids: list[str]) -> None:
+    @staticmethod
+    def unseen_uids(box: Mailbox) -> list[str]:
+        status, data = box.uid("SEARCH", "UNSEEN")
+        if status != "OK":
+            raise MailboxError(f"SEARCH failed: {data!r}")
+        if not data or not data[0]:
+            return []
+        return [u.decode() if isinstance(u, bytes) else str(u) for u in data[0].split()]
+
+    def fetch_from(self, box: Mailbox) -> list[Fetched]:
+        """Unread messages, without marking them read (BODY.PEEK)."""
+        fetched = []
+        for uid in self.unseen_uids(box):
+            status, parts = box.uid("FETCH", uid, "(BODY.PEEK[])")
+            raw = next((p[1] for p in parts if isinstance(p, tuple) and len(p) > 1), None)
+            if status == "OK" and isinstance(raw, bytes):
+                fetched.append(Fetched(uid, raw))
+        return fetched
+
+    @staticmethod
+    def mark_read_in(box: Mailbox, uids: list[str]) -> None:
         if not uids:
             return
-        box = self._open()
-        try:
-            box.uid("STORE", ",".join(uids), "+FLAGS", r"(\Seen)")
-        finally:
-            box.logout()
+        status, data = box.uid("STORE", ",".join(uids), "+FLAGS", r"(\Seen)")
+        if status != "OK":
+            raise MailboxError(f"could not mark messages read (is the folder read-only?): {data!r}")
 
-    def _open(self) -> Mailbox:
-        box = self.connect(self.settings)
-        box.login(self.settings.user, self.settings.password)
-        box.select(self.settings.folder)
-        return box
+    def count_unread(self) -> int:
+        with self.session() as box:
+            return len(self.unseen_uids(box))
+
+    def fetch(self) -> list[Fetched]:
+        with self.session() as box:
+            return self.fetch_from(box)
+
+    def mark_read(self, uids: list[str]) -> None:
+        with self.session() as box:
+            self.mark_read_in(box, uids)
 
     # --- store work (event loop thread) --------------------------------------------------------
 
@@ -149,7 +208,8 @@ class EmailPoller:
         try:
             message = email.message_from_bytes(fetched.raw, policy=email.policy.default)
             settings = self.settings
-            allowed, reason = is_authorised(message, settings.allowed_senders, settings.require_dmarc)
+            allowed, reason = is_authorised(message, settings.allowed_senders, settings.require_dmarc,
+                                            settings.authserv_id)
             if not allowed:
                 log.warning("Ignoring email %s: %s", fetched.uid, reason)
                 return Outcome(None, done=True)
@@ -157,12 +217,19 @@ class EmailPoller:
             if not text:
                 log.info("Ignoring email %s: no subject or text", fetched.uid)
                 return Outcome(None, done=True)
-            message_id = str(message.get("Message-ID", "")).strip() or f"uid:{fetched.uid}"
-            item, created = self.store.add_once("email", message_id, parse(text, tz=self.store.tz))
+            item, created = self.store.add_once("email", dedupe_key(message, fetched.raw),
+                                                parse(text, tz=self.store.tz))
             if created:
                 METRICS.inc("maestro_captures_total", source="email")
             return Outcome(item, done=True)
         except Exception:
+            key = hashlib.sha256(fetched.raw).hexdigest()
+            self.failures[key] = self.failures.get(key, 0) + 1
+            if self.failures[key] >= MAX_FAILURES:
+                log.exception("Giving up on email %s after %d failures; marking it read", fetched.uid,
+                              MAX_FAILURES)
+                METRICS.inc("maestro_email_given_up_total")
+                return Outcome(None, done=True)
             log.exception("Failed to handle email %s; leaving it unread to retry", fetched.uid)
             return Outcome(None, done=False)
 
@@ -172,7 +239,65 @@ class EmailPoller:
         return [o.item for _, o in outcomes if o.item], [uid for uid, o in outcomes if o.done]
 
     def poll_once(self) -> list[Item]:
-        """Fetch, capture and mark read: for `maestro run`, which has no event loop."""
-        items, done = self.handle_all(self.fetch())
-        self.mark_read(done)
+        """Fetch, capture and mark read in one session, on the calling thread."""
+        with self.session() as box:
+            items, done = self.handle_all(self.fetch_from(box))
+            self.mark_read_in(box, done)
+        return items
+
+
+class EmailWorker:
+    """Runs IMAP in a background thread so a slow or unreachable mail server never delays the
+    scheduler. The thread that owns the store calls `process()` regularly; it never blocks.
+
+    Each cycle uses one IMAP session: fetch unread, hand them over, wait for `process()` to say
+    which are done, mark those read.
+    """
+
+    def __init__(self, poller: EmailPoller, handoff_timeout: float = 120.0):
+        self.poller = poller
+        self.handoff_timeout = handoff_timeout
+        self._fetched: queue.Queue[list[Fetched]] = queue.Queue(maxsize=1)
+        self._done: queue.Queue[list[str]] = queue.Queue(maxsize=1)
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        self._thread = threading.Thread(target=self._run, name="maestro-email", daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread:
+            self._thread.join(timeout=5)
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            try:
+                self._cycle()
+            except Exception:
+                log.exception("Email polling failed; retrying in %ss", self.poller.settings.poll_seconds)
+            self._stop.wait(self.poller.settings.poll_seconds)
+
+    def _cycle(self) -> None:
+        with self.poller.session() as box:
+            fetched = self.poller.fetch_from(box)
+            if not fetched:
+                return
+            self._fetched.put(fetched)
+            try:
+                done = self._done.get(timeout=self.handoff_timeout)
+            except queue.Empty:
+                log.warning("Fetched mail was not processed in time; it stays unread for the next poll")
+                return
+            self.poller.mark_read_in(box, done)
+
+    def process(self) -> list[Item]:
+        """Capture whatever the worker has fetched. Call from the thread that owns the store."""
+        try:
+            fetched = self._fetched.get_nowait()
+        except queue.Empty:
+            return []
+        items, done = self.poller.handle_all(fetched)
+        self._done.put(done)
         return items

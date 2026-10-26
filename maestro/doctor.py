@@ -108,8 +108,8 @@ def _email_in(config: Config, connect: bool) -> list[Check]:
         return [*checks, Check(OK, "email-in", f"{settings.user} on {settings.host} ({settings.folder}), "
                                                f"senders: {', '.join(sorted(settings.allowed_senders))}")]
     try:
-        with Store() as scratch:  # fetch only reads the inbox; nothing is saved
-            unread = len(EmailPoller(scratch, settings).fetch())
+        with Store() as scratch:  # only counts unread mail (one SEARCH); nothing is fetched or saved
+            unread = EmailPoller(scratch, settings).count_unread()
     except Exception as e:
         return [*checks, Check(FAIL, "email-in", f"IMAP login/fetch failed: {type(e).__name__}: {e}")]
     return [*checks, Check(OK, "email-in", f"connected to {settings.host}, {unread} unread")]

@@ -32,7 +32,7 @@ from maestro.tz import add_elapsed
 from maestro.voice import VOICE_CAPTURE_PATH, VOICE_PATH, VoiceHandler
 
 if TYPE_CHECKING:
-    from maestro.email_in import EmailPoller
+    from maestro.email_in import EmailWorker
     from maestro.telegram import TelegramBot
 
 log = logging.getLogger(__name__)
@@ -51,16 +51,11 @@ async def _scheduler_loop(store: Store, notifier: Notifier, interval: float) -> 
         lease.release(store)
 
 
-async def _email_loop(poller: "EmailPoller", interval: float) -> None:
-    # IMAP calls run in a worker thread; capturing (which touches SQLite) stays on the event loop.
+async def _email_loop(worker: "EmailWorker") -> None:
+    # IMAP runs in the worker's thread; capturing (which touches SQLite) happens here, on the event loop.
     while True:
-        try:
-            fetched = await asyncio.to_thread(poller.fetch)
-            _, done = poller.handle_all(fetched)
-            await asyncio.to_thread(poller.mark_read, done)
-        except Exception:
-            log.exception("Email polling failed; retrying in %ss", interval)
-        await asyncio.sleep(interval)
+        worker.process()
+        await asyncio.sleep(1)
 
 
 async def _bot_loop(bot: "TelegramBot") -> None:
@@ -110,8 +105,7 @@ class ItemOut(BaseModel):
 def create_app(store: Store, api_token: str | None = None, notifier: Notifier | None = None,
                interval: float = 30.0, bot: "TelegramBot | None" = None, sms: SmsHandler | None = None,
                public_url: str | None = None, limits: RateLimits | None = None,
-               voice: VoiceHandler | None = None, email: "EmailPoller | None" = None,
-               email_interval: float = 60.0) -> FastAPI:
+               voice: VoiceHandler | None = None, email: "EmailWorker | None" = None) -> FastAPI:
     """Build the app. With a notifier, due reminders are also fired from a background task;
     with a bot (maestro.telegram.TelegramBot), chat messages are handled from another; with an
     SmsHandler (maestro.sms), the Twilio webhook is enabled. `public_url` is the externally visible
@@ -126,10 +120,13 @@ def create_app(store: Store, api_token: str | None = None, notifier: Notifier | 
         if bot:
             tasks.append(asyncio.create_task(_bot_loop(bot)))
         if email:
-            tasks.append(asyncio.create_task(_email_loop(email, email_interval)))
+            email.start()
+            tasks.append(asyncio.create_task(_email_loop(email)))
         yield
         for task in tasks:
             task.cancel()
+        if email:
+            email.stop()
 
     app = FastAPI(title="Maestro", version=__version__, lifespan=lifespan,
                   description="Self-hosted second brain: capture things to remember, get reminded.")

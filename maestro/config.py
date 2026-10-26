@@ -74,6 +74,7 @@ class Config:
     imap_folder: str = "INBOX"
     email_from: list[str] = field(default_factory=list)  # senders allowed to capture by email
     email_require_dmarc: bool = True
+    email_authserv_id: str | None = None  # your provider's id in Authentication-Results headers
     email_poll_seconds: int = 60
 
     @classmethod
@@ -106,6 +107,7 @@ class Config:
             email_from=[a.lower() for a in _csv(env.get("MAESTRO_EMAIL_FROM", ""))],
             email_require_dmarc=(env.get("MAESTRO_EMAIL_REQUIRE_DMARC") or "true").strip().lower()
             not in ("0", "false", "no", "off"),
+            email_authserv_id=(env.get("MAESTRO_EMAIL_AUTHSERV_ID") or "").strip() or None,
             email_poll_seconds=_count(env, "MAESTRO_EMAIL_POLL_SECONDS", 60),
         )
 
@@ -121,6 +123,14 @@ def email_settings(config: Config) -> "EmailSettings | None":
         missing = [name for name, value in (("IMAP_USER", user), ("IMAP_PASSWORD", password),
                                             ("MAESTRO_EMAIL_FROM", senders)) if not value]
         raise ValueError(f"email-in needs {', '.join(missing)} when IMAP_HOST is set")
+    if config.email_require_dmarc and not config.email_authserv_id:
+        raise ValueError("email-in needs MAESTRO_EMAIL_AUTHSERV_ID: the first word of the "
+                         "Authentication-Results header your provider adds (e.g. mx.google.com), "
+                         "so forged headers can't pass")
+    if config.email_poll_seconds < 10:
+        raise ValueError("MAESTRO_EMAIL_POLL_SECONDS must be at least 10 "
+                         "(unset IMAP_HOST to turn email-in off)")
     return EmailSettings(host=config.imap_host, port=config.imap_port, user=user, password=password,
                          allowed_senders=frozenset(senders), folder=config.imap_folder,
-                         require_dmarc=config.email_require_dmarc)
+                         require_dmarc=config.email_require_dmarc, authserv_id=config.email_authserv_id,
+                         poll_seconds=config.email_poll_seconds)
