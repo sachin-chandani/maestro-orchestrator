@@ -7,6 +7,10 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from maestro.email_in import EmailSettings
 
 DEFAULT_DB = Path.home() / ".maestro" / "maestro.db"
 
@@ -63,6 +67,15 @@ class Config:
     telegram_bot_token: str | None = None
     telegram_chat_id: str | None = None
 
+    imap_host: str | None = None
+    imap_port: int = 993
+    imap_user: str | None = None
+    imap_password: str | None = None
+    imap_folder: str = "INBOX"
+    email_from: list[str] = field(default_factory=list)  # senders allowed to capture by email
+    email_require_dmarc: bool = True
+    email_poll_seconds: int = 60
+
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> "Config":
         env = os.environ if env is None else env
@@ -85,4 +98,29 @@ class Config:
             ntfy_topic=env.get("NTFY_TOPIC") or None,
             telegram_bot_token=env.get("TELEGRAM_BOT_TOKEN") or None,
             telegram_chat_id=env.get("TELEGRAM_CHAT_ID") or None,
+            imap_host=env.get("IMAP_HOST") or None,
+            imap_port=_count(env, "IMAP_PORT", 993),
+            imap_user=env.get("IMAP_USER") or None,
+            imap_password=env.get("IMAP_PASSWORD") or None,
+            imap_folder=env.get("IMAP_FOLDER") or "INBOX",
+            email_from=[a.lower() for a in _csv(env.get("MAESTRO_EMAIL_FROM", ""))],
+            email_require_dmarc=(env.get("MAESTRO_EMAIL_REQUIRE_DMARC") or "true").strip().lower()
+            not in ("0", "false", "no", "off"),
+            email_poll_seconds=_count(env, "MAESTRO_EMAIL_POLL_SECONDS", 60),
         )
+
+
+def email_settings(config: Config) -> "EmailSettings | None":
+    """Email-in settings when IMAP is configured, else None. Raises ValueError if half-configured."""
+    from maestro.email_in import EmailSettings
+
+    if not config.imap_host:
+        return None
+    user, password, senders = config.imap_user, config.imap_password, config.email_from
+    if not (user and password and senders):
+        missing = [name for name, value in (("IMAP_USER", user), ("IMAP_PASSWORD", password),
+                                            ("MAESTRO_EMAIL_FROM", senders)) if not value]
+        raise ValueError(f"email-in needs {', '.join(missing)} when IMAP_HOST is set")
+    return EmailSettings(host=config.imap_host, port=config.imap_port, user=user, password=password,
+                         allowed_senders=frozenset(senders), folder=config.imap_folder,
+                         require_dmarc=config.email_require_dmarc)

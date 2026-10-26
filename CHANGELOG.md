@@ -14,6 +14,7 @@ All notable changes to this project are documented here. The format follows
 - Inbound SMS: text your Twilio number to capture, or `list` / `done 3` / `snooze 3 1h` / `rm 3`; verified with Twilio's signature and limited to your own number (#6)
 - `MAESTRO_PUBLIC_URL` for verifying webhooks behind a reverse proxy
 - Inbound voice: call your Twilio number, say the reminder, hear it read back; signed webhooks, owner only, other callers and caller IDs that failed STIR/SHAKEN rejected unanswered, low-confidence transcripts not saved (#7)
+- Email-in: a dedicated inbox polled over IMAP; subject (or first body line) captured; only `MAESTRO_EMAIL_FROM` senders with DMARC confirmed by your mail provider; once per Message-ID; failures retried (#9)
 - Inbound SMS and calls are captured once per Twilio message/call id, so provider retries don't create duplicates (migration 6)
 - Parser understands dictated `a.m.`/`p.m.` after a time ("5 p.m.", "5p.m.", "4 P.M."), without touching other text ("the P.M.")
 - Parser understands bare hours and times without am/pm the way people say them (`at 6` and `6:30` → evening, `at 9` → morning, `at 8 tonight` → 20:00, `at 6 tomorrow morning` → 06:00), `at 3 o'clock`, `around`/`after 5pm`, and `monthly on the 5th` (#55)

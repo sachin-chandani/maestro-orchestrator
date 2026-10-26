@@ -26,6 +26,7 @@ Saved: 3  📝 —                 My passport is in the blue drawer
 - **Timezone-aware:** stored in UTC, shown in your timezone; "8am every day" stays 8am across DST changes
 - **Notes:** anything without a time is kept and searchable
 - **Channels:** console, macOS notifications, [ntfy](https://ntfy.sh) push, Twilio SMS, Telegram (with Done/snooze buttons)
+- **Email-in:** forward or send an email to a dedicated inbox to capture it
 - **Voice:** call your Twilio number and say the reminder; it's read back to you
 - **Telegram bot:** text your own bot "dentist next tue 3pm" to capture; `/list`, `/done`, `/snooze`, `/rm`
 - **Self-hosted:** one Docker container, one SQLite file, token-protected REST API and a built-in web UI
@@ -107,6 +108,9 @@ Requests are verified with Twilio's signature, and only texts from `MAESTRO_SMS_
 
 ### Call your reminders in (inbound voice)
 With the same Twilio settings, point the number's "A call comes in" webhook at `https://<your-server>/webhooks/twilio/voice`. Call it from your phone, say "remind me to call mom tomorrow at 5 p.m.", and Maestro reads back what it saved. Calls from other numbers are rejected without being answered, and so are calls whose caller ID failed the carrier's STIR/SHAKEN check. Caller ID can still be spoofed where carriers don't check it, so treat voice capture as convenient rather than strongly authenticated; a PIN option is tracked in the issues.
+
+### Email your reminders (email-in)
+Create a dedicated inbox for Maestro, set `IMAP_HOST`, `IMAP_USER`, `IMAP_PASSWORD` and `MAESTRO_EMAIL_FROM` (your own addresses), and send or forward mail to it. The subject is captured ("Re:"/"Fwd:" removed), or the first line of the body if there's no subject. Only your addresses count, and only when your mail provider confirms the sender with DMARC, so a forged `From` is ignored ([ADR 0008](docs/adr/0008-email-sender-trust.md)). `maestro doctor --send-test` checks the IMAP login.
 
 ## CLI reference
 ```bash
