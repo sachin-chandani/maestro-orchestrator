@@ -78,7 +78,7 @@ def test_run_rejects_bad_channel_and_log_config(db, monkeypatch, capsys):
 
 
 def test_run_forever_stops_cleanly_on_ctrl_c(db, monkeypatch, capsys):
-    def interrupted(store, notifier, interval, wait):
+    def interrupted(store, notifier, interval, wait, escalation=None):
         assert interval == 5
         raise KeyboardInterrupt
 

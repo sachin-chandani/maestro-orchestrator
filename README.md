@@ -30,6 +30,7 @@ Saved: 3  📝 —                 My passport is in the blue drawer
 - **Voice:** call your Twilio number and say the reminder; it's read back to you
 - **Telegram bot:** text your own bot "dentist next tue 3pm" to capture; `/list`, `/done`, `/snooze`, `/rm`
 - **Self-hosted:** one Docker container, one SQLite file, token-protected REST API and a built-in web UI
+- **Escalation:** unacknowledged reminders move to louder channels on a schedule you set (push, then SMS, then more)
 - **Reliable:** delivery is tracked per channel; a failing channel is retried with backoff (up to 5 attempts) without re-sending on the ones that worked. After downtime, recurring reminders fire once and skip ahead instead of flooding you
 
 ## Quick start (CLI)
@@ -79,6 +80,15 @@ All settings come from environment variables or a `.env` file. See [.env.example
 | `NTFY_URL`, `NTFY_TOPIC` | ntfy server and topic |
 | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER`, `MAESTRO_SMS_TO` | SMS to and from your own phone |
 | `MAESTRO_PUBLIC_URL` | How the internet reaches your server (e.g. `https://maestro.example.com`); needed for inbound webhooks behind a proxy |
+
+### Escalation
+If a reminder isn't acknowledged (marked done or snoozed, from anywhere), Maestro can try louder channels:
+
+```bash
+MAESTRO_ESCALATION="10m=twilio_sms, 30m=telegram+twilio_sms"
+```
+
+That sends an SMS 10 minutes after the first notice went out, then Telegram and another SMS at 30 minutes, each once, prefixed "Still waiting:". Replying `done` to any of them stops the rest. Only reminders from the last 12 hours escalate, so turning this on never pages you about old ones. `maestro doctor` prints the plan.
 
 ### Checking your setup
 ```bash
