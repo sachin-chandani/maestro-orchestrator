@@ -29,6 +29,7 @@ from maestro.scheduler import Lease, tick
 from maestro.sms import WEBHOOK_PATH, SmsHandler
 from maestro.store import Store
 from maestro.tz import add_elapsed
+from maestro.voice import VOICE_CAPTURE_PATH, VOICE_PATH, VoiceHandler
 
 if TYPE_CHECKING:
     from maestro.telegram import TelegramBot
@@ -95,7 +96,8 @@ class ItemOut(BaseModel):
 
 def create_app(store: Store, api_token: str | None = None, notifier: Notifier | None = None,
                interval: float = 30.0, bot: "TelegramBot | None" = None, sms: SmsHandler | None = None,
-               public_url: str | None = None, limits: RateLimits | None = None) -> FastAPI:
+               public_url: str | None = None, limits: RateLimits | None = None,
+               voice: VoiceHandler | None = None) -> FastAPI:
     """Build the app. With a notifier, due reminders are also fired from a background task;
     with a bot (maestro.telegram.TelegramBot), chat messages are handled from another; with an
     SmsHandler (maestro.sms), the Twilio webhook is enabled. `public_url` is the externally visible
@@ -156,11 +158,15 @@ def create_app(store: Store, api_token: str | None = None, notifier: Notifier | 
                 raise too_many(failure_bucket, client, "auth_failures")
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid API token")
 
-    @app.post(WEBHOOK_PATH, include_in_schema=False)
-    async def twilio_sms(request: Request) -> Response:
-        # Authenticated by Twilio's signature rather than the API token, which Twilio can't send.
-        if sms is None:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "Inbound SMS is not configured")
+    async def twilio_params(request: Request, handler: SmsHandler | VoiceHandler | None) -> dict[str, str]:
+        """The form parameters of a Twilio webhook, after checking its signature.
+
+        Authenticated by Twilio's signature rather than the API token, which Twilio can't send. Only
+        unsigned/forged requests are rate limited: genuine callbacks are never throttled, and nothing
+        reaches the parser without a valid signature.
+        """
+        if handler is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "This Twilio webhook is not configured")
         form = parse_qs((await request.body()).decode(), keep_blank_values=True)
         params = {key: values[0] for key, values in form.items()}
         # Twilio signs the URL it called; behind a proxy that's the public URL, not what we see.
@@ -168,15 +174,34 @@ def create_app(store: Store, api_token: str | None = None, notifier: Notifier | 
         if public_url:
             query = f"?{request.url.query}" if request.url.query else ""
             url = f"{public_url.rstrip('/')}{request.url.path}{query}"
-        if not sms.verify(url, params, request.headers.get("X-Twilio-Signature")):
-            # Only unsigned/forged requests are limited: genuine Twilio callbacks are never throttled,
-            # and nothing reaches the parser without a valid signature.
+        if not handler.verify(url, params, request.headers.get("X-Twilio-Signature")):
             client = client_of(request)
             if webhook_bucket and not webhook_bucket.take(client):
                 raise too_many(webhook_bucket, client, "webhook")
-            log.warning("Rejected SMS webhook with a bad signature (checked against %s)", url)
+            log.warning("Rejected Twilio webhook with a bad signature (checked against %s)", url)
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Invalid Twilio signature")
-        return Response(sms.handle(params), media_type="application/xml")
+        return params
+
+    def twiml_response(body: str) -> Response:
+        return Response(body, media_type="application/xml")
+
+    @app.post(WEBHOOK_PATH, include_in_schema=False)
+    async def twilio_sms(request: Request) -> Response:
+        params = await twilio_params(request, sms)
+        assert sms is not None  # twilio_params returned, so it's configured
+        return twiml_response(sms.handle(params))
+
+    @app.post(VOICE_PATH, include_in_schema=False)
+    async def twilio_voice(request: Request) -> Response:
+        params = await twilio_params(request, voice)
+        assert voice is not None
+        return twiml_response(voice.incoming(params))
+
+    @app.post(VOICE_CAPTURE_PATH, include_in_schema=False)
+    async def twilio_voice_capture(request: Request) -> Response:
+        params = await twilio_params(request, voice)
+        assert voice is not None
+        return twiml_response(voice.capture(params))
 
     def get_or_404(item_id: int) -> Item:
         if (item := store.get(item_id)) is None:

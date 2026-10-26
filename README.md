@@ -26,6 +26,7 @@ Saved: 3  📝 —                 My passport is in the blue drawer
 - **Timezone-aware:** stored in UTC, shown in your timezone; "8am every day" stays 8am across DST changes
 - **Notes:** anything without a time is kept and searchable
 - **Channels:** console, macOS notifications, [ntfy](https://ntfy.sh) push, Twilio SMS, Telegram (with Done/snooze buttons)
+- **Voice:** call your Twilio number and say the reminder; it's read back to you
 - **Telegram bot:** text your own bot "dentist next tue 3pm" to capture; `/list`, `/done`, `/snooze`, `/rm`
 - **Self-hosted:** one Docker container, one SQLite file, token-protected REST API and a built-in web UI
 - **Reliable:** delivery is tracked per channel; a failing channel is retried with backoff (up to 5 attempts) without re-sending on the ones that worked. After downtime, recurring reminders fire once and skip ahead instead of flooding you
@@ -103,6 +104,9 @@ With the Twilio settings above, set `MAESTRO_PUBLIC_URL` to the address the inte
 - Reply `done` or `snooze 1h` to a reminder text to act on it without its number (the same works in Telegram). `rm` always needs the number.
 
 Requests are verified with Twilio's signature, and only texts from `MAESTRO_SMS_TO` (your number) are acted on. `maestro doctor` prints the exact webhook URL to use.
+
+### Call your reminders in (inbound voice)
+With the same Twilio settings, point the number's "A call comes in" webhook at `https://<your-server>/webhooks/twilio/voice`. Call it from your phone, say "remind me to call mom tomorrow at 5 p.m.", and Maestro reads back what it saved. Calls from other numbers are rejected without being answered.
 
 ## CLI reference
 ```bash

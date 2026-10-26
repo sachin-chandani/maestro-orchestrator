@@ -16,6 +16,7 @@ from maestro.notifier import CHANNELS, ConfigError, Notifier
 from maestro.sms import WEBHOOK_PATH
 from maestro.store import MIGRATIONS, Store
 from maestro.tz import get_timezone
+from maestro.voice import VOICE_PATH
 
 OK, WARN, FAIL = "ok", "warn", "fail"
 SYMBOLS = {OK: "✓", WARN: "!", FAIL: "✗"}
@@ -82,9 +83,11 @@ def _inbound_sms(config: Config) -> list[Check]:
     if not (config.twilio_auth_token and config.sms_to):
         return []
     if not config.public_url:
-        return [Check(WARN, "inbound SMS", "set MAESTRO_PUBLIC_URL so Twilio webhook signatures can be "
-                                           "verified behind a proxy")]
-    return [Check(OK, "inbound SMS", f"point Twilio's webhook at {config.public_url}{WEBHOOK_PATH}")]
+        return [Check(WARN, "inbound SMS and voice", "set MAESTRO_PUBLIC_URL so Twilio webhook signatures "
+                                                     "can be verified behind a proxy")]
+    base = config.public_url
+    return [Check(OK, "inbound SMS", f"set the number's messaging webhook to {base}{WEBHOOK_PATH}"),
+            Check(OK, "inbound voice", f"set the number's voice webhook to {base}{VOICE_PATH}")]
 
 
 def _channels(config: Config) -> tuple[list[Check], dict[str, Notifier]]:

@@ -32,7 +32,14 @@ def twilio_signature(auth_token: str, url: str, params: dict[str, str]) -> str:
     return base64.b64encode(digest).decode()
 
 
-def _digits(number: str) -> str:
+def verify_signature(auth_token: str, url: str, params: dict[str, str], signature: str | None) -> bool:
+    """Constant-time check of an X-Twilio-Signature header."""
+    if not signature:
+        return False
+    return hmac.compare_digest(twilio_signature(auth_token, url, params), signature)
+
+
+def normalise_number(number: str) -> str:
     return re.sub(r"[^\d+]", "", number)
 
 
@@ -45,16 +52,14 @@ class SmsHandler:
     def __init__(self, store: Store, auth_token: str, owner_number: str):
         self.store = store
         self.auth_token = auth_token
-        self.owner = _digits(owner_number)
+        self.owner = normalise_number(owner_number)
 
     def verify(self, url: str, params: dict[str, str], signature: str | None) -> bool:
-        if not signature:
-            return False
-        return hmac.compare_digest(twilio_signature(self.auth_token, url, params), signature)
+        return verify_signature(self.auth_token, url, params, signature)
 
     def handle(self, params: dict[str, str]) -> str:
         """Process one verified inbound message and return the TwiML reply."""
-        sender = _digits(params.get("From", ""))
+        sender = normalise_number(params.get("From", ""))
         text = params.get("Body", "").strip()
         if sender != self.owner:
             log.warning("Ignoring SMS from unknown number ending %s", sender[-4:])

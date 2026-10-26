@@ -50,6 +50,7 @@ def _conversational_hour(hour: int, text: str) -> int:
     if _AM_CONTEXT_RE.search(text):
         return hour % 12
     return hour if 7 <= hour <= 12 else hour + 12
+MERIDIEM_RE = re.compile(r"\b([ap])\.\s?m\.?(?=\s|$|[,;!?)])", re.I)
 NOON_RE = re.compile(r"\b(?:at\s+)?(noon|midnight)\b", re.I)
 RELATIVE_RE = re.compile(
     r"\bin\s+(\d+|an?|one)\s+(minute|min|hour|hr|day|week)s?\b", re.I
@@ -264,7 +265,9 @@ def parse(source: str, now: datetime | None = None, tz: tzinfo | None = None) ->
     # "remind me in 15 minutes to check the oven": the prefix had no connector, so once the time is
     # removed a leading "to" is left over. ("remind me about that email" keeps "that".)
     strip_connector = prefix is not None and not re.search(r"\b(?:to|that|about)\s*$", prefix[0], re.I)
-    parts = _Parts(text=PREFIX_RE.sub("", source, count=1))
+    # Dictation and careful typists write "5 p.m."; the rules below expect "5 pm".
+    text = MERIDIEM_RE.sub(lambda m: f"{m[1]}m", source)
+    parts = _Parts(text=PREFIX_RE.sub("", text, count=1))
 
     rule, matches = recurrence.extract(parts.text, now.date())
     if rule:
