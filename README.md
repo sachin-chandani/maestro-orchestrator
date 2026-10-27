@@ -31,6 +31,7 @@ Saved: 3  📝 —                 My passport is in the blue drawer
 - **Telegram bot:** text your own bot "dentist next tue 3pm" to capture; `/list`, `/done`, `/snooze`, `/rm`
 - **Self-hosted:** one Docker container, one SQLite file, token-protected REST API and a built-in web UI
 - **Escalation:** unacknowledged reminders move to louder channels on a schedule you set (push, then SMS, then more)
+- **Quiet hours:** non-urgent reminders wait until morning; start one with `!` to let it through
 - **Reliable:** delivery is tracked per channel; a failing channel is retried with backoff (up to 5 attempts) without re-sending on the ones that worked. After downtime, recurring reminders fire once and skip ahead instead of flooding you
 
 ## Quick start (CLI)
@@ -91,6 +92,13 @@ MAESTRO_ESCALATION="10m=twilio_sms, 30m=telegram+twilio_sms"
 ```
 
 That sends an SMS 10 minutes after the first notice went out, then Telegram and another SMS at 30 minutes, each once, prefixed "Still waiting:". Replying `done` to any of them stops the rest. Only reminders from the last 12 hours escalate, so turning this on never pages you about old ones. `maestro doctor` prints the plan.
+
+### Quiet hours
+```bash
+MAESTRO_QUIET_HOURS=22:00-07:00   # local time (MAESTRO_TIMEZONE); may wrap past midnight
+```
+
+During the window, reminders that come due wait until it ends, on every channel, and so does escalation. Each held reminder is sent once at the end of the window, so an hourly reminder sends a single notice at 07:00, not eight. A reminder is urgent, and goes through anyway, if its text starts with `!` or contains the word "urgent": `maestro add "!take insulin at 11pm"`. The metric `maestro_reminders_held` shows how many are waiting.
 
 ### Checking your setup
 ```bash

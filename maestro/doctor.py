@@ -128,6 +128,18 @@ def _escalation(config: Config) -> list[Check]:
     return [Check(OK, "escalation", plan)]
 
 
+def _quiet_hours(config: Config) -> list[Check]:
+    from maestro.quiet import parse_quiet_hours
+
+    try:
+        quiet = parse_quiet_hours(config.quiet_hours)
+    except ConfigError as e:
+        return [Check(FAIL, "quiet hours", str(e))]
+    if quiet is None:
+        return []
+    return [Check(OK, "quiet hours", f"{quiet}: non-urgent reminders wait; start one with ! for urgent")]
+
+
 def _channels(config: Config) -> tuple[list[Check], dict[str, Notifier]]:
     checks: list[Check] = []
     built: dict[str, Notifier] = {}
@@ -165,7 +177,8 @@ def _send_tests(built: dict[str, Notifier]) -> list[Check]:
 def run(config: Config, send_test: bool = False, out: Callable[[str], None] = print) -> bool:
     """Run every check, print each result, and return True when nothing failed."""
     checks = [_timezone(config), _database(config), _api_token(config), *_telegram_bot(config),
-              *_inbound_sms(config), *_email_in(config, connect=send_test), *_escalation(config)]
+              *_inbound_sms(config), *_email_in(config, connect=send_test), *_escalation(config),
+              *_quiet_hours(config)]
     channel_checks, built = _channels(config)
     checks += channel_checks
     # Channels used only for escalation still need a test message, or a broken one is found mid-escalation.

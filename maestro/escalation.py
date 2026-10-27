@@ -11,6 +11,7 @@ per-channel state), under the scheduler lease. Stage deliveries are recorded as
 `escalation<N>:<channel>`, so they don't collide with the first notice on the same channel.
 
 Only occurrences within ACK_WINDOW escalate: turning escalation on never pages you about old reminders.
+Stages that come due during quiet hours wait for the window to end, unless the reminder is urgent.
 """
 
 import dataclasses
@@ -89,12 +90,16 @@ def build_stages(config: Config) -> list[Stage]:
 
 
 def escalate(store: Store, stages: list[Stage], now: datetime, deliver: DeliverFn,
-             max_attempts: int, renew: Callable[[], bool] = lambda: True) -> int:
+             max_attempts: int, renew: Callable[[], bool] = lambda: True,
+             hold: Callable[[Item], bool] = lambda _: False) -> int:
     """Send every stage that's due for unacknowledged occurrences. Returns how many stages were
     attempted (stages already delivered or given up on are skipped). `renew` keeps the scheduler lease
-    and is called before each reminder; when it fails, another scheduler has taken over and this stops."""
+    and is called before each reminder; when it fails, another scheduler has taken over and this stops.
+    Reminders for which `hold` is true (quiet hours) are skipped this time."""
     attempted = 0
     for item, occurrence in store.unacknowledged(since=now - ACK_WINDOW):
+        if hold(item):
+            continue
         if not renew():
             break
         try:
