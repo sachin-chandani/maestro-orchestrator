@@ -22,11 +22,13 @@ from maestro import recurrence
 from maestro.models import Delivery, Item
 from maestro.notifier import MultiNotifier, Notifier
 from maestro.observability import METRICS
+from maestro.quiet import is_urgent
 from maestro.store import Store
 from maestro.tz import UTC, localize
 
 if TYPE_CHECKING:
     from maestro.escalation import Stage
+    from maestro.quiet import QuietHours
 
 log = logging.getLogger(__name__)
 
@@ -148,27 +150,49 @@ def _deliver(store: Store, item: Item, item_id: int, due_at: datetime, channels:
 
 
 def fire_due(store: Store, notifier: Notifier, now: datetime | None = None, lease: Lease | None = None,
-             escalation: "list[Stage] | None" = None) -> list[Item]:
+             escalation: "list[Stage] | None" = None, quiet: "QuietHours | None" = None) -> list[Item]:
     """Deliver due reminders, then any escalation stages that are due. Returns the items whose
     occurrence is finished this tick.
 
     With a lease, nothing is sent unless this scheduler holds it, and it is renewed before each item.
+    During quiet hours, non-urgent reminders and their escalations are held (left due) until the window ends.
     """
     now = localize(now, store.tz) if now else datetime.now(UTC)
     if lease and not lease.acquire(store, now):
+        if quiet is not None:
+            METRICS.set("maestro_reminders_held", 0)  # the leader reports what it holds
         return []
     channels = _channels(notifier)
+    local = now.astimezone(store.tz)
+
+    def held(item: Item) -> bool:
+        return quiet is not None and quiet.holds(item, local)
+
     finished = []
     due: list[tuple[Item, int, datetime]] = []
+    holding = 0
     for item in store.due(now):
         if (occurrence := _occurrence(item)) is None:
             METRICS.inc("maestro_scheduler_errors_total")
             log.error("Skipping malformed due item %r", item)
             continue
+        if held(item):
+            holding += 1
+            continue
         due.append((item, *occurrence))
+    if quiet is not None:
+        METRICS.set("maestro_reminders_held", holding)
+        if holding:
+            log.debug("Quiet hours: holding %d reminder(s) until %s", holding, quiet.ends_after(local))
     METRICS.inc("maestro_scheduler_ticks_total")
     METRICS.set("maestro_scheduler_last_tick_timestamp_seconds", now.timestamp())
-    lag = max(((now - due_at).total_seconds() for _, _, due_at in due), default=0)
+    def late_since(item: Item, due_at: datetime) -> datetime:
+        # A reminder held by quiet hours is on time when the window ends, not late by the whole night.
+        if quiet is not None and not is_urgent(item):
+            return max(due_at, quiet.last_end(local))
+        return due_at
+
+    lag = max(((now - late_since(item, due_at)).total_seconds() for item, _, due_at in due), default=0)
     METRICS.set("maestro_scheduler_lag_seconds", lag)
     for item, item_id, due_at in due:
         if lease and not lease.acquire(store, now):
@@ -194,15 +218,15 @@ def fire_due(store: Store, notifier: Notifier, now: datetime | None = None, leas
         from maestro.escalation import escalate
 
         escalate(store, escalation, now, _deliver, MAX_ATTEMPTS,
-                 renew=(lambda: lease.acquire(store, now)) if lease else (lambda: True))
+                 renew=(lambda: lease.acquire(store, now)) if lease else (lambda: True), quiet=quiet)
     return finished
 
 
 def tick(store: Store, notifier: Notifier, lease: Lease | None = None,
-         escalation: "list[Stage] | None" = None) -> None:
+         escalation: "list[Stage] | None" = None, quiet: "QuietHours | None" = None) -> None:
     """One scheduler pass for a long-running loop: errors are logged and counted, never raised."""
     try:
-        fire_due(store, notifier, lease=lease, escalation=escalation)
+        fire_due(store, notifier, lease=lease, escalation=escalation, quiet=quiet)
     except Exception:
         METRICS.inc("maestro_scheduler_errors_total")
         log.exception("Scheduler tick failed; retrying next tick")
@@ -210,14 +234,14 @@ def tick(store: Store, notifier: Notifier, lease: Lease | None = None,
 
 def run_forever(store: Store, notifier: Notifier, interval: float = 30.0,
                 wait: Callable[[float], None] = time.sleep, lease: Lease | None = None,
-                escalation: "list[Stage] | None" = None) -> None:
+                escalation: "list[Stage] | None" = None, quiet: "QuietHours | None" = None) -> None:
     """Fire due reminders every `interval` seconds. `wait` can do useful work while it waits,
     e.g. long-poll a chat bot for new messages. The lease is released on the way out (Ctrl+C,
     SIGTERM handled as an exception) so a standby scheduler can take over at once."""
     lease = lease or Lease.for_interval(interval)
     try:
         while True:
-            tick(store, notifier, lease, escalation)
+            tick(store, notifier, lease, escalation, quiet)
             wait(interval)
     finally:
         lease.release(store)

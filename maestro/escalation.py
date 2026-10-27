@@ -11,6 +11,9 @@ per-channel state), under the scheduler lease. Stage deliveries are recorded as
 `escalation<N>:<channel>`, so they don't collide with the first notice on the same channel.
 
 Only occurrences within ACK_WINDOW escalate: turning escalation on never pages you about old reminders.
+With quiet hours, stages that come due in the window wait for it to end, unless the reminder is urgent,
+and are then timed from the window's end (and the 12 hours count from there too), so they stay spaced
+out rather than all arriving at 07:00.
 """
 
 import dataclasses
@@ -24,6 +27,7 @@ from maestro.models import Item
 from maestro.notifier import CHANNELS, ConfigError, Notifier
 from maestro.observability import METRICS
 from maestro.parser import parse_duration
+from maestro.quiet import QuietHours, is_urgent
 from maestro.store import ACK_WINDOW, Store
 
 log = logging.getLogger(__name__)
@@ -89,16 +93,26 @@ def build_stages(config: Config) -> list[Stage]:
 
 
 def escalate(store: Store, stages: list[Stage], now: datetime, deliver: DeliverFn,
-             max_attempts: int, renew: Callable[[], bool] = lambda: True) -> int:
+             max_attempts: int, renew: Callable[[], bool] = lambda: True,
+             quiet: QuietHours | None = None) -> int:
     """Send every stage that's due for unacknowledged occurrences. Returns how many stages were
     attempted (stages already delivered or given up on are skipped). `renew` keeps the scheduler lease
     and is called before each reminder; when it fails, another scheduler has taken over and this stops."""
     attempted = 0
-    for item, occurrence in store.unacknowledged(since=now - ACK_WINDOW):
+    local = now.astimezone(store.tz)
+    # Held reminders go out late and escalate after the window: look back far enough to still see them
+    # (stage delays are under ACK_WINDOW); _escalate_item applies the exact limit.
+    lookback = ACK_WINDOW if quiet is None else 2 * ACK_WINDOW + quiet.length
+    for item, occurrence in store.unacknowledged(since=now - lookback):
+        resume = None
+        if quiet is not None and not is_urgent(item):
+            if quiet.contains(local):
+                continue
+            resume = quiet.last_end(local)
         if not renew():
             break
         try:
-            attempted += _escalate_item(store, stages, now, deliver, max_attempts, item, occurrence)
+            attempted += _escalate_item(store, stages, now, deliver, max_attempts, item, occurrence, resume)
         except Exception:
             # One broken item must not stop escalation for the others.
             METRICS.inc("maestro_scheduler_errors_total")
@@ -107,7 +121,8 @@ def escalate(store: Store, stages: list[Stage], now: datetime, deliver: DeliverF
 
 
 def _escalate_item(store: Store, stages: list[Stage], now: datetime, deliver: DeliverFn, max_attempts: int,
-                   item: Item, occurrence: datetime) -> int:
+                   item: Item, occurrence: datetime, resume: datetime | None = None) -> int:
+    """`resume`: when quiet hours last ended, for a reminder they hold; stages are timed from then."""
     if item.id is None:
         return 0
     state = store.deliveries(item.id, occurrence)
@@ -115,10 +130,13 @@ def _escalate_item(store: Store, stages: list[Stage], now: datetime, deliver: De
                         if not is_escalation_key(key) and d.delivered_at), default=None)
     if first_notice is None:
         return 0
+    start = max(first_notice, resume) if resume else first_notice
+    if now - start >= ACK_WINDOW:
+        return 0
     notice = dataclasses.replace(item, due_at=occurrence, text=f"{PREFIX}{item.text}")
     attempted = 0
     for stage in stages:
-        if now - first_notice < stage.delay:
+        if now - start < stage.delay:
             break  # later stages aren't due either
         pending = [key for key in stage.channels
                    if not (d := state.get(key)) or not (d.delivered_at or d.attempts >= max_attempts)]

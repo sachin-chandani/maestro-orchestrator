@@ -393,7 +393,7 @@ def test_cli_run_starts_and_stops_the_email_worker(tmp_path, monkeypatch, capsys
     for key, value in env.items():
         monkeypatch.setenv(key, value)
 
-    def two_ticks(store, notifier, interval, wait, escalation=None):
+    def two_ticks(store, notifier, interval, wait, escalation=None, quiet=None):
         import time
 
         for _ in range(200):  # give the worker time to fetch, then let wait() capture
