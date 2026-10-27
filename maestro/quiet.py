@@ -2,31 +2,32 @@
 
     MAESTRO_QUIET_HOURS=22:00-07:00
 
-During the window (local time, MAESTRO_TIMEZONE) due reminders aren't sent, on any channel, and
-escalation waits too. They stay due, so each is sent once when the window ends: an hourly reminder
-held overnight sends one notice at 07:00, not eight.
+During the window (local time, MAESTRO_TIMEZONE) due reminders aren't sent, on any channel (retries
+included), and escalation waits too. They stay due, so each is sent once when the window ends: an
+hourly reminder held overnight sends one notice at 07:00, not eight. Escalation stages that came due
+in the window are timed again from its end, so they stay spaced out instead of arriving together.
 
 A reminder is urgent, and ignores quiet hours, when its text starts with "!" or contains the word
-"urgent", e.g. "!take insulin at 11pm".
+"urgent" (but not "not urgent"), e.g. "!take insulin at 11pm". A per-item setting can replace this
+with per-item channels (#20).
 """
 
 import re
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta
-from typing import Protocol
 
+from maestro.models import Item
 from maestro.notifier import ConfigError
 
 _TIME = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
 _URGENT = re.compile(r"\burgent\b", re.IGNORECASE)
+_NOT_URGENT = re.compile(r"\b(?:not|non|no|isn'?t|nothing)[\s-]+urgent\b", re.IGNORECASE)
 
 
-class HasText(Protocol):
-    text: str
-
-
-def is_urgent(item: HasText) -> bool:
-    return item.text.lstrip().startswith("!") or bool(_URGENT.search(item.text))
+def is_urgent(item: Item) -> bool:
+    if item.text.lstrip().startswith("!"):
+        return True
+    return bool(_URGENT.search(item.text)) and not _NOT_URGENT.search(item.text)
 
 
 @dataclass(frozen=True)
@@ -44,13 +45,26 @@ class QuietHours:
             return self.start <= now < self.end
         return now >= self.start or now < self.end  # wraps past midnight
 
-    def holds(self, item: HasText, moment: datetime) -> bool:
+    @property
+    def length(self) -> timedelta:
+        minutes = (self.end.hour * 60 + self.end.minute) - (self.start.hour * 60 + self.start.minute)
+        return timedelta(minutes=minutes % (24 * 60))
+
+    def holds(self, item: Item, moment: datetime) -> bool:
         return self.contains(moment) and not is_urgent(item)
 
     def ends_after(self, moment: datetime) -> datetime:
-        """The wall-clock end of the window that `moment` is in (for messages and the API)."""
-        end = moment.replace(hour=self.end.hour, minute=self.end.minute, second=0, microsecond=0)
+        """The next end of the window at or after `moment` (when held reminders go out)."""
+        end = self._end_on(moment)
         return end if end > moment else end + timedelta(days=1)
+
+    def last_end(self, moment: datetime) -> datetime:
+        """The latest end of the window at or before `moment`."""
+        end = self._end_on(moment)
+        return end if end <= moment else end - timedelta(days=1)
+
+    def _end_on(self, moment: datetime) -> datetime:
+        return moment.replace(hour=self.end.hour, minute=self.end.minute, second=0, microsecond=0)
 
 
 def parse_quiet_hours(spec: str) -> QuietHours | None:

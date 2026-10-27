@@ -76,6 +76,8 @@ def test_window_end():
 @pytest.mark.parametrize("text, urgent", [
     ("!take insulin", True), ("  !call vet", True), ("Urgent: call the plumber", True),
     ("call the plumber, URGENT", True), ("read about insurgents", False), ("buy milk!", False),
+    ("renew passport, not urgent", False), ("non-urgent: tidy desk", False), ("it isn't urgent", False),
+    ("!not urgent but loud", True),
 ])
 def test_urgency(text, urgent):
     assert is_urgent(Item(text=text, kind=Kind.REMINDER, created_at=dt(2026, 10, 27, 9, 0))) is urgent
@@ -139,6 +141,8 @@ def test_escalation_waits_for_the_window_to_end(sms):
     tick(store, Recorder(), dt(2026, 10, 28, 2, 0), escalation=stages)
     assert sms.sent == []
     tick(store, Recorder(), dt(2026, 10, 28, 7, 0), escalation=stages)
+    assert sms.sent == []  # 10 minutes after the window ends, not the moment it does
+    tick(store, Recorder(), dt(2026, 10, 28, 7, 10), escalation=stages)
     assert sms.sent == ["Still waiting: Take pills"]
 
 
@@ -179,3 +183,62 @@ def test_bad_quiet_hours_stop_the_scheduler_from_starting(tmp_path, monkeypatch,
 
 def test_config_from_env():
     assert Config.from_env({"MAESTRO_QUIET_HOURS": " 22:00-07:00 "}).quiet_hours == "22:00-07:00"
+
+
+def test_stages_held_overnight_stay_spaced_out(monkeypatch):
+    fakes = {"sms": Recorder(), "call": Recorder()}
+    for name, fake in fakes.items():
+        monkeypatch.setitem(CHANNELS, name, lambda _config, fake=fake: fake)
+    store = Store()
+    reminder(store, "Take pills", dt(2026, 10, 27, 21, 50))
+    stages = build_stages(Config(escalation="10m=sms, 30m=call"))
+    push = Recorder()
+    tick(store, push, dt(2026, 10, 27, 21, 50), escalation=stages)
+    tick(store, push, dt(2026, 10, 27, 21, 59), escalation=stages)
+    assert fakes["sms"].sent == []
+    tick(store, push, dt(2026, 10, 28, 7, 0), escalation=stages)  # both stages are overdue by now
+    assert fakes["sms"].sent == [] and fakes["call"].sent == []  # timed again from the window's end
+    tick(store, push, dt(2026, 10, 28, 7, 10), escalation=stages)
+    assert fakes["sms"].sent == ["Still waiting: Take pills"] and fakes["call"].sent == []
+    tick(store, push, dt(2026, 10, 28, 7, 30), escalation=stages)
+    assert fakes["call"].sent == ["Still waiting: Take pills"]
+
+
+def test_lag_counts_from_the_end_of_the_window():
+    store = Store()
+    reminder(store, "Water the plants", dt(2026, 10, 27, 23, 0))
+    tick(store, Recorder(), dt(2026, 10, 28, 7, 0, 30))
+    assert METRICS.get("maestro_scheduler_lag_seconds") == 30  # not the 8 hours it was held
+
+
+def test_reminders_held_by_a_long_window_still_escalate(sms):
+    # 20:00-09:00 is longer than the 12-hour acknowledgement window.
+    long_night = QuietHours(time(20, 0), time(9, 0))
+    store = Store()
+    reminder(store, "Take pills", dt(2026, 10, 27, 20, 0))
+    stages = build_stages(Config(escalation="10m=sms"))
+    tick(store, Recorder(), dt(2026, 10, 27, 20, 0), quiet=long_night, escalation=stages)
+    tick(store, Recorder(), dt(2026, 10, 28, 9, 0), quiet=long_night, escalation=stages)
+    tick(store, Recorder(), dt(2026, 10, 28, 9, 10), quiet=long_night, escalation=stages)
+    assert sms.sent == ["Still waiting: Take pills"]
+
+
+def test_a_standby_scheduler_reports_nothing_held(tmp_path):
+    from maestro.scheduler import Lease
+
+    path = tmp_path / "m.db"
+    with Store(path) as store:
+        reminder(store, "Water the plants", dt(2026, 10, 27, 23, 0))
+        tick(store, Recorder(), dt(2026, 10, 27, 23, 0),
+             lease=Lease(owner="a", clock=lambda: dt(2026, 10, 27, 23, 0), ttl=timedelta(hours=1)))
+        assert METRICS.get("maestro_reminders_held") == 1
+        tick(store, Recorder(), dt(2026, 10, 27, 23, 1),
+             lease=Lease(owner="b", clock=lambda: dt(2026, 10, 27, 23, 1)))
+        assert METRICS.get("maestro_reminders_held") == 0
+
+
+def test_window_length_and_last_end():
+    assert NIGHT.length == timedelta(hours=9)
+    assert QuietHours(time(13, 0), time(14, 30)).length == timedelta(minutes=90)
+    assert NIGHT.last_end(dt(2026, 10, 28, 7, 0)) == dt(2026, 10, 28, 7, 0)
+    assert NIGHT.last_end(dt(2026, 10, 28, 6, 0)) == dt(2026, 10, 27, 7, 0)

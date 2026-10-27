@@ -22,6 +22,7 @@ from maestro import recurrence
 from maestro.models import Delivery, Item
 from maestro.notifier import MultiNotifier, Notifier
 from maestro.observability import METRICS
+from maestro.quiet import is_urgent
 from maestro.store import Store
 from maestro.tz import UTC, localize
 
@@ -158,6 +159,8 @@ def fire_due(store: Store, notifier: Notifier, now: datetime | None = None, leas
     """
     now = localize(now, store.tz) if now else datetime.now(UTC)
     if lease and not lease.acquire(store, now):
+        if quiet is not None:
+            METRICS.set("maestro_reminders_held", 0)  # the leader reports what it holds
         return []
     channels = _channels(notifier)
     local = now.astimezone(store.tz)
@@ -183,7 +186,13 @@ def fire_due(store: Store, notifier: Notifier, now: datetime | None = None, leas
             log.debug("Quiet hours: holding %d reminder(s) until %s", holding, quiet.ends_after(local))
     METRICS.inc("maestro_scheduler_ticks_total")
     METRICS.set("maestro_scheduler_last_tick_timestamp_seconds", now.timestamp())
-    lag = max(((now - due_at).total_seconds() for _, _, due_at in due), default=0)
+    def late_since(item: Item, due_at: datetime) -> datetime:
+        # A reminder held by quiet hours is on time when the window ends, not late by the whole night.
+        if quiet is not None and not is_urgent(item):
+            return max(due_at, quiet.last_end(local))
+        return due_at
+
+    lag = max(((now - late_since(item, due_at)).total_seconds() for item, _, due_at in due), default=0)
     METRICS.set("maestro_scheduler_lag_seconds", lag)
     for item, item_id, due_at in due:
         if lease and not lease.acquire(store, now):
@@ -209,7 +218,7 @@ def fire_due(store: Store, notifier: Notifier, now: datetime | None = None, leas
         from maestro.escalation import escalate
 
         escalate(store, escalation, now, _deliver, MAX_ATTEMPTS,
-                 renew=(lambda: lease.acquire(store, now)) if lease else (lambda: True), hold=held)
+                 renew=(lambda: lease.acquire(store, now)) if lease else (lambda: True), quiet=quiet)
     return finished
 
 

@@ -98,7 +98,7 @@ That sends an SMS 10 minutes after the first notice went out, then Telegram and 
 MAESTRO_QUIET_HOURS=22:00-07:00   # local time (MAESTRO_TIMEZONE); may wrap past midnight
 ```
 
-During the window, reminders that come due wait until it ends, on every channel, and so does escalation. Each held reminder is sent once at the end of the window, so an hourly reminder sends a single notice at 07:00, not eight. A reminder is urgent, and goes through anyway, if its text starts with `!` or contains the word "urgent": `maestro add "!take insulin at 11pm"`. The metric `maestro_reminders_held` shows how many are waiting.
+During the window, reminders that come due wait until it ends, on every channel, and so does escalation. Each held reminder is sent once at the end of the window, so an hourly reminder sends a single notice at 07:00, not eight. Escalation stages are timed again from the end of the window, so they stay spaced out (with `10m=twilio_sms`, the SMS comes at 07:10). A reminder is urgent, and goes through anyway, if its text starts with `!` or contains the word "urgent" ("not urgent" doesn't count): `maestro add "!take insulin at 11pm"`. The metric `maestro_reminders_held` shows how many are waiting.
 
 ### Checking your setup
 ```bash
