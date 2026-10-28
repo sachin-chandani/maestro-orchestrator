@@ -74,11 +74,12 @@ class TwilioHandler:
             log.info("Twilio retried %s %s; returning the item already saved", source, external_id)
         return item
 
-    def is_owner(self, params: dict[str, str]) -> bool:
-        sender = normalise_number(params.get("From", ""))
-        if sender == self.owner:
+    def is_owner(self, params: dict[str, str], field: str = "From") -> bool:
+        """Whether the owner is on the other end: the sender, or for calls Maestro placed, `To`."""
+        number = normalise_number(params.get(field, ""))
+        if number == self.owner:
             return True
-        log.warning("Ignoring %s from unknown number ending %s", self.kind, sender[-4:])
+        log.warning("Ignoring %s with unknown number ending %s", self.kind, number[-4:])
         return False
 
 

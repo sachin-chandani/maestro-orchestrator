@@ -279,15 +279,13 @@ class EmailPoller:
             log.warning("Ignoring reply %s: it answers reminder #%s but says %s %s", uid, item_id,
                         command.action, command.item_id)
             return Outcome(None, done=True)
-        if self.store.is_claimed("email-reply", key):
-            return Outcome(None, done=True)  # already handled on an earlier poll
-        latest = self.store.latest_delivered_occurrence(item_id)
-        if latest is None or int(latest.timestamp()) != int(occurrence.timestamp()):
+        args = [command.duration or commands.DEFAULT_SNOOZE] if command.action == "snooze" else []
+        outcome, result = commands.act_on_delivery(self.store, "email-reply", key, item_id, occurrence,
+                                                   command.action, args, via="email")
+        if outcome == commands.ReplyOutcome.STALE:
             log.info("Ignoring reply %s: it is about an earlier occurrence of reminder #%s", uid, item_id)
+        if outcome != commands.ReplyOutcome.ACTED:
             return Outcome(None, done=True)
-        command.item_id = item_id
-        result = commands.run(self.store, command, channel="email")
-        self.store.claim_inbound("email-reply", key, item_id)  # only after the action succeeded
         log.info("Email reply %s on reminder #%s: %s", uid, item_id, result)
         return Outcome(self.store.get(item_id), done=True)
 

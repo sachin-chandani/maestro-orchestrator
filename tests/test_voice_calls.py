@@ -200,3 +200,31 @@ def test_calls_can_be_an_escalation_stage(monkeypatch):
     fire_due(store, MultiNotifier({"push": Sink()}), now=due + timedelta(minutes=30), escalation=stages)
     said = ET.fromstring(opener.calls()[0]["Twiml"]).find("Gather/Say").text
     assert said.startswith("Maestro reminder: Still waiting: Take pills.")
+
+
+def test_a_retry_after_the_reminder_moved_on_is_still_already_handled(setup):
+    store, client, reminder, action = setup
+    press(client, action, "2", CallSid="CA-late-retry")  # snoozed...
+    later = store.get(reminder.id).due_at
+    fire_due(store, MultiNotifier({"push": Sink()}), now=later)  # ...and delivered again
+    _, said = press(client, action, "2", CallSid="CA-late-retry")
+    assert said == "That was already handled. Goodbye."  # not "changed since this call"
+
+
+def test_doctors_test_call_offers_no_keys():
+    root = ET.fromstring(reminder_twiml(item(item_id=0), PUBLIC))
+    assert root.find("Gather") is None
+
+
+def test_doctor_warns_when_calls_cannot_take_key_presses(tmp_path):
+    from maestro import doctor
+
+    def lines(**extra):
+        out = []
+        doctor.run(Config(db_path=str(tmp_path / "m.db"), channels=["twilio_call"], api_token="t", **TWILIO,
+                          **extra), out=out.append)
+        return out
+
+    warning = "✓ channel twilio_call: configured; calls can't offer press 1/2 without MAESTRO_PUBLIC_URL"
+    assert warning in lines()
+    assert "✓ channel twilio_call: configured" in lines(public_url=PUBLIC)

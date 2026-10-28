@@ -8,26 +8,28 @@ other than MAESTRO_SMS_TO are rejected without being answered (no charge).
 
 Outbound (the `twilio_call` channel): Maestro calls MAESTRO_SMS_TO and reads the reminder out. With
 MAESTRO_PUBLIC_URL set, pressing 1 marks it done and 2 snoozes it for 10 minutes; the key press comes
-back, signed, to `/webhooks/twilio/voice/reminder`, with the reminder and occurrence in the URL.
+back, signed, to `/webhooks/twilio/voice/reminder`, with the reminder and occurrence in the URL. That
+route is served by `maestro serve` (any instance sharing the database), not by `maestro run`.
 """
 
 import logging
 import urllib.parse
-from datetime import datetime, timedelta
+from datetime import datetime
 from xml.sax.saxutils import escape, quoteattr
 
-from maestro import recurrence
-from maestro.models import Item, Kind, Status
+from maestro import commands, recurrence
+from maestro.models import Item, Kind
 from maestro.notifier import TwilioClient
-from maestro.sms import TwilioHandler, normalise_number
-from maestro.tz import add_elapsed
+from maestro.sms import TwilioHandler
 
 log = logging.getLogger(__name__)
 
 VOICE_PATH = "/webhooks/twilio/voice"
 VOICE_CAPTURE_PATH = "/webhooks/twilio/voice/capture"
 VOICE_REMINDER_PATH = "/webhooks/twilio/voice/reminder"
-CALL_SNOOZE = timedelta(minutes=10)
+# key -> (command, its arguments, what to say once it's done)
+KEYS = {"1": ("done", [], "Marked done. Goodbye."),
+        "2": ("snooze", ["10m"], "Snoozed for 10 minutes. Goodbye.")}
 MAX_SPOKEN = 300  # characters of reminder text read out; Twilio caps inline TwiML at 4000
 # Relative to VOICE_PATH, so Twilio keeps any path prefix in MAESTRO_PUBLIC_URL (e.g. /maestro).
 CAPTURE_ACTION = "voice/capture"
@@ -113,7 +115,7 @@ def reminder_action_url(public_url: str, item: Item) -> str:
 
 def reminder_twiml(item: Item, public_url: str | None) -> str:
     text = item.text if len(item.text) <= MAX_SPOKEN else item.text[:MAX_SPOKEN] + "..."
-    if not public_url:  # nowhere for key presses to go: read it twice and hang up
+    if not public_url or not item.id:  # nowhere for key presses to go (or a test call): read it twice
         return _twiml(_say(f"Maestro reminder: {text}."), '<Pause length="1"/>',
                       _say(f"Again: {text}. Goodbye."), "<Hangup/>")
     prompt = _say(f"Maestro reminder: {text}. Press 1 to mark it done, or 2 to snooze it for 10 minutes.")
@@ -138,42 +140,30 @@ class TwilioCallNotifier:
 
 
 class CallReminderHandler(TwilioHandler):
-    """The key press on a reminder call. Acts only on the owner's call, only if the call is about the
-    reminder's latest delivered occurrence, and at most once per call."""
+    """The key press on a reminder call: acts only on the owner's call, about the reminder's latest
+    delivered occurrence, at most once per call (commands.act_on_delivery)."""
 
     kind = "reminder call"
 
     def keypress(self, query: dict[str, str], params: dict[str, str]) -> str:
-        # Maestro placed this call, so the owner is the number called, not the caller.
-        if normalise_number(params.get("To", "")) != self.owner:
-            log.warning("Ignoring a reminder-call key press for another number")
+        if not self.is_owner(params, field="To"):  # Maestro placed this call: the owner was called
             return _twiml("<Hangup/>")
         try:
             item_id, stamp = int(query["item"]), int(query["at"])
         except (KeyError, ValueError):
             return _twiml(_say("Sorry, something went wrong. Goodbye."), "<Hangup/>")
         digit = params.get("Digits", "")
-        call = params.get("CallSid") or ""
-        if digit not in ("1", "2"):
+        if digit not in KEYS:
             return _twiml(_say("Nothing was changed. Goodbye."), "<Hangup/>")
-        item = self.store.get(item_id)
-        latest = self.store.latest_delivered_occurrence(item_id)
-        if item is None or latest is None or int(latest.timestamp()) != stamp:
+        action, args, reply = KEYS[digit]
+        key = params.get("CallSid") or f"{item_id}:{stamp}:{digit}"
+        outcome, _ = commands.act_on_delivery(self.store, "call-keypress", key, item_id, stamp, action, args,
+                                              via="twilio_call")
+        if outcome == commands.ReplyOutcome.ALREADY_HANDLED:
+            reply = "That was already handled. Goodbye."
+        elif outcome == commands.ReplyOutcome.STALE:
             log.info("Ignoring a key press for reminder #%s: not its latest delivery", item_id)
-            return _twiml(_say("That reminder has changed since this call, so nothing was changed."),
-                          "<Hangup/>")
-        if call and self.store.is_claimed("call-keypress", call):
-            return _twiml(_say("That was already handled. Goodbye."), "<Hangup/>")
-        if item.status == Status.DONE:
-            reply = "It was already marked done. Goodbye."
-        elif digit == "1":
-            self.store.complete(item_id, via="twilio_call")
-            reply = "Marked done. Goodbye."
+            reply = "That reminder has changed since this call, so nothing was changed."
         else:
-            until = add_elapsed(datetime.now(self.store.tz).replace(microsecond=0), CALL_SNOOZE)
-            self.store.snooze(item_id, until, via="twilio_call")
-            reply = "Snoozed for 10 minutes. Goodbye."
-        if call:
-            self.store.claim_inbound("call-keypress", call, item_id)  # only after the action succeeded
-        log.info("Reminder call key %s on reminder #%s", digit, item_id)
+            log.info("Reminder call key %s on reminder #%s", digit, item_id)
         return _twiml(_say(reply), "<Hangup/>")
