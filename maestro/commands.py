@@ -7,6 +7,7 @@ Telegram uses slash commands ("/done 3"); SMS accepts the same words without the
 import re
 from dataclasses import dataclass
 from datetime import datetime
+from enum import StrEnum
 
 from maestro import recurrence
 from maestro.models import Item, Kind
@@ -119,3 +120,29 @@ def run(store: Store, command: Command, channel: str | None = None, prefix: str 
     if command.action == "snooze":
         args.append(command.duration or DEFAULT_SNOOZE)
     return act(store, command.action, args, prefix, via=channel or "chat")
+
+
+class ReplyOutcome(StrEnum):
+    ACTED = "acted"
+    ALREADY_HANDLED = "already handled"  # the same inbound message was seen before (provider retry)
+    STALE = "stale"  # about an earlier delivery of the item, or an item that no longer exists
+
+
+def act_on_delivery(store: Store, source: str, key: str, item_id: int, occurrence: datetime | int,
+                    action: str, args: list[str], via: str) -> tuple[ReplyOutcome, str]:
+    """Act on a reply to one specific delivery (an email reply, a key press on a reminder call).
+
+    The protocol every such channel follows: an inbound message is handled at most once (`key`, e.g. the
+    Message-ID or CallSid, under `source`); it acts only if it is about the item's latest delivered
+    occurrence (replying 'done' on Wednesday to Monday's message of a daily reminder must not count);
+    and it is recorded as handled only after the action succeeded, so a failure is retried, not lost.
+    """
+    if store.is_claimed(source, key):
+        return ReplyOutcome.ALREADY_HANDLED, ""
+    stamp = occurrence if isinstance(occurrence, int) else int(occurrence.timestamp())
+    latest = store.latest_delivered_occurrence(item_id)
+    if latest is None or int(latest.timestamp()) != stamp:
+        return ReplyOutcome.STALE, ""
+    result = act(store, action, [str(item_id), *args], via=via)
+    store.claim_inbound(source, key, item_id)
+    return ReplyOutcome.ACTED, result

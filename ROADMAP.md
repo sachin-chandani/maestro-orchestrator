@@ -79,11 +79,11 @@ Exit criteria: capture from every source above, parser corpus >= 95%, exactly-on
 - [x] More phrases: parts of the day, end of day/week, weekends, `on the 5th`, every N days/weeks (#16)
 
 ## v0.4: More ways out (target Nov 22, 2026)
-- [ ] Voice-call reminders to your own phone (#11)
+- [x] Voice-call reminders to your own phone (#11)
 - [x] Email (SMTP) channel, with reply-to-act through email-in (#17)
 - [x] Generic webhook channel for Slack, Discord, Home Assistant (#18)
 - [x] Acknowledgement tracking (#19)
-- [x] Escalation policies: push, then SMS, then more (#12); voice-call reminders (#11) will plug in as a channel
+- [x] Escalation policies: push, then SMS, then more (#12); voice calls work as a stage (`30m=twilio_call`)
 - [x] Quiet hours (#13)
 - [ ] Per-item channel choice: "text me", "call me", "email me" (#20)
 - [ ] Channel plugins via entry points (#14)

@@ -155,7 +155,10 @@ def _channels(config: Config) -> tuple[list[Check], dict[str, Notifier]]:
         except ConfigError as e:
             checks.append(Check(FAIL, f"channel {name}", str(e)))
         else:
-            checks.append(Check(OK, f"channel {name}", "configured"))
+            detail = "configured"
+            if name == "twilio_call" and not config.public_url:
+                detail = "configured; calls can't offer press 1/2 without MAESTRO_PUBLIC_URL"
+            checks.append(Check(OK, f"channel {name}", detail))
     return checks, built
 
 
