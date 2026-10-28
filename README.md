@@ -27,7 +27,7 @@ Saved: 3  📝 —                 My passport is in the blue drawer
 - **Notes:** anything without a time is kept and searchable
 - **Channels:** console, macOS notifications, [ntfy](https://ntfy.sh) push, Twilio SMS, Telegram (with Done/snooze buttons), email (reply to act), webhooks (Slack, Discord, Home Assistant, anything)
 - **Email-in:** forward or send an email to a dedicated inbox to capture it
-- **Voice:** call your Twilio number and say the reminder; it's read back to you
+- **Voice:** call your Twilio number and say the reminder; it's read back to you. Or have Maestro call you: press 1 for done, 2 to snooze
 - **Telegram bot:** text your own bot "dentist next tue 3pm" to capture; `/list`, `/done`, `/snooze`, `/rm`
 - **Self-hosted:** one Docker container, one SQLite file, token-protected REST API and a built-in web UI
 - **Escalation:** unacknowledged reminders move to louder channels on a schedule you set (push, then SMS, then more)
@@ -76,7 +76,7 @@ All settings come from environment variables or a `.env` file. See [.env.example
 | `MAESTRO_RATE_LIMIT_AUTH_FAILURES` | Wrong API tokens allowed per minute per client before it is locked out of the API (default 10, 0 = off). A missing token doesn't count |
 | `MAESTRO_TRUST_PROXY_HEADERS` | `true` behind a reverse proxy, so limits apply per real client (last `X-Forwarded-For` entry) |
 | `MAESTRO_LOG_FORMAT`, `MAESTRO_LOG_LEVEL` | `text` (default) or `json` (one object per line, for log shippers); `INFO` by default |
-| `MAESTRO_CHANNELS` | Comma-separated: `console`, `macos`, `ntfy`, `twilio_sms`, `telegram`, `email`, `webhook` |
+| `MAESTRO_CHANNELS` | Comma-separated: `console`, `macos`, `ntfy`, `twilio_sms`, `twilio_call`, `telegram`, `email`, `webhook` |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | Your bot and the only chat it will talk to (see below) |
 | `NTFY_URL`, `NTFY_TOPIC` | ntfy server and topic |
 | `MAESTRO_WEBHOOK_URL`, `MAESTRO_WEBHOOK_FORMAT`, `MAESTRO_WEBHOOK_SECRET` | `webhook` channel: POST each reminder as `json` (default), or in `slack` / `discord` incoming-webhook format. HTTPS required except on your own network (e.g. Home Assistant). With a secret, requests carry `X-Maestro-Timestamp` and `X-Maestro-Signature: sha256=HMAC(secret, "<timestamp>.<body>")` |
@@ -128,6 +128,9 @@ Requests are verified with Twilio's signature, and only texts from `MAESTRO_SMS_
 
 ### Call your reminders in (inbound voice)
 With the same Twilio settings, point the number's "A call comes in" webhook at `https://<your-server>/webhooks/twilio/voice`. Call it from your phone, say "remind me to call mom tomorrow at 5 p.m.", and Maestro reads back what it saved. Calls from other numbers are rejected without being answered, and so are calls whose caller ID failed the carrier's STIR/SHAKEN check. Caller ID can still be spoofed where carriers don't check it, so treat voice capture as convenient rather than strongly authenticated; a PIN option is tracked in the issues.
+
+### Reminders as phone calls
+Add `twilio_call` to `MAESTRO_CHANNELS` (or use it as an escalation stage: `MAESTRO_ESCALATION="10m=twilio_sms, 30m=twilio_call"`). With the same Twilio settings, Maestro calls `MAESTRO_SMS_TO` and reads the reminder out. With `MAESTRO_PUBLIC_URL` set, press 1 to mark it done or 2 to snooze it for 10 minutes; without it, the reminder is read twice and the call ends. The key press only acts on the reminder that call was about, and only if it hasn't been delivered again since. A placed call counts as delivered even if you don't answer, so pair calls with escalation for things that must not be missed. Calls only ever go to your own number.
 
 ### Email your reminders (email-in)
 Create a dedicated inbox for Maestro, set `IMAP_HOST`, `IMAP_USER`, `IMAP_PASSWORD`, `MAESTRO_EMAIL_FROM` (your own addresses) and `MAESTRO_EMAIL_AUTHSERV_ID` (the first word of the `Authentication-Results` header your provider adds to mail you receive, e.g. `mx.google.com`), and send or forward mail to it. The subject is captured ("Re:"/"Fwd:" removed), or the first line of the body if there's no subject. Only your addresses count, and only when your provider confirms the sender with DMARC, so a forged `From` (or a forged authentication header) is ignored ([ADR 0008](docs/adr/0008-email-sender-trust.md)). `maestro doctor --send-test` checks the IMAP login.

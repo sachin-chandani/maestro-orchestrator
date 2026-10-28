@@ -29,7 +29,13 @@ from maestro.scheduler import Lease, tick
 from maestro.sms import WEBHOOK_PATH, SmsHandler, TwilioHandler
 from maestro.store import Store
 from maestro.tz import add_elapsed
-from maestro.voice import VOICE_CAPTURE_PATH, VOICE_PATH, VoiceHandler
+from maestro.voice import (
+    VOICE_CAPTURE_PATH,
+    VOICE_PATH,
+    VOICE_REMINDER_PATH,
+    CallReminderHandler,
+    VoiceHandler,
+)
 
 if TYPE_CHECKING:
     from maestro.email_in import EmailWorker
@@ -222,6 +228,13 @@ def create_app(store: Store, api_token: str | None = None, notifier: Notifier | 
         @app.post(VOICE_CAPTURE_PATH, include_in_schema=False)
         async def twilio_voice_capture(request: Request) -> Response:
             return twiml_response(voice_handler.capture(await twilio_params(request, voice_handler)))
+
+        calls = CallReminderHandler(store, voice_handler.auth_token, voice_handler.owner)
+
+        @app.post(VOICE_REMINDER_PATH, include_in_schema=False)
+        async def twilio_voice_reminder(request: Request) -> Response:
+            params = await twilio_params(request, calls)
+            return twiml_response(calls.keypress(dict(request.query_params), params))
 
     def client_name(request: Request) -> str:
         """Which interface acted, for acknowledgements: the bundled web UI says so; anything else is api."""

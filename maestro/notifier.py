@@ -75,33 +75,40 @@ class NtfyNotifier:
         self.opener(request)
 
 
-class TwilioSMSNotifier:
-    """SMS to your own phone through your Twilio account."""
+class TwilioClient:
+    """POSTs to one Twilio REST resource of your account (Messages, Calls)."""
 
-    API = "https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages.json"
+    API = "https://api.twilio.com/2010-04-01/Accounts/{sid}/{resource}.json"
 
-    def __init__(self, account_sid: str, auth_token: str, from_number: str, to_number: str,
-                 opener: Opener = _default_opener):
-        self.url = self.API.format(sid=account_sid)
+    def __init__(self, account_sid: str, auth_token: str, resource: str, opener: Opener = _default_opener):
+        self.url = self.API.format(sid=account_sid, resource=resource)
         credentials = base64.b64encode(f"{account_sid}:{auth_token}".encode()).decode()
         self.auth_header = f"Basic {credentials}"
-        self.from_number = from_number
-        self.to_number = to_number
         self.opener = opener
 
-    def send(self, item: Item) -> None:
-        body = urllib.parse.urlencode(
-            {"From": self.from_number, "To": self.to_number,
-             "Body": f"Reminder: {item.text} (reply done or snooze 1h)"}
-        ).encode()
+    def post(self, fields: dict[str, str]) -> None:
         request = urllib.request.Request(
             self.url,
-            data=body,
+            data=urllib.parse.urlencode(fields).encode(),
             headers={"Authorization": self.auth_header,
                      "Content-Type": "application/x-www-form-urlencoded"},
             method="POST",
         )
         self.opener(request)
+
+
+class TwilioSMSNotifier:
+    """SMS to your own phone through your Twilio account."""
+
+    def __init__(self, account_sid: str, auth_token: str, from_number: str, to_number: str,
+                 opener: Opener = _default_opener):
+        self.client = TwilioClient(account_sid, auth_token, "Messages", opener)
+        self.from_number = from_number
+        self.to_number = to_number
+
+    def send(self, item: Item) -> None:
+        self.client.post({"From": self.from_number, "To": self.to_number,
+                          "Body": f"Reminder: {item.text} (reply done or snooze 1h)"})
 
 
 # <reminder-<item id>-<occurrence, unix seconds>-<unique>@maestro>
@@ -299,6 +306,19 @@ def _twilio_sms(config: Config) -> Notifier:
                              s["TWILIO_FROM_NUMBER"], s["MAESTRO_SMS_TO"])
 
 
+def _twilio_call(config: Config) -> Notifier:
+    from maestro.voice import TwilioCallNotifier
+
+    s = _require("twilio_call", {
+        "TWILIO_ACCOUNT_SID": config.twilio_account_sid,
+        "TWILIO_AUTH_TOKEN": config.twilio_auth_token,
+        "TWILIO_FROM_NUMBER": config.twilio_from,
+        "MAESTRO_SMS_TO": config.sms_to,
+    })
+    client = TwilioClient(s["TWILIO_ACCOUNT_SID"], s["TWILIO_AUTH_TOKEN"], "Calls")
+    return TwilioCallNotifier(client, s["TWILIO_FROM_NUMBER"], s["MAESTRO_SMS_TO"], config.public_url)
+
+
 def _telegram(config: Config) -> Notifier:
     from maestro.telegram import TelegramClient, TelegramNotifier
 
@@ -336,6 +356,7 @@ CHANNELS: dict[str, Callable[[Config], Notifier]] = {
     "macos": lambda _: MacNotifier(),
     "ntfy": _ntfy,
     "twilio_sms": _twilio_sms,
+    "twilio_call": _twilio_call,
     "telegram": _telegram,
     "email": _email,
     "webhook": _webhook,
