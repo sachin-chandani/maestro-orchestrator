@@ -29,7 +29,8 @@ if TYPE_CHECKING:
 
 
 def _format(item: Item) -> str:
-    when = item.due_at.strftime("%a %d %b %H:%M") if item.due_at else "—"
+    next_time = item.snoozed_until or item.due_at  # a snoozed occurrence goes out before the series' next
+    when = next_time.strftime("%a %d %b %H:%M") if next_time else "—"
     tag = "⏰" if item.kind == Kind.REMINDER else "📝"
     repeat = f" ({recurrence.describe(item.recurrence)})" if item.recurrence else ""
     status = "" if item.status == Status.PENDING else f" [{item.status}]"
@@ -50,7 +51,8 @@ def _build_parser(config: Config) -> argparse.ArgumentParser:
     search = sub.add_parser("search", help="find items by text")
     search.add_argument("query")
 
-    for name, help_text in [("done", "mark an item as done"), ("rm", "delete an item")]:
+    for name, help_text in [("done", "mark an item as done (a repeating one: this time only)"),
+                            ("stop", "end a repeating reminder"), ("rm", "delete an item")]:
         cmd = sub.add_parser(name, help=help_text)
         cmd.add_argument("id", type=int)
 
@@ -107,13 +109,20 @@ def _dispatch(args: argparse.Namespace, config: Config, store: Store, tz: ZoneIn
     elif args.command == "search":
         items = store.search(args.query)
         print("\n".join(map(_format, items)) if items else "No matches.")
-    elif args.command in ("done", "rm", "snooze"):
-        if store.get(args.id) is None:
+    elif args.command in ("done", "stop", "rm", "snooze"):
+        if (target := store.get(args.id)) is None:
             print(f"No item #{args.id}", file=sys.stderr)
             return 1
         if args.command == "done":
             store.complete(args.id, via="cli")
-            print(f"Marked #{args.id} as done.")
+            after = store.get(args.id)
+            if target.recurrence and after and after.status != Status.DONE:
+                print(f"Marked #{args.id} as done for now; next: {_format(after).strip()}")
+            else:
+                print(f"Marked #{args.id} as done.")
+        elif args.command == "stop":
+            store.stop(args.id, via="cli")
+            print(f"Stopped #{args.id}.")
         elif args.command == "rm":
             store.delete(args.id)
             print(f"Deleted #{args.id}.")

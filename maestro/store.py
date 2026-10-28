@@ -21,6 +21,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from maestro import recurrence
 from maestro.models import Delivery, Item, Kind, Status
 from maestro.observability import METRICS
 from maestro.tz import UTC, get_timezone, localize
@@ -121,6 +122,12 @@ MIGRATIONS: list[list[str] | Callable[[sqlite3.Connection, ZoneInfo], None]] = [
         """INSERT OR IGNORE INTO acknowledgements (item_id, occurrence, acknowledged_at, via)
            SELECT item_id, occurrence, MAX(delivered_at), 'migration' FROM deliveries
            WHERE delivered_at IS NOT NULL GROUP BY item_id, occurrence""",
+    ],
+    # 8: snoozing one occurrence of a recurring reminder without moving the series (ADR 0009)
+    [
+        "ALTER TABLE items ADD COLUMN snoozed_until TEXT",
+        # due() asks for due_at OR snoozed_until in the past: with both indexed, SQLite searches each
+        "CREATE INDEX IF NOT EXISTS idx_items_snoozed ON items (status, snoozed_until)",
     ],
 ]
 
@@ -243,6 +250,7 @@ class Store:
             created_at=self._required_from_db(row["created_at"]),
             source_text=row["source_text"],
             recurrence=row["recurrence"],
+            snoozed_until=self._from_db(row["snoozed_until"]),
         )
 
     @property
@@ -322,8 +330,8 @@ class Store:
         sql = "SELECT * FROM items"
         if not include_done:
             sql += f" WHERE status != '{Status.DONE}'"
-        # Reminders by due time first, then notes by creation time.
-        sql += " ORDER BY due_at IS NULL, due_at, created_at"
+        # Reminders by when they next go out first, then notes by creation time.
+        sql += " ORDER BY due_at IS NULL, COALESCE(snoozed_until, due_at), created_at"
         return [self._item(r) for r in self.conn.execute(sql)]
 
     def counts(self) -> dict[tuple[str, str], int]:
@@ -340,9 +348,9 @@ class Store:
 
     def due(self, now: datetime) -> builtins.list[Item]:
         rows = self.conn.execute(
-            "SELECT * FROM items WHERE status = ? AND due_at IS NOT NULL AND due_at <= ?"
-            " ORDER BY due_at",
-            (Status.PENDING, self._to_db(now)),
+            "SELECT * FROM items WHERE status = ? AND (due_at <= ? OR snoozed_until <= ?)"
+            " ORDER BY COALESCE(snoozed_until, due_at)",
+            (Status.PENDING, self._to_db(now), self._to_db(now)),
         )
         return [self._item(r) for r in rows]
 
@@ -350,11 +358,36 @@ class Store:
     def _set_status(self, item_id: int, status: Status) -> int:
         return self.conn.execute("UPDATE items SET status = ? WHERE id = ?", (status, item_id)).rowcount
 
-    def _move(self, item_id: int, due_at: datetime) -> int:
+    def _move(self, item_id: int, due_at: datetime, snoozed_until: datetime | None = None) -> int:
         return self.conn.execute(
-            "UPDATE items SET due_at = ?, status = ?, kind = ? WHERE id = ?",
-            (self._to_db(due_at), Status.PENDING, Kind.REMINDER, item_id),
+            "UPDATE items SET due_at = ?, snoozed_until = ?, status = ?, kind = ? WHERE id = ?",
+            (self._to_db(due_at), self._to_db(snoozed_until) if snoozed_until else None, Status.PENDING,
+             Kind.REMINDER, item_id),
         ).rowcount
+
+    def _series(self, item_id: int) -> tuple[str, datetime, datetime | None] | None:
+        """(rule, next due time, snoozed occurrence) of a recurring item that's still running, else None."""
+        row = self.conn.execute("SELECT recurrence, due_at, snoozed_until, status FROM items WHERE id = ?",
+                                (item_id,)).fetchone()
+        if row is None or not row["recurrence"] or not row["due_at"] or row["status"] == Status.DONE:
+            return None
+        return row["recurrence"], self._required_from_db(row["due_at"]), self._from_db(row["snoozed_until"])
+
+    def _delivered_target(self, item_id: int, now: datetime | None,
+                          occurrence: datetime | None) -> datetime | None:
+        """The delivered occurrence a done/snooze is about, or None when it's about the upcoming one.
+
+        A reply to a specific delivery (email, call) names its occurrence. Otherwise it's the latest
+        delivery if that was recent and nobody has acknowledged it yet: once it's acknowledged (or if it
+        was long ago), "done" means the next one, e.g. "I took them early"."""
+        if occurrence is not None:
+            return occurrence
+        if (latest := self._recent_delivery(item_id, now)) is None:
+            return None
+        acknowledged = self.conn.execute(
+            "SELECT 1 FROM acknowledgements WHERE item_id = ? AND occurrence = ?", (item_id, latest)
+        ).fetchone()
+        return None if acknowledged else self._required_from_db(latest)
 
     def set_status(self, item_id: int, status: Status) -> bool:
         with self._transaction():
@@ -384,41 +417,104 @@ class Store:
                 )
         return cur.rowcount > 0
 
-    def complete(self, item_id: int, via: str, now: datetime | None = None) -> bool:
-        """Mark an item done because the person said so, acknowledging what was delivered."""
+    def complete(self, item_id: int, via: str, now: datetime | None = None,
+                 occurrence: datetime | None = None) -> bool:
+        """Mark an item done because the person said so, acknowledging what was delivered (`occurrence`
+        when the reply names it).
+
+        For a recurring reminder, done is about one occurrence, not the series (ADR 0009): the delivered
+        one awaiting acknowledgement, or else the upcoming one (a pending snooze first), which is
+        skipped. `stop` ends a series."""
         with self._transaction():
-            changed = self._set_status(item_id, Status.DONE)
-            acknowledged = bool(changed) and self._acknowledge(item_id, via, now)
+            if series := self._series(item_id):
+                rule, next_due, snoozed = series
+                target = self._delivered_target(item_id, now, occurrence)
+                if target is not None:
+                    if snoozed == target:
+                        snoozed = None  # done with the snoozed re-send
+                    if next_due <= target:  # still on that occurrence (e.g. another channel retrying)
+                        next_due = recurrence.next_occurrence(rule, target, next_due.time(), anchor=next_due)
+                elif snoozed is not None:
+                    snoozed = None  # the upcoming one was the snoozed re-send
+                else:
+                    next_due = recurrence.next_occurrence(rule, next_due, next_due.time(), anchor=next_due)
+                changed = self._move(item_id, next_due, snoozed_until=snoozed)
+            else:
+                changed = self._set_status(item_id, Status.DONE)
+            acknowledged = bool(changed) and self._acknowledge(item_id, via, now, occurrence)
         if acknowledged:
             METRICS.inc("maestro_acknowledgements_total", via=via)  # only once committed
         return changed > 0
 
-    def snooze(self, item_id: int, until: datetime, via: str, now: datetime | None = None) -> bool:
-        """Push an item to `until` because the person asked, acknowledging what was delivered."""
+    def stop(self, item_id: int, via: str, now: datetime | None = None) -> bool:
+        """End an item for good, a recurring series included, acknowledging what was delivered."""
         with self._transaction():
-            changed = self._move(item_id, until)
+            changed = self.conn.execute("UPDATE items SET status = ?, snoozed_until = NULL WHERE id = ?",
+                                        (Status.DONE, item_id)).rowcount
             acknowledged = bool(changed) and self._acknowledge(item_id, via, now)
         if acknowledged:
             METRICS.inc("maestro_acknowledgements_total", via=via)
         return changed > 0
 
-    def _acknowledge(self, item_id: int, via: str, now: datetime | None) -> bool:
-        """Acknowledge the item's latest delivery if it was recent (inside a transaction). For a
-        recurring item the due time has already moved on, so the occurrence comes from the delivery
-        records. Deliveries older than ACK_WINDOW aren't what the person is reacting to (e.g. snoozing
-        today's reminder after ignoring yesterday's), so they stay unacknowledged."""
+    def snooze(self, item_id: int, until: datetime, via: str, now: datetime | None = None,
+               occurrence: datetime | None = None) -> bool:
+        """Push an item to `until` because the person asked, acknowledging what was delivered (`occurrence`
+        when the reply names it).
+
+        A recurring reminder keeps its series' time (ADR 0009): the occurrence (as for done) is sent
+        again at `until` (snoozed_until), and series occurrences up to `until` are skipped."""
+        with self._transaction():
+            if series := self._series(item_id):
+                rule, next_due, snoozed = series
+                target = self._delivered_target(item_id, now, occurrence)
+                if target is None and snoozed is None:
+                    passed = max(until, next_due)  # snoozing the upcoming occurrence itself: skip it
+                else:
+                    passed = max(until, target) if target is not None else until
+                if next_due <= passed:
+                    next_due = recurrence.next_occurrence(rule, passed, next_due.time(), anchor=next_due)
+                changed = self._move(item_id, next_due, snoozed_until=until)
+            else:
+                changed = self._move(item_id, until)
+            acknowledged = bool(changed) and self._acknowledge(item_id, via, now, occurrence)
+        if acknowledged:
+            METRICS.inc("maestro_acknowledgements_total", via=via)
+        return changed > 0
+
+    def finish_snooze(self, item_id: int, occurrence: datetime) -> bool:
+        """The scheduler's update after re-sending a snoozed occurrence of a recurring reminder; like
+        finish_occurrence, only if nothing changed it in the meantime."""
+        with self._transaction():
+            cur = self.conn.execute(
+                "UPDATE items SET snoozed_until = NULL WHERE id = ? AND status = ? AND snoozed_until = ?",
+                (item_id, Status.PENDING, self._to_db(occurrence)),
+            )
+        return cur.rowcount > 0
+
+    def _recent_delivery(self, item_id: int, now: datetime | None) -> str | None:
+        """The occurrence (as stored) of the item's latest delivery within ACK_WINDOW, if any."""
         now = now or datetime.now(self.tz)
         row = self.conn.execute(
             "SELECT occurrence FROM deliveries WHERE item_id = ? AND delivered_at IS NOT NULL"
             " AND delivered_at >= ? ORDER BY occurrence DESC LIMIT 1",
             (item_id, self._to_db(now - ACK_WINDOW)),
         ).fetchone()
-        if row is None:
+        return str(row["occurrence"]) if row else None
+
+    def _acknowledge(self, item_id: int, via: str, now: datetime | None,
+                     occurrence: datetime | None = None) -> bool:
+        """Acknowledge the item's latest delivery if it was recent (inside a transaction). For a
+        recurring item the due time has already moved on, so the occurrence comes from the delivery
+        records. Deliveries older than ACK_WINDOW aren't what the person is reacting to (e.g. snoozing
+        today's reminder after ignoring yesterday's), so they stay unacknowledged."""
+        # A reply that names its delivery acknowledges exactly that one, however late it comes.
+        stored = self._to_db(occurrence) if occurrence else self._recent_delivery(item_id, now)
+        if stored is None:
             return False  # nothing sent recently: nothing to acknowledge
         cur = self.conn.execute(
             "INSERT OR IGNORE INTO acknowledgements (item_id, occurrence, acknowledged_at, via)"
             " VALUES (?, ?, ?, ?)",
-            (item_id, row["occurrence"], self._to_db(now), via),
+            (item_id, stored, self._to_db(now or datetime.now(self.tz)), via),
         )
         return cur.rowcount > 0
 

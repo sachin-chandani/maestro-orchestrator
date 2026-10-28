@@ -157,7 +157,7 @@ class TelegramBot:
         # A slash command that didn't parse: explain its usage, or that it doesn't exist.
         word, *args = text.split()
         word = word.split("@")[0].lower()  # "/done@MyMaestroBot" in group chats
-        if word in ("/done", "/rm", "/snooze"):
+        if word in ("/done", "/stop", "/rm", "/snooze"):
             self.client.send(chat_id, commands.act(self.store, word[1:], args, prefix="/", via=CHANNEL))
         else:
             self.client.send(chat_id, f"Unknown command {word}. Try /help")

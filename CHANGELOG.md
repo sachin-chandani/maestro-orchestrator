@@ -13,6 +13,7 @@ All notable changes to this project are documented here. The format follows
 - Escalation: `MAESTRO_ESCALATION=10m=twilio_sms, 30m=telegram+twilio_sms` re-sends unacknowledged reminders on louder channels, once per stage, timed from when the first notice went out, until someone says done or snooze; only within 12 hours of the due time; works with `run`, `run --once` and `serve`; replies to escalation messages act on the reminder; metric `maestro_escalations_total{stage}` (#12)
 
 ### Fixed
+- Done and snooze on a repeating reminder apply to that occurrence: done no longer ends the series and snooze no longer shifts its time; snoozed occurrences are re-sent at the snoozed time (migration 8, ADR 0009). New `stop` command / `POST /items/{id}/stop` / web UI button ends a series (#80)
 - The scheduler no longer overwrites a done or snooze that lands between delivering a reminder and finishing it (e.g. from another process)
 
 ### Added

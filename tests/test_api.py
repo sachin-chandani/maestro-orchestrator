@@ -52,7 +52,9 @@ def test_capture_list_snooze_done_delete(client):
     bad = client.post(f"/items/{item['id']}/snooze", json={"duration": "soon"}, headers=AUTH)
     assert bad.status_code == 422
 
-    assert client.post(f"/items/{item['id']}/done", headers=AUTH).json()["status"] == "done"
+    done = client.post(f"/items/{item['id']}/done", headers=AUTH).json()
+    assert done["status"] == "pending"  # a weekly reminder: done is about this week, the series goes on
+    assert client.post(f"/items/{item['id']}/stop", headers=AUTH).json()["status"] == "done"
     assert client.delete(f"/items/{item['id']}", headers=AUTH).status_code == 204
     assert client.get(f"/items/{item['id']}", headers=AUTH).status_code == 404
 

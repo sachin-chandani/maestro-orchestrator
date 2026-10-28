@@ -121,8 +121,9 @@ Now anything you text the bot is captured, reminders arrive in the chat with ✅
 With the Twilio settings above, set `MAESTRO_PUBLIC_URL` to the address the internet reaches your server at, and point your Twilio number's "A message comes in" webhook at `https://<your-server>/webhooks/twilio/sms`. Then text it:
 
 - `dentist next tue 3pm` → saved, with a reply confirming the time
-- `list`, `done 3`, `snooze 3 1h`, `rm 3`, `help`
-- Reply `done` or `snooze 1h` to a reminder text to act on it without its number (the same works in Telegram). `rm` always needs the number.
+- `list`, `done 3`, `snooze 3 1h`, `stop 3`, `rm 3`, `help`
+- Reply `done` or `snooze 1h` to a reminder text to act on it without its number (the same works in Telegram). `rm` and `stop` always need the number.
+- On a repeating reminder, `done` and `snooze` are about this time only: the series keeps its schedule. `stop` ends it ([ADR 0009](docs/adr/0009-recurring-actions-apply-to-one-occurrence.md)).
 
 Requests are verified with Twilio's signature, and only texts from `MAESTRO_SMS_TO` (your number) are acted on. `maestro doctor` prints the exact webhook URL to use.
 
@@ -141,7 +142,8 @@ maestro add <text>            # capture a reminder or note
 maestro list [--all]          # pending reminders (soonest first), then notes
 maestro search <text>         # find by text
 maestro snooze <id> <10m|2h|1d>
-maestro done <id>
+maestro done <id>             # for a repeating reminder: this time; the series goes on
+maestro stop <id>             # end a repeating reminder
 maestro rm <id>
 maestro run [--once]          # scheduler only (safe alongside serve or cron: one scheduler fires at a time)
 maestro serve [--host --port] # API + scheduler (needs the [server] extra)

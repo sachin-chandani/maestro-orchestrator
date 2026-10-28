@@ -137,8 +137,8 @@ function relative(date) {
 }
 
 function when(item) {
-  const d = new Date(item.due_at);
-  return d.toLocaleString(undefined, { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+  const format = (iso) => new Date(iso).toLocaleString(undefined, { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+  return item.snoozed_until ? `${format(item.snoozed_until)} (snoozed), then ${format(item.due_at)}` : format(item.due_at);
 }
 
 function el(tag, props = {}, children = []) {
@@ -159,7 +159,7 @@ async function act(promise, message) {
 function row(item) {
   const meta = el("div", { className: "meta" });
   if (item.due_at) {
-    const due = new Date(item.due_at);
+    const due = new Date(item.snoozed_until || item.due_at);  // whichever goes out first
     meta.append(el("span", { textContent: when(item) }), el("span", { textContent: relative(due) }));
     if (item.status === "pending" && due < Date.now()) meta.append(el("span", { className: "badge overdue", textContent: "due" }));
   }
@@ -170,13 +170,19 @@ function row(item) {
 
   const actions = el("div", { className: "actions" });
   if (item.status !== "done") {
-    actions.append(action("Done", () => act(api(`/items/${item.id}/done`, { method: "POST" }), "Marked done")));
+    actions.append(action("Done", () => act(api(`/items/${item.id}/done`, { method: "POST" }),
+      item.recurrence ? "Done for now" : "Marked done")));
     if (item.kind === "reminder") {
       for (const d of ["10m", "1h", "1d"]) {
         actions.append(action(`+${d}`, () => act(
           api(`/items/${item.id}/snooze`, { method: "POST", body: JSON.stringify({ duration: d }) }), `Snoozed ${d}`)));
       }
     }
+  }
+  if (item.recurrence && item.status !== "done") {
+    actions.append(action("Stop", () => {
+      if (confirm(`Stop repeating "${item.text}"?`)) act(api(`/items/${item.id}/stop`, { method: "POST" }), "Stopped");
+    }));
   }
   actions.append(action("Delete", () => {
     if (confirm(`Delete "${item.text}"?`)) act(api(`/items/${item.id}`, { method: "DELETE" }), "Deleted");
