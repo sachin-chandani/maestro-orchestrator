@@ -23,6 +23,9 @@ class Item:
     status: Status = Status.PENDING
     source_text: str = ""
     recurrence: str | None = None  # see maestro.recurrence for the rule format
+    # A recurring reminder snoozed by the person: this occurrence is sent again then, while due_at keeps
+    # the series' own time (ADR 0009). Always before due_at; None for one-off reminders.
+    snoozed_until: datetime | None = None
     id: int | None = None
 
 

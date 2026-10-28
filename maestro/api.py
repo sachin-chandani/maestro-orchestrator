@@ -94,6 +94,7 @@ class ItemOut(BaseModel):
     kind: str
     status: str
     due_at: datetime | None
+    snoozed_until: datetime | None  # a recurring reminder's snoozed occurrence, sent before due_at
     created_at: datetime
     recurrence: str | None
     recurrence_label: str | None
@@ -107,7 +108,8 @@ class ItemOut(BaseModel):
             raise ValueError("Only stored items can be returned from the API")
         return cls(
             id=item.id, text=item.text, kind=item.kind, status=item.status,
-            due_at=item.due_at, created_at=item.created_at, recurrence=item.recurrence,
+            due_at=item.due_at, snoozed_until=item.snoozed_until, created_at=item.created_at,
+            recurrence=item.recurrence,
             recurrence_label=recurrence.describe(item.recurrence) if item.recurrence else None,
             when=commands.when(item),
             awaiting_acknowledgement=item.id in awaiting,
@@ -290,6 +292,13 @@ def create_app(store: Store, api_token: str | None = None, notifier: Notifier | 
     async def complete(item_id: int, request: Request) -> ItemOut:
         get_or_404(item_id)
         store.complete(item_id, via=client_name(request))
+        return ItemOut.of(get_or_404(item_id), store.unacknowledged_ids())
+
+    @app.post("/items/{item_id}/stop", dependencies=[Depends(require_token)])
+    async def stop(item_id: int, request: Request) -> ItemOut:
+        """End an item for good; for a recurring reminder, the whole series (done is one occurrence)."""
+        get_or_404(item_id)
+        store.stop(item_id, via=client_name(request))
         return ItemOut.of(get_or_404(item_id), store.unacknowledged_ids())
 
     @app.post("/items/{item_id}/snooze", dependencies=[Depends(require_token)])

@@ -1,4 +1,4 @@
-"""Chat-style commands shared by the Telegram bot and SMS: list, done, snooze, rm, help.
+"""Chat-style commands shared by the Telegram bot and SMS: list, done, snooze, stop, rm, help.
 
 Telegram uses slash commands ("/done 3"); SMS accepts the same words without the slash
 ("done 3"). Plain text that isn't exactly a command is captured as a new item.
@@ -10,7 +10,7 @@ from datetime import datetime
 from enum import StrEnum
 
 from maestro import recurrence
-from maestro.models import Item, Kind
+from maestro.models import Item, Kind, Status
 from maestro.parser import DURATION_UNITS, parse_duration
 from maestro.store import Store
 from maestro.tz import add_elapsed
@@ -23,7 +23,7 @@ DEFAULT_SNOOZE = "10m"
 # The item number is optional: without it, a reply acts on the reminder last sent on that channel.
 _COMMAND_RE = re.compile(
     r"^/?(?:(?P<bare>list|help|start)"
-    r"|(?P<one>done|rm|delete)(?:\s+#?(?P<id1>\d+))?"
+    r"|(?P<one>done|stop|rm|delete)(?:\s+#?(?P<id1>\d+))?"
     rf"|(?P<snooze>snooze)(?:\s+#?(?P<id2>\d+))?(?:\s+(?P<dur>\d+\s*{DURATION_UNITS}))?)(?:@\w+)?$",
     re.I,
 )
@@ -31,7 +31,7 @@ _COMMAND_RE = re.compile(
 
 @dataclass
 class Command:
-    action: str  # list, help, done, rm or snooze
+    action: str  # list, help, done, stop, rm or snooze
     item_id: int | None = None
     duration: str | None = None
 
@@ -40,6 +40,8 @@ def when(item: Item) -> str:
     if not item.due_at:
         return "note"
     label = item.due_at.strftime("%a %d %b %H:%M")
+    if item.snoozed_until:
+        label = f"{item.snoozed_until:%a %d %b %H:%M} (snoozed), then {label}"
     return f"{label}, {recurrence.describe(item.recurrence)}" if item.recurrence else label
 
 
@@ -55,8 +57,9 @@ def help_text(prefix: str = "") -> str:
         "• pay rent on the 1st of every month\n"
         "• remember the wifi password is on the router\n\n"
         f"{prefix}list: what's coming up\n"
-        f"{prefix}done <id>: mark done\n"
+        f"{prefix}done <id>: mark done (for a repeating reminder: this time)\n"
         f"{prefix}snooze <id> <10m|2h|1d>: push back\n"
+        f"{prefix}stop <id>: end a repeating reminder\n"
         f"{prefix}rm <id>: delete\n\n"
         "Reply \"done\" or \"snooze 1h\" to a reminder to act on it without the number."
     )
@@ -89,7 +92,13 @@ def act(store: Store, action: str, args: list[str], prefix: str = "", via: str =
         return f"No item #{item_id}"
     if action == "done":
         store.complete(item_id, via=via)
+        after = store.get(item_id)
+        if item.recurrence and after is not None and after.status != Status.DONE:
+            return f"✅ Done for now: {item.text}. Next: {when(after)}"
         return f"✅ Done: {item.text}"
+    if action == "stop":
+        store.stop(item_id, via=via)
+        return f"⏹ Stopped: {item.text}"
     if action == "rm":
         store.delete(item_id)
         return f"🗑 Deleted: {item.text}"
@@ -111,8 +120,8 @@ def run(store: Store, command: Command, channel: str | None = None, prefix: str 
     if command.action == "list":
         return list_items(store)
     item_id = command.item_id
-    # Deleting is never inferred: "rm" always needs an explicit number.
-    if item_id is None and channel and command.action != "rm":
+    # Deleting or ending a series is never inferred: "rm" and "stop" always need an explicit number.
+    if item_id is None and channel and command.action not in ("rm", "stop"):
         item_id = store.last_delivered(channel)
     if item_id is None:
         return f"Which one? Add its number, e.g. {prefix}{command.action} 3 (see {prefix}list)."

@@ -8,6 +8,7 @@ When several schedulers share a database (serve + run, or two replicas), a lease
 only one of them fire; the others stand by and take over when the lease expires (see Lease).
 """
 
+import dataclasses
 import logging
 import os
 import socket
@@ -107,11 +108,16 @@ def _channels(notifier: Notifier) -> dict[str, Notifier]:
     return notifier.channels if isinstance(notifier, MultiNotifier) else {"default": notifier}
 
 
-def _occurrence(item: Item) -> tuple[int, datetime] | None:
-    """The (id, due time) of a stored, scheduled item, or None for anything else."""
-    if item.id is None or item.due_at is None:
+def _occurrence(item: Item, now: datetime) -> tuple[int, datetime, bool] | None:
+    """(id, occurrence, whether it's a snoozed one) for a stored, scheduled item that's due, else None.
+    A snoozed occurrence of a recurring reminder goes first; it's always before the series' next one."""
+    if item.id is None:
         return None
-    return item.id, item.due_at
+    if item.snoozed_until is not None and item.snoozed_until <= now:
+        return item.id, item.snoozed_until, True
+    if item.due_at is None:
+        return None
+    return item.id, item.due_at, False
 
 
 def _deliver(store: Store, item: Item, item_id: int, due_at: datetime, channels: dict[str, Notifier],
@@ -169,10 +175,10 @@ def fire_due(store: Store, notifier: Notifier, now: datetime | None = None, leas
         return quiet is not None and quiet.holds(item, local)
 
     finished = []
-    due: list[tuple[Item, int, datetime]] = []
+    due: list[tuple[Item, int, datetime, bool]] = []
     holding = 0
     for item in store.due(now):
-        if (occurrence := _occurrence(item)) is None:
+        if (occurrence := _occurrence(item, now)) is None:
             METRICS.inc("maestro_scheduler_errors_total")
             log.error("Skipping malformed due item %r", item)
             continue
@@ -192,16 +198,20 @@ def fire_due(store: Store, notifier: Notifier, now: datetime | None = None, leas
             return max(due_at, quiet.last_end(local))
         return due_at
 
-    lag = max(((now - late_since(item, due_at)).total_seconds() for item, _, due_at in due), default=0)
+    lag = max(((now - late_since(item, due_at)).total_seconds() for item, _, due_at, _ in due), default=0)
     METRICS.set("maestro_scheduler_lag_seconds", lag)
-    for item, item_id, due_at in due:
+    for item, item_id, due_at, snoozed in due:
         if lease and not lease.acquire(store, now):
             break  # lost the lease mid-tick: the new holder takes it from here
         try:
-            if not _deliver(store, item, item_id, due_at, channels, now):
+            # Channels see the occurrence being sent as the due time (it's in message ids and call URLs).
+            notice = dataclasses.replace(item, due_at=due_at, snoozed_until=None) if snoozed else item
+            if not _deliver(store, notice, item_id, due_at, channels, now):
                 continue
             METRICS.inc("maestro_reminders_fired_total")
-            if item.recurrence:
+            if snoozed:
+                store.finish_snooze(item_id, due_at)  # the series itself stays where it is
+            elif item.recurrence:
                 # Schedule from now, not the old due time, so a long outage fires once rather than catching
                 # up. Work in the item's timezone so the next occurrence keeps its wall-clock time.
                 after = max(now, due_at).astimezone(due_at.tzinfo)
