@@ -81,8 +81,10 @@ def list_items(store: Store) -> str:
     return "\n".join(line(i) for i in store.list()[:LIST_LIMIT]) or "Nothing to remember yet."
 
 
-def act(store: Store, action: str, args: list[str], prefix: str = "", via: str = "chat") -> str:
-    """Run done / rm / snooze on an item and describe the outcome."""
+def act(store: Store, action: str, args: list[str], prefix: str = "", via: str = "chat",
+        occurrence: datetime | None = None) -> str:
+    """Run done / stop / rm / snooze on an item and describe the outcome. `occurrence` is the delivery a
+    reply is about, when known; done and snooze on a recurring reminder apply to it (ADR 0009)."""
     expected = 2 if action == "snooze" else 1
     if len(args) != expected or not args[0].lstrip("#").isdigit():
         usage = "snooze <id> <10m|2h|1d>" if action == "snooze" else f"{action} <id>"
@@ -91,7 +93,7 @@ def act(store: Store, action: str, args: list[str], prefix: str = "", via: str =
     if (item := store.get(item_id)) is None:
         return f"No item #{item_id}"
     if action == "done":
-        store.complete(item_id, via=via)
+        store.complete(item_id, via=via, occurrence=occurrence)
         after = store.get(item_id)
         if item.recurrence and after is not None and after.status != Status.DONE:
             return f"✅ Done for now: {item.text}. Next: {when(after)}"
@@ -106,7 +108,8 @@ def act(store: Store, action: str, args: list[str], prefix: str = "", via: str =
         delta = parse_duration(args[1])
     except ValueError as e:
         return str(e)
-    store.snooze(item_id, add_elapsed(datetime.now(store.tz).replace(microsecond=0), delta), via=via)
+    store.snooze(item_id, add_elapsed(datetime.now(store.tz).replace(microsecond=0), delta), via=via,
+                 occurrence=occurrence)
     if (snoozed := store.get(item_id)) is None:  # deleted in the meantime, e.g. from another device
         return f"No item #{item_id}"
     return f"😴 Snoozed: {line(snoozed)}"
@@ -120,15 +123,18 @@ def run(store: Store, command: Command, channel: str | None = None, prefix: str 
     if command.action == "list":
         return list_items(store)
     item_id = command.item_id
+    occurrence = None
     # Deleting or ending a series is never inferred: "rm" and "stop" always need an explicit number.
     if item_id is None and channel and command.action not in ("rm", "stop"):
         item_id = store.last_delivered(channel)
+        if item_id is not None:  # a reply to that message: it's about the occurrence it delivered
+            occurrence = store.latest_delivered_occurrence(item_id)
     if item_id is None:
         return f"Which one? Add its number, e.g. {prefix}{command.action} 3 (see {prefix}list)."
     args = [str(item_id)]
     if command.action == "snooze":
         args.append(command.duration or DEFAULT_SNOOZE)
-    return act(store, command.action, args, prefix, via=channel or "chat")
+    return act(store, command.action, args, prefix, via=channel or "chat", occurrence=occurrence)
 
 
 class ReplyOutcome(StrEnum):
@@ -152,6 +158,6 @@ def act_on_delivery(store: Store, source: str, key: str, item_id: int, occurrenc
     latest = store.latest_delivered_occurrence(item_id)
     if latest is None or int(latest.timestamp()) != stamp:
         return ReplyOutcome.STALE, ""
-    result = act(store, action, [str(item_id), *args], via=via)
+    result = act(store, action, [str(item_id), *args], via=via, occurrence=latest)
     store.claim_inbound(source, key, item_id)
     return ReplyOutcome.ACTED, result

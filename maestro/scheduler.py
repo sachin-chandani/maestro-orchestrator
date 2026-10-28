@@ -110,10 +110,12 @@ def _channels(notifier: Notifier) -> dict[str, Notifier]:
 
 def _occurrence(item: Item, now: datetime) -> tuple[int, datetime, bool] | None:
     """(id, occurrence, whether it's a snoozed one) for a stored, scheduled item that's due, else None.
-    A snoozed occurrence of a recurring reminder goes first; it's always before the series' next one."""
+    A snoozed occurrence of a recurring reminder goes first (it's always before the series' next one),
+    unless the next one is due too (after downtime): then that one is sent and the snooze is dropped."""
     if item.id is None:
         return None
-    if item.snoozed_until is not None and item.snoozed_until <= now:
+    series_due = item.due_at is not None and item.due_at <= now
+    if item.snoozed_until is not None and item.snoozed_until <= now and not series_due:
         return item.id, item.snoozed_until, True
     if item.due_at is None:
         return None
@@ -211,7 +213,11 @@ def fire_due(store: Store, notifier: Notifier, now: datetime | None = None, leas
             METRICS.inc("maestro_reminders_fired_total")
             if snoozed:
                 store.finish_snooze(item_id, due_at)  # the series itself stays where it is
-            elif item.recurrence:
+                finished.append(item)
+                continue
+            if item.snoozed_until is not None:  # overtaken by this occurrence: one catch-up notice, not two
+                store.finish_snooze(item_id, item.snoozed_until)
+            if item.recurrence:
                 # Schedule from now, not the old due time, so a long outage fires once rather than catching
                 # up. Work in the item's timezone so the next occurrence keeps its wall-clock time.
                 after = max(now, due_at).astimezone(due_at.tzinfo)
