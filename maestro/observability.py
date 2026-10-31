@@ -106,6 +106,10 @@ METRICS.describe("maestro_reminders_fired_total", "counter", "Reminder occurrenc
 METRICS.describe("maestro_scheduler_ticks_total", "counter", "Scheduler ticks run.")
 METRICS.describe("maestro_scheduler_leader", "gauge",
                  "1 if this process holds the scheduler lease and fires reminders, 0 if standing by.")
+METRICS.describe("maestro_store_info", "gauge",
+                 "Always 1, labelled with the storage backend in use.")
+METRICS.describe("maestro_store_reconnects_total", "counter",
+                 "Times the store reconnected after losing its database connection.")
 METRICS.describe("maestro_scheduler_errors_total", "counter",
                  "Items skipped or ticks failed because of an unexpected error; alert if it rises.")
 METRICS.describe("maestro_scheduler_last_tick_timestamp_seconds", "gauge",

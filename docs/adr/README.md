@@ -14,3 +14,4 @@ Add a new numbered file for each decision; supersede rather than edit old ones.
 | [0007](0007-scheduler-lease.md) | One scheduler fires at a time, chosen by a lease in the database | Accepted |
 | [0008](0008-email-sender-trust.md) | Trust an email's sender only with DMARC from the receiving server | Accepted |
 | [0009](0009-recurring-actions-apply-to-one-occurrence.md) | Done and snooze on a recurring reminder apply to one occurrence | Accepted |
+| [0010](0010-postgresql-backend.md) | PostgreSQL as a second backend behind one storage interface | Accepted |

@@ -12,6 +12,20 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ["3.11", "3.12", "3.13"]
+    # The PostgreSQL backend (#34) is only covered when there is a server to talk to; without this
+    # its tests skip. The database is Maestro's alone: the tests truncate it between runs.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: maestro
+          POSTGRES_PASSWORD: maestro
+          POSTGRES_DB: maestro_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
+    env:
+      MAESTRO_TEST_POSTGRES_URL: postgresql://maestro:maestro@127.0.0.1:5432/maestro_test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -30,7 +44,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -e '.[server]'
+      - run: pip install -e '.[server,postgres]'  # exactly what the image installs
       # Audit exactly what Maestro installs at runtime. pip-audit runs from its own pipx environment,
       # so its dependencies (and the runner's pip) can't fail the job.
       - run: pip freeze --exclude-editable > runtime-requirements.txt

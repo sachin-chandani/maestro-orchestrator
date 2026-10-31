@@ -24,7 +24,7 @@ from maestro.models import Delivery, Item
 from maestro.notifier import MultiNotifier, Notifier
 from maestro.observability import METRICS
 from maestro.quiet import is_urgent
-from maestro.store import Store
+from maestro.storage import Store
 from maestro.tz import UTC, localize
 
 if TYPE_CHECKING:

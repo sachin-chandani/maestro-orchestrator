@@ -5,6 +5,17 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- Storage is now an interface (`maestro.storage.Store`) with SQLite as the only backend, in preparation for PostgreSQL (#34). What done and snooze mean for a repeating reminder moved to `maestro.storage.logic`, so every backend decides it the same way. Nothing changes for users: the database, the CLI and the API are untouched, and `from maestro.store import Store` still opens SQLite
+- `--db` and `maestro doctor` accept a database URL as well as a path, and `Store.acknowledgement(item_id, occurrence)` reads how an occurrence was acknowledged (#34)
+
+### Added
+- PostgreSQL backend: set `MAESTRO_DB_URL=postgresql://user:password@host/maestro` and install `maestro-orchestrator[postgres]`. SQLite stays the default and is untouched; psycopg is only imported when a URL asks for it. The scheduler lease, inbound-message claims and migrations are safe across processes on PostgreSQL too, and both backends are held to the same conformance suite (#34)
+- `maestro doctor` names the database it reached (`postgresql 16.2 at db:5432/maestro`), `GET /health` reports the `backend`, and `/metrics` exposes `maestro_store_info{backend="…"}` and `maestro_store_reconnects_total`. Existing metrics keep the labels they had (#34)
+- An unreachable, locked or too-new database is reported as `Database error: …` with exit code 2 instead of a traceback (#34)
+- `docker compose --profile postgres up -d` starts a PostgreSQL alongside Maestro; without the profile nothing changes and SQLite stays the default (#34)
+- `MAESTRO_DB_URL`: name the database as a URL (`sqlite:///data/maestro.db`, `postgresql://…`). `MAESTRO_DB` keeps working as the SQLite path; when both are set the URL wins and `maestro doctor` says so. Passwords in a URL are redacted wherever Maestro prints it (#34)
+
 ### Added
 - `webhook` channel: POST reminders as JSON, or in Slack or Discord format; optional HMAC-SHA256 signature over timestamp and body; HTTPS required except on your own network; redirects are refused, mentions and markup in reminder text are neutralised, and the URL is redacted in errors (#18)
 - `email` channel: reminder emails over SMTP (STARTTLS by default; refuses to send a password without TLS). With email-in on, replying `done` or `snooze 1h` acts on exactly that reminder and occurrence (the reply quotes its Message-ID; replies to an older occurrence are ignored); other replies are ignored instead of captured; HTML-only replies work (#17)

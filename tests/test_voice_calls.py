@@ -123,8 +123,10 @@ def press(client, action, digits, signature=None, **params):
     return response, (ET.fromstring(response.text).findtext("Say") if response.status_code == 200 else None)
 
 
-def ack_via(store):
-    return [r["via"] for r in store.conn.execute("SELECT via FROM acknowledgements")]
+def ack_via(store, item):
+    """How the delivered occurrence of `item` was acknowledged, if it was."""
+    ack = store.acknowledgement(item.id, store.latest_delivered_occurrence(item.id))
+    return ack.via if ack else None
 
 
 def test_pressing_1_marks_it_done(setup):
@@ -133,7 +135,7 @@ def test_pressing_1_marks_it_done(setup):
     assert response.headers["content-type"].startswith("application/xml")
     assert said == "Marked done. Goodbye."
     assert store.get(reminder.id).status == Status.DONE
-    assert ack_via(store) == ["twilio_call"]
+    assert ack_via(store, reminder) == "twilio_call"
 
 
 def test_pressing_2_snoozes_for_ten_minutes(setup):
@@ -143,7 +145,7 @@ def test_pressing_2_snoozes_for_ten_minutes(setup):
     assert said == "Snoozed for 10 minutes. Goodbye."
     due = store.get(reminder.id).due_at
     assert timedelta(minutes=9) < due - before <= timedelta(minutes=10, seconds=2)
-    assert ack_via(store) == ["twilio_call"]
+    assert ack_via(store, reminder) == "twilio_call"
 
 
 def test_a_retried_key_press_acts_once(setup):

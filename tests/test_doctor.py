@@ -103,6 +103,33 @@ def test_unwritable_database(path):
     assert lines[1].startswith(f"✗ database: {path}")
 
 
+def test_an_unreachable_backend_is_reported_without_its_password():
+    # Port 1 on loopback refuses at once: no name to resolve, nothing on the network.
+    url = "postgresql://maestro:hunter2@127.0.0.1:1/maestro"
+    ok, lines = run(Config(db_path=url, channels=["console"], api_token="t"))
+    assert not ok
+    assert lines[1].startswith("\u2717 database: postgresql://maestro:***@127.0.0.1:1/maestro: ")
+    assert "hunter2" not in lines[1]  # it says which database, never the password
+    assert "Traceback" not in lines[1]
+
+
+def test_an_unsupported_backend_fails_the_check():
+    ok, lines = run(Config(db_path="mysql://db/maestro", channels=["console"], api_token="t"))
+    assert not ok
+    assert lines[1].startswith("\u2717 database: Unsupported database URL")
+
+
+def test_both_database_settings_set_warns_which_one_wins(tmp_path, monkeypatch):
+    monkeypatch.setenv("MAESTRO_DB_URL", f"sqlite://{tmp_path}/m.db")
+    monkeypatch.setenv("MAESTRO_DB", str(tmp_path / "ignored.db"))
+    config = Config.from_env()
+    config.channels, config.api_token = ["console"], "t"
+    ok, lines = run(config)
+    assert ok  # a warning, not a failure
+    assert "! database: MAESTRO_DB_URL and MAESTRO_DB are both set; MAESTRO_DB is ignored" in lines
+    assert not (tmp_path / "ignored.db").exists()
+
+
 def test_database_not_in_wal_is_a_warning(tmp_path, monkeypatch):
     from maestro.store import Store
 

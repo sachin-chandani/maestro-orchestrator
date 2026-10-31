@@ -8,5 +8,25 @@ services:
     volumes:
       - maestro-data:/data
 
+  # Opt in with `docker compose --profile postgres up -d`, and set in .env:
+  #   MAESTRO_DB_URL=postgresql://maestro:maestro@db:5432/maestro
+  # Without the profile this never starts and Maestro keeps using its SQLite file.
+  db:
+    image: postgres:16
+    profiles: ["postgres"]
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: maestro
+      POSTGRES_PASSWORD: maestro  # only reachable from the compose network; change it anyway
+      POSTGRES_DB: maestro
+    volumes:
+      - maestro-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U maestro"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
 volumes:
   maestro-data:
+  maestro-postgres:

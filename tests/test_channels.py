@@ -97,16 +97,16 @@ def test_migrates_v1_database(tmp_path):
 
 
 def test_failed_migration_closes_the_connection(tmp_path, monkeypatch):
-    import maestro.store as store_module
+    import maestro.storage.sqlite as store_module
 
     closed = []
-    real_close = store_module.Store.close
+    real_close = store_module.SQLiteStore.close
 
     def recording_close(self):
         closed.append(True)
         real_close(self)
 
-    monkeypatch.setattr(store_module.Store, "close", recording_close)
+    monkeypatch.setattr(store_module.SQLiteStore, "close", recording_close)
 
     def broken(conn, tz):
         raise sqlite3.OperationalError("disk I/O error")
@@ -177,7 +177,7 @@ def test_failed_wal_switch_closes_the_connection(tmp_path, monkeypatch):
 def test_wal_switch_gives_up_within_the_busy_timeout(tmp_path, monkeypatch):
     import time
 
-    import maestro.store as store_module
+    import maestro.storage.sqlite as store_module
 
     monkeypatch.setattr(store_module, "BUSY_TIMEOUT_SECONDS", 0.3)
     path = tmp_path / "m.db"

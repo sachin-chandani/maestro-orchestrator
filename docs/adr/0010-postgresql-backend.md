@@ -1,0 +1,30 @@
+# 0010: PostgreSQL as a second backend behind one storage interface
+
+**Status:** Accepted (#34)
+
+## Context
+SQLite is the right default for a self-hosted second brain: one file, one volume, nothing to run. Some installs already run PostgreSQL — a Fly.io or Railway deployment, a home server with a database for everything else, or a setup that wants backups, replication and connections from more than one host. Maestro's store was one SQLite class that the CLI, API, scheduler and channels called directly, so "use PostgreSQL instead" meant editing all of them.
+
+## Decision
+- **One interface, two backends.** `maestro.storage.Store` is an abstract base class describing everything Maestro needs from a database. `SQLiteStore` and `PostgresStore` implement it; nothing outside `maestro.storage` touches SQL or a connection.
+- **The rules that aren't SQL live once.** What done and snooze mean for a repeating reminder (ADR 0009), the acknowledgement window, and the migration sequence are in `maestro.storage.logic` and `maestro.storage.migrations`, called by both backends, so they cannot drift apart.
+- **One conformance suite.** `tests/test_storage_conformance.py` runs against every backend. A backend is correct when it passes; "it works on SQLite" is not evidence about PostgreSQL.
+- **SQLite stays the default.** `MAESTRO_DB` is still a path, and `open_store` treats anything without a `postgresql://` or `sqlite:` scheme as one. PostgreSQL arrives through `MAESTRO_DB_URL` and the `maestro-orchestrator[postgres]` extra; psycopg is imported only when a URL asks for it.
+- **Each backend owns its schema.** SQLite replays the eight migrations it has always had; PostgreSQL starts at migration 1 with the schema as it stands, because no PostgreSQL database predates this. A test compares the two schemas column by column so a change to one can't silently skip the other.
+- **PostgreSQL has no database-wide write lock, so read-then-write sequences take a transaction-scoped advisory lock** (`pg_advisory_xact_lock`) where SQLite used `BEGIN IMMEDIATE`: migrating, taking the scheduler lease (ADR 0007), and claiming an inbound message. PostgreSQL releases them at commit or rollback, including when the process dies.
+- **Times are `timestamptz`, truncated to whole seconds on write.** An occurrence is part of a primary key, and SQLite has always stored seconds; a delivery recorded with microseconds would never match the item's due time.
+- **One connection, used from one thread**, as ADR 0003 describes for SQLite. `maestro serve` touches the store only from the event-loop thread.
+- **The backend names itself.** `Store.backend` and `Store.describe()` are part of the interface, so `maestro doctor`, `/health` and `/metrics` can say which database is in use without knowing what backends exist. `describe()` returns a file path or a server and database, never the URL, because the URL carries a password.
+- **The backend is a label on its own metric** (`maestro_store_info{backend=...}`), not a new label on the existing counters: adding one to `maestro_items` or `maestro_unacknowledged` would silently break dashboards and alert rules that already exist.
+- **A database problem is a sentence, not a traceback.** The CLI reports an unreachable server, a locked file, an unwritable directory or a too-new schema as `Database error: …` and exits 2. Anything else still raises: a traceback is the right answer for a bug.
+- **The store reconnects before the next operation when the server goes away**, and never retries the operation that failed. A restarted or failed-over server leaves a dead connection behind; without reconnecting, every later call fails and a `maestro serve` stops delivering until someone restarts it, while the scheduler loop happily logs a failure every tick. Retrying the failed statement is the other half of the obvious fix and is deliberately left out: a write may or may not have been applied, and a reminder sent twice is worse than a reminder sent one tick late. The caller — the next tick, the next request — is what tries again. Reconnection never happens inside a transaction, so a write can't be split across two connections.
+
+## Consequences
+- Adding a backend is a known amount of work: implement the interface, pass the conformance suite, add the integration tests that only make sense with a server.
+- Two schemas to keep in step. Tests compare the columns and the named indexes of both backends; constraints, defaults and types are deliberately not compared, because those are where the two databases are supposed to differ.
+- No data migration between backends. Moving an existing SQLite install to PostgreSQL needs export/import, which belongs with backup and restore (#59).
+- One connection means a slow query blocks the event loop, exactly as with SQLite, and one Maestro process uses one PostgreSQL connection. A pool would help a multi-user instance (#35) and can be added behind the same interface.
+- A server restart costs one failed tick (counted in `maestro_scheduler_errors_total`), then the next tick reconnects (`maestro_store_reconnects_total`) and carries on. There is no backoff: reconnection is attempted whenever the connection is found dead, which for a scheduler is once per tick. A server that is down for a long time therefore produces one failed connection attempt per tick, which is the same shape as any other failing tick.
+- Ordering is pinned by id wherever times can tie, so the two backends list items identically and a list doesn't reshuffle after an unrelated update. PostgreSQL is free to return rows in heap order otherwise, and did.
+- The published image carries psycopg (`[server,postgres]`), so a compose user can switch to the bundled PostgreSQL profile without rebuilding. It costs a few megabytes on an image nobody has to use that way, and the dependency audit covers exactly what the image installs.
+- The test suite needs a PostgreSQL server to cover the backend. CI starts one; locally the PostgreSQL tests skip unless `MAESTRO_TEST_POSTGRES_URL` is set, so the SQLite-only workflow is unchanged.

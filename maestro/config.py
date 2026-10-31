@@ -45,6 +45,8 @@ def _csv(value: str) -> list[str]:
 
 @dataclass
 class Config:
+    # A SQLite path (the default and what MAESTRO_DB has always meant) or a database URL from
+    # MAESTRO_DB_URL, e.g. postgresql://…; see maestro.storage.factory.
     db_path: str = str(DEFAULT_DB)
     channels: list[str] = field(default_factory=lambda: ["console"])
     escalation: str = ""  # e.g. "10m=twilio_sms, 30m=telegram+twilio_sms"; see maestro/escalation.py
@@ -95,7 +97,9 @@ class Config:
     def from_env(cls, env: Mapping[str, str] | None = None) -> "Config":
         env = os.environ if env is None else env
         return cls(
-            db_path=env.get("MAESTRO_DB", str(DEFAULT_DB)),
+            # MAESTRO_DB_URL wins: someone who sets it means to move off the default SQLite file,
+            # and the image or an old .env may still carry MAESTRO_DB. `maestro doctor` says so.
+            db_path=env.get("MAESTRO_DB_URL") or env.get("MAESTRO_DB", str(DEFAULT_DB)),
             channels=_csv(env.get("MAESTRO_CHANNELS", "console")),
             escalation=env.get("MAESTRO_ESCALATION", "").strip(),
             quiet_hours=env.get("MAESTRO_QUIET_HOURS", "").strip(),

@@ -28,7 +28,7 @@ from maestro.notifier import CHANNELS, ConfigError, Notifier
 from maestro.observability import METRICS
 from maestro.parser import parse_duration
 from maestro.quiet import QuietHours, is_urgent
-from maestro.store import ACK_WINDOW, Store
+from maestro.storage import ACK_WINDOW, Store
 
 log = logging.getLogger(__name__)
 

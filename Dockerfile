@@ -3,7 +3,8 @@ FROM python:3.12-slim
 WORKDIR /app
 COPY pyproject.toml README.md LICENSE ./
 COPY maestro ./maestro
-RUN pip install --no-cache-dir '.[server]' && useradd --create-home maestro
+# [postgres] so MAESTRO_DB_URL=postgresql://... works out of the box; SQLite is still the default.
+RUN pip install --no-cache-dir '.[server,postgres]' && useradd --create-home maestro
 
 USER maestro
 ENV MAESTRO_DB=/data/maestro.db

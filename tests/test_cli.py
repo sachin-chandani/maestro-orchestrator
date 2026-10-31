@@ -1,5 +1,6 @@
 import logging
 import os
+from datetime import UTC, datetime
 
 import pytest
 
@@ -60,11 +61,22 @@ def test_run_once_fires_due_reminders(db, capsys):
     with Store(db) as store:
         from maestro.parser import parse
 
-        store.add(parse("check the oven in 1 minute"))
-        store.conn.execute("UPDATE items SET due_at = '2000-01-01T00:00:00+00:00'")
-        store.conn.commit()
+        item = store.add(parse("check the oven in 1 minute"))
+        store.reschedule(item.id, datetime(2000, 1, 1, tzinfo=UTC))  # long overdue
     assert run(db, "run", "--once") == 0
     assert "Reminder #1: Check the oven" in capsys.readouterr().out
+
+
+def test_the_db_flag_takes_a_url_as_well_as_a_path(tmp_path, db, capsys):
+    assert run(f"sqlite://{tmp_path}/url.db", "add", "buy milk") == 0
+    capsys.readouterr()
+    assert run(str(tmp_path / "url.db"), "list") == 0  # the same file, named as a path
+    assert "Buy milk" in capsys.readouterr().out
+
+
+def test_an_unusable_database_url_is_a_config_error(db, capsys):
+    assert run("mysql://db/maestro", "list") == 2
+    assert "Config error: Unsupported database URL" in capsys.readouterr().err
 
 
 def test_run_rejects_bad_channel_and_log_config(db, monkeypatch, capsys):

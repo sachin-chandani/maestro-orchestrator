@@ -30,6 +30,14 @@ class Item:
 
 
 @dataclass
+class Acknowledgement:
+    """That someone dealt with one occurrence of an item, and how they said so."""
+
+    acknowledged_at: datetime
+    via: str  # the interface it came from: cli, web, api, telegram, email, twilio_sms, twilio_call…
+
+
+@dataclass
 class Delivery:
     """Delivery state of one occurrence of an item on one channel."""
 

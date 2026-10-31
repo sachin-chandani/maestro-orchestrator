@@ -13,4 +13,5 @@
 ## Consequences
 - A slow channel send blocks the loop for its duration (bounded by a 10 s timeout). Acceptable for one user; revisit with a worker if channels get slower.
 - Multiple schedulers on one database must coordinate (#52).
-- Moving to Postgres (#34) will need this revisited.
+- PostgreSQL (#34) keeps this model: one connection, used from the event-loop thread. See ADR 0010;
+  a connection pool is what changes it, not the backend.

@@ -4,17 +4,17 @@ This is the one place real credentials are exercised; the rest of the code base 
 Exit status is non-zero when any check fails, so it can gate a deploy.
 """
 
-import sqlite3
-from collections.abc import Callable
+import os
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path
 
 from maestro.config import Config
 from maestro.models import Item, Kind
 from maestro.notifier import CHANNELS, ConfigError, Notifier
 from maestro.sms import WEBHOOK_PATH
-from maestro.store import MIGRATIONS, Store
+from maestro.storage import StoreConfigError, driver_errors, open_store, parse_url
+from maestro.storage.sqlite import MIGRATIONS, SQLiteStore
 from maestro.tz import get_timezone
 from maestro.voice import VOICE_PATH
 
@@ -44,25 +44,44 @@ def _timezone(config: Config) -> Check:
 def _database(config: Config) -> Check:
     # Opening the store migrates it and switches it to WAL, exactly as the server would at startup;
     # doctor is a pre-deploy check, so it deliberately validates the database in its final state.
-    path = config.db_path
     try:
-        store = Store(path, tz=get_timezone(config.timezone))
-    except (sqlite3.Error, OSError, ValueError) as e:
-        return Check(FAIL, "database", f"{path}: {e}")
+        target = parse_url(config.db_path)
+    except StoreConfigError as e:
+        return Check(FAIL, "database", str(e))
+    where = target.display  # never the raw URL: it can carry a password
+    # A missing file, a bad setting or a database that won't answer are all things to report, not
+    # tracebacks. Which driver errors count depends on the backend the URL just loaded.
+    cannot_open: tuple[type[BaseException], ...] = (OSError, ValueError,
+                                                *driver_errors(target.backend))
+    try:
+        store = open_store(config.db_path, tz=get_timezone(config.timezone))
+    except cannot_open as e:
+        return Check(FAIL, "database", f"{where}: {e}")
+    sqlite = isinstance(store, SQLiteStore)
     try:
         with store:
-            version, total, journal = store.schema_version, sum(store.counts().values()), store.journal_mode
-    except sqlite3.Error as e:  # e.g. "database is locked" by another process
-        return Check(FAIL, "database", f"{path}: {e}")
-    if version != len(MIGRATIONS):
+            version, total = store.schema_version, sum(store.counts().values())
+            journal = store.journal_mode if isinstance(store, SQLiteStore) else None
+            where = store.describe()  # the backend says where it is; never the URL, never a password
+    except driver_errors(target.backend) as e:  # e.g. "database is locked" by another process
+        return Check(FAIL, "database", f"{where}: {e}")
+    if sqlite and version != len(MIGRATIONS):  # each backend has its own migrations (#34)
         return Check(FAIL, "database", f"schema {version}, expected {len(MIGRATIONS)}")
-    where = "in memory" if path == ":memory:" else str(Path(path).expanduser())
     items = f"{total} item{'' if total == 1 else 's'}"
-    detail = f"{where}, schema {version}, {journal} journal, {items}"
-    if path != ":memory:" and journal != "wal":
+    detail = f"{where}, schema {version}" + (f", {journal} journal" if journal else "") + f", {items}"
+    if sqlite and target.locator != ":memory:" and journal != "wal":
         return Check(WARN, "database", f"{detail}: not in WAL mode; keep MAESTRO_DB on a local disk "
                                        "or Docker volume, not a network share")
     return Check(OK, "database", detail)
+
+
+def _database_settings(env: Mapping[str, str] | None = None) -> list[Check]:
+    """Which setting Maestro listened to, when both are set. `Config` has already collapsed them."""
+    env = os.environ if env is None else env
+    if env.get("MAESTRO_DB_URL") and env.get("MAESTRO_DB"):
+        return [Check(WARN, "database", "MAESTRO_DB_URL and MAESTRO_DB are both set; "
+                                        "MAESTRO_DB is ignored")]
+    return []
 
 
 def _api_token(config: Config) -> Check:
@@ -108,7 +127,7 @@ def _email_in(config: Config, connect: bool) -> list[Check]:
         return [*checks, Check(OK, "email-in", f"{settings.user} on {settings.host} ({settings.folder}), "
                                                f"senders: {', '.join(sorted(settings.allowed_senders))}")]
     try:
-        with Store() as scratch:  # only counts unread mail (one SEARCH); nothing is fetched or saved
+        with SQLiteStore() as scratch:  # only counts unread mail (one SEARCH); nothing is fetched or saved
             unread = EmailPoller(scratch, settings).count_unread()
     except Exception as e:
         return [*checks, Check(FAIL, "email-in", f"IMAP login/fetch failed: {type(e).__name__}: {e}")]
@@ -179,7 +198,8 @@ def _send_tests(built: dict[str, Notifier]) -> list[Check]:
 
 def run(config: Config, send_test: bool = False, out: Callable[[str], None] = print) -> bool:
     """Run every check, print each result, and return True when nothing failed."""
-    checks = [_timezone(config), _database(config), _api_token(config), *_telegram_bot(config),
+    checks = [_timezone(config), _database(config), *_database_settings(), _api_token(config),
+              *_telegram_bot(config),
               *_inbound_sms(config), *_email_in(config, connect=send_test), *_escalation(config),
               *_quiet_hours(config)]
     channel_checks, built = _channels(config)

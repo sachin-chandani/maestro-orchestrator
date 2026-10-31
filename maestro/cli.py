@@ -18,7 +18,14 @@ from maestro.notifier import ConfigError, Notifier, build_notifier, default_chan
 from maestro.observability import configure_logging
 from maestro.parser import parse, parse_duration
 from maestro.scheduler import Lease, fire_due, run_forever
-from maestro.store import Store
+from maestro.storage import (
+    SchemaTooNewError,
+    Store,
+    StoreConfigError,
+    driver_errors,
+    open_store,
+    parse_url,
+)
 from maestro.tz import add_elapsed, get_timezone
 
 if TYPE_CHECKING:
@@ -39,7 +46,8 @@ def _format(item: Item) -> str:
 
 def _build_parser(config: Config) -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="maestro", description="Your second brain for things to remember.")
-    p.add_argument("--db", default=config.db_path, help="SQLite database path (env: MAESTRO_DB)")
+    p.add_argument("--db", default=config.db_path,
+                   help="database path or URL (env: MAESTRO_DB_URL, MAESTRO_DB)")
     sub = p.add_subparsers(dest="command", required=True)
 
     add = sub.add_parser("add", help='capture something, e.g. "pay rent on the 1st of every month"')
@@ -74,6 +82,17 @@ def _build_parser(config: Config) -> argparse.ArgumentParser:
     return p
 
 
+def unusable_database(backend: str, opening: bool = False) -> tuple[type[BaseException], ...]:
+    """What a database problem looks like, as opposed to a bug worth a traceback.
+
+    Opening one also touches the filesystem — an unwritable directory, a missing mount — which is
+    just as much something the operator can fix; once it is open, an OSError is not about the
+    database any more.
+    """
+    errors: tuple[type[BaseException], ...] = (SchemaTooNewError, *driver_errors(backend))
+    return (*errors, OSError) if opening else errors
+
+
 def main(argv: list[str] | None = None) -> int:
     load_dotenv()
     try:
@@ -95,8 +114,22 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError as e:
         print(f"Config error: {e}", file=sys.stderr)
         return 2
-    with Store(args.db, tz=tz) as store:
-        return _dispatch(args, config, store, tz)
+    try:
+        store = open_store(args.db, tz=tz)
+    except StoreConfigError as e:
+        print(f"Config error: {e}", file=sys.stderr)
+        return 2
+    except unusable_database(parse_url(args.db).backend, opening=True) as e:
+        # A database that is locked, missing, unreachable or newer than this Maestro is something
+        # the operator can act on, so say it in one line instead of printing a traceback.
+        print(f"Database error: {e}", file=sys.stderr)
+        return 2
+    with store:
+        try:
+            return _dispatch(args, config, store, tz)
+        except unusable_database(store.backend) as e:
+            print(f"Database error: {e}", file=sys.stderr)
+            return 2
 
 
 def _dispatch(args: argparse.Namespace, config: Config, store: Store, tz: ZoneInfo) -> int:

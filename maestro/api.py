@@ -27,7 +27,7 @@ from maestro.parser import parse, parse_duration
 from maestro.ratelimit import RateLimits, TokenBucket
 from maestro.scheduler import Lease, tick
 from maestro.sms import WEBHOOK_PATH, SmsHandler, TwilioHandler
-from maestro.store import Store
+from maestro.storage import Store
 from maestro.tz import add_elapsed
 from maestro.voice import (
     VOICE_CAPTURE_PATH,
@@ -255,7 +255,7 @@ def create_app(store: Store, api_token: str | None = None, notifier: Notifier | 
     @app.get("/health")
     async def health() -> dict:
         return {"status": "ok", "version": __version__, "schema": store.schema_version,
-                "timezone": store.tz.key}
+                "timezone": store.tz.key, "backend": store.backend}
 
     @app.get("/metrics", response_class=PlainTextResponse, dependencies=[Depends(require_token)])
     async def metrics() -> PlainTextResponse:
@@ -263,8 +263,12 @@ def create_app(store: Store, api_token: str | None = None, notifier: Notifier | 
             (("kind", kind), ("status", status)): n for (kind, status), n in store.counts().items()
         }
         unacknowledged: dict[Labels, float] = {(): float(len(store.unacknowledged_ids()))}
+        # Which backend is in use, as a label on a constant: a label on the existing counters
+        # would break anyone's dashboards.
+        store_info: dict[Labels, float] = {(("backend", store.backend),): 1.0}
         return PlainTextResponse(METRICS.render(extra={"maestro_items": items,
-                                                       "maestro_unacknowledged": unacknowledged}),
+                                                       "maestro_unacknowledged": unacknowledged,
+                                                       "maestro_store_info": store_info}),
                                  media_type="text/plain; version=0.0.4")
 
     @app.post("/items", status_code=201, dependencies=[Depends(require_token)])

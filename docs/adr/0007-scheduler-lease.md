@@ -17,4 +17,6 @@
 - Cheap: the leader writes the lease at most once per ttl/3, standbys only read until it looks free.
 - Expiry compares wall clocks across processes. On one host that's exact; across hosts, clocks must be NTP-synced to well within the TTL.
 - An older Maestro that doesn't know the lease would ignore it, so the store refuses to open a database whose schema is newer than it supports (`SchemaTooNewError`). Releases before 0.3 lack this guard: stop every old process before upgrading.
-- Moving to Postgres (#34) can keep the same design with `SELECT ... FOR UPDATE` or an advisory lock.
+- PostgreSQL (#34) keeps the same design: the check-and-set runs under a transaction-scoped advisory
+  lock instead of `BEGIN IMMEDIATE`, and `tests/test_storage_postgres.py` races eight schedulers for
+  the lease to prove exactly one wins. See ADR 0010.

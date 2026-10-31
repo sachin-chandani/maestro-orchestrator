@@ -37,7 +37,7 @@ from maestro.models import Item
 from maestro.notifier import REMINDER_MESSAGE_ID_RE
 from maestro.observability import METRICS
 from maestro.parser import parse
-from maestro.store import Store
+from maestro.storage import Store
 
 log = logging.getLogger(__name__)
 

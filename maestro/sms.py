@@ -17,7 +17,7 @@ from maestro import commands
 from maestro.models import Item, Kind
 from maestro.observability import METRICS
 from maestro.parser import parse
-from maestro.store import Store
+from maestro.storage import Store
 
 log = logging.getLogger(__name__)
 

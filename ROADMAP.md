@@ -109,7 +109,7 @@ Exit criteria: escalation proven end to end with fakes, acknowledgements on ever
 - [ ] Ask questions over your notes, offline-first (#33)
 
 ## v0.7: Production-grade self-hosting (target Feb 7, 2027)
-- [ ] Storage interface and PostgreSQL backend (#34)
+- [x] Storage interface and PostgreSQL backend (#34)
 - [ ] Multi-user per instance (#35) and OIDC login for the web UI (#36)
 - [ ] Encrypted off-site backups to S3-compatible storage (#37)
 - [ ] Deployment guides: Raspberry Pi, Fly.io, Railway, systemd, Caddy (#38) and a Helm chart (#39)

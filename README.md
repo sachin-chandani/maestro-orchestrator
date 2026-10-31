@@ -55,6 +55,28 @@ docker run -d --name maestro --env-file .env -p 127.0.0.1:8000:8000 \
   -v maestro-data:/data ghcr.io/sachin-chandani/maestro-orchestrator:latest
 ```
 
+### Running on PostgreSQL
+SQLite is the default and needs nothing. If you already run PostgreSQL, point Maestro at it:
+
+```bash
+pip install 'maestro-orchestrator[postgres]'          # the published image already has it
+export MAESTRO_DB_URL=postgresql://maestro:password@localhost:5432/maestro
+maestro doctor                                        # reports the server it reached
+```
+
+With compose, start the bundled database alongside Maestro:
+```bash
+docker compose --profile postgres up -d               # without the profile, nothing changes
+# in .env: MAESTRO_DB_URL=postgresql://maestro:maestro@db:5432/maestro
+```
+
+The schema is created on first start. Notes:
+- Give Maestro a database of its own; it owns every table in it.
+- Add `?sslmode=require` to the URL for a managed database (Fly, Railway, RDS, Supabase).
+- One Maestro process uses one connection. If the server restarts, the tick in flight fails, the
+  next one reconnects (`maestro_store_reconnects_total`) and delivery carries on.
+- There is no automatic copy from SQLite to PostgreSQL yet: a new database starts empty.
+
 Then capture from anything that can make an HTTP request (Apple Shortcuts, Tasker, curl):
 ```bash
 curl -X POST localhost:8000/items \
@@ -70,6 +92,7 @@ All settings come from environment variables or a `.env` file. See [.env.example
 | Variable | Purpose |
 | --- | --- |
 | `MAESTRO_DB` | SQLite path (default `~/.maestro/maestro.db`). Must be on a local disk or Docker volume, not NFS/SMB (WAL mode) |
+| `MAESTRO_DB_URL` | Database URL, for a backend other than the default SQLite file: `sqlite:///data/maestro.db` or `postgresql://user:pw@host/maestro` (needs `pip install 'maestro-orchestrator[postgres]'`). Wins over `MAESTRO_DB` |
 | `MAESTRO_TIMEZONE` | Your IANA timezone, e.g. `Europe/London`. Defaults to the system zone, which is UTC in Docker, so set it when self-hosting |
 | `MAESTRO_API_TOKEN` | Bearer token for the API; required unless bound to localhost |
 | `MAESTRO_RATE_LIMIT_WEBHOOK` | Webhook requests with an invalid signature allowed per minute per client (default 60, 0 = off). Genuine Twilio callbacks are never limited |

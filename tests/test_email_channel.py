@@ -147,8 +147,8 @@ def test_replying_done_completes_that_reminder(setup):
     outcome = handle(poller, reply(sent_as, body))
     assert outcome.done
     assert store.get(sent_as.id).status == Status.DONE
-    via = store.conn.execute("SELECT via FROM acknowledgements").fetchone()[0]
-    assert via == "email"
+    occurrence = store.latest_delivered_occurrence(sent_as.id)
+    assert store.acknowledgement(sent_as.id, occurrence).via == "email"
     assert len(store.list(include_done=True)) == 1  # the reply wasn't captured as a new note
 
 

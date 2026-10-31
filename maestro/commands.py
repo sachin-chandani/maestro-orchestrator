@@ -12,7 +12,7 @@ from enum import StrEnum
 from maestro import recurrence
 from maestro.models import Item, Kind, Status
 from maestro.parser import DURATION_UNITS, parse_duration
-from maestro.store import Store
+from maestro.storage import Store
 from maestro.tz import add_elapsed
 
 LIST_LIMIT = 20
