@@ -112,7 +112,15 @@ Exit criteria: escalation proven end to end with fakes, acknowledgements on ever
 - [ ] Matrix channel, built as the first entry-point plugin (#86)
 - [ ] Mobile layout, keyboard and screen-reader accessibility (#87)
 
-Exit criteria: everything doable from the CLI is doable from the web UI on a phone; e2e tests and an accessibility check run in CI; installable as an app with push.
+**Phone-first experience.** Most capture and nearly every reminder happens on a phone, so the web UI becomes an installable app reached securely from anywhere:
+- [ ] Reach your server from your phone over HTTPS: Tailscale, Cloudflare Tunnel or Caddy, with doctor checks (#96)
+- [ ] Pair a phone with a QR code, with a key per device (#95)
+- [ ] App shell: Today, Lists and Notes tabs with an always-on capture bar (#93)
+- [ ] Show what Maestro understood while you type (#94)
+- [ ] Settings for channels, quiet hours and escalation without a restart (#98)
+- [ ] Share to Maestro from any app, plus home-screen shortcuts (#97)
+
+Exit criteria: a new phone goes from scanning a pairing code to its first push notification in under 2 minutes; everything doable from the CLI is doable from the web UI on a phone; e2e tests and an accessibility check run in CI; installable as an app with push.
 
 ## v0.6: Second brain (target Jan 17, 2027)
 - [ ] Full-text search with SQLite FTS5 (#28)
