@@ -43,3 +43,72 @@ def test_note_without_time():
 def test_time_later_today_stays_today():
     item = parse("call dad at 9pm", now=NOW)
     assert item.due_at == dt(2026, 10, 23, 21, 0)
+
+
+# --- per-item channels and the urgent flag (#20) ------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "source, text, channels",
+    [
+        ("pay rent friday, text me", "Pay rent", ["twilio_sms"]),
+        ("feed the cat tonight and call me", "Feed the cat", ["twilio_call"]),
+        ("water the plants tomorrow, text me and email me", "Water the plants",
+         ["twilio_sms", "email"]),
+        ("take out the bins tonight, on telegram", "Take out the bins", ["telegram"]),
+        ("submit the report by eod; via telegram", "Submit the report", ["telegram"]),
+        ("text me to stretch at 3pm", "Stretch", ["twilio_sms"]),
+        ("email me about the invoice on monday", "The invoice", ["email"]),
+        ("remind me to renew the passport on monday, sms me", "Renew the passport", ["twilio_sms"]),
+    ],
+)
+def test_clear_channel_instructions_pick_channels(source, text, channels):
+    item = parse(source, now=NOW)
+    assert item.text == text
+    assert item.channels == channels
+    assert item.source_text == source  # the capture is kept as said
+
+
+@pytest.mark.parametrize(
+    "source, text",
+    [
+        # The object isn't "me", or the phrase is part of the task, not a delivery instruction.
+        ("remind me to call me a cab at 5pm", "Call me a cab"),
+        ("remind me to text sara back tonight", "Text sara back"),
+        ("email the team the agenda tomorrow", "Email the team the agenda"),
+        ("ask if the kids will call me tomorrow", "Ask if the kids will call me"),
+        ("message him on telegram tomorrow", "Message him on telegram"),
+        ("text me at 5", "Text me"),  # mid-text, not on a clause boundary: kept as the task
+    ],
+)
+def test_unclear_phrases_keep_their_text_and_the_default_channels(source, text):
+    item = parse(source, now=NOW)
+    assert item.text == text
+    assert item.channels is None
+
+
+def test_a_channel_said_twice_counts_once():
+    item = parse("pay rent tomorrow, text me and sms me", now=NOW)
+    assert item.channels == ["twilio_sms"]
+
+
+def test_a_leading_bang_sets_urgent_and_is_dropped_from_the_text():
+    item = parse("!take insulin at 11pm", now=NOW)
+    assert item.urgent is True
+    assert item.text == "Take insulin"
+    assert item.source_text == "!take insulin at 11pm"  # kept as said
+
+
+def test_the_word_urgent_sets_the_flag_but_stays_in_the_text():
+    item = parse("urgent: call the plumber at 2pm", now=NOW)
+    assert item.urgent is True
+    assert item.text == "Urgent: call the plumber"
+
+
+def test_not_urgent_is_not_urgent():
+    assert parse("the backup check tomorrow is not urgent", now=NOW).urgent is False
+
+
+def test_new_items_are_explicitly_not_urgent_by_default():
+    # False, not None: only rows from before the flag existed carry None (ADR 0011).
+    assert parse("call mom tomorrow at 5pm", now=NOW).urgent is False

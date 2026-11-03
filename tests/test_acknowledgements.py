@@ -176,6 +176,8 @@ def test_existing_deliveries_count_as_acknowledged_after_upgrade(tmp_path):
         store.conn.execute("DROP TABLE acknowledgements")
         store.conn.execute("DROP INDEX idx_items_snoozed")
         store.conn.execute("ALTER TABLE items DROP COLUMN snoozed_until")
+        store.conn.execute("ALTER TABLE items DROP COLUMN channels")
+        store.conn.execute("ALTER TABLE items DROP COLUMN urgent")
         store.conn.execute("PRAGMA user_version = 6")  # as a 0.3 database
         store.conn.commit()
     with Store(path) as store:

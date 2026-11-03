@@ -250,3 +250,24 @@ Remember that the spare key is under the mat. | The spare key is under the mat |
 Call the bank at 4 P.M. | Call the bank | 2026-10-27T16:00 | -
 Call mom at 5p.m. | Call mom | 2026-10-27T17:00 | -
 email the P.M. about the budget tomorrow | Email the P.M. about the budget | 2026-10-28T09:00 | -
+
+# --- per-item channels and the urgent flag (#20)
+pay rent friday, text me | Pay rent | 2026-10-30T09:00 | - | twilio_sms
+submit the report by eod and email me | Submit the report | 2026-10-27T17:00 | - | email
+take out the bins tonight, on telegram | Take out the bins | 2026-10-27T20:00 | - | telegram
+water the plants tomorrow, text me and email me | Water the plants | 2026-10-28T09:00 | - | twilio_sms+email
+text me to stretch at 3pm | Stretch | 2026-10-27T15:00 | - | twilio_sms
+email me about the invoice on friday | The invoice | 2026-10-30T09:00 | - | email
+call me to leave for the airport at 6am tomorrow | Leave for the airport | 2026-10-28T06:00 | - | twilio_call
+take my medicine every day at 9pm, call me | Take my medicine | 2026-10-27T21:00 | daily | twilio_call
+remind me to renew the passport next monday, sms me | Renew the passport | 2026-11-02T09:00 | - | twilio_sms
+!take insulin at 11pm | Take insulin | 2026-10-27T23:00 | - | urgent
+!server certificate expires friday, text me | Server certificate expires | 2026-10-30T09:00 | - | twilio_sms+urgent
+urgent: call the plumber at 2pm | Urgent: call the plumber | 2026-10-27T14:00 | - | urgent
+the backup check tomorrow is not urgent | The backup check is not urgent | 2026-10-28T09:00 | -
+remind me to call me a cab at 5pm | Call me a cab | 2026-10-27T17:00 | -
+remind me to text sara back tonight | Text sara back | 2026-10-27T20:00 | -
+email the team the agenda by friday | Email the team the agenda | 2026-10-30T09:00 | -
+ask if the kids will call me tomorrow | Ask if the kids will call me | 2026-10-28T09:00 | -
+message him on telegram tomorrow morning | Message him on telegram | 2026-10-28T09:00 | -
+text me at 5 | Text me | 2026-10-27T17:00 | -

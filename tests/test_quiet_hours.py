@@ -242,3 +242,35 @@ def test_window_length_and_last_end():
     assert QuietHours(time(13, 0), time(14, 30)).length == timedelta(minutes=90)
     assert NIGHT.last_end(dt(2026, 10, 28, 7, 0)) == dt(2026, 10, 28, 7, 0)
     assert NIGHT.last_end(dt(2026, 10, 28, 6, 0)) == dt(2026, 10, 27, 7, 0)
+
+
+# --- the urgent flag (#20) -----------------------------------------------------------------------
+
+
+def test_the_urgent_flag_wins_over_the_text():
+    flagged = Item(text="Call mom", kind=Kind.REMINDER, created_at=dt(2026, 10, 23), urgent=True)
+    unflagged = Item(text="urgent: call mom", kind=Kind.REMINDER, created_at=dt(2026, 10, 23),
+                     urgent=False)
+    assert is_urgent(flagged)
+    assert not is_urgent(unflagged)
+
+
+def test_items_from_before_the_flag_keep_the_text_rules():
+    def legacy(text):
+        return Item(text=text, kind=Kind.REMINDER, created_at=dt(2026, 10, 23), urgent=None)
+
+    assert is_urgent(legacy("!take insulin"))
+    assert is_urgent(legacy("urgent: server is down"))
+    assert not is_urgent(legacy("nothing urgent, just a note"))
+    assert not is_urgent(legacy("call mom"))
+
+
+def test_an_urgent_flagged_reminder_ignores_quiet_hours():
+    store = Store()
+    push = Recorder()
+    due = dt(2026, 10, 23, 23, 0)  # inside 22:00-07:00
+    store.add(Item(text="Take insulin", kind=Kind.REMINDER, created_at=due, due_at=due, urgent=True))
+    reminder(store, "Water plants", due)  # urgent=None, plain text: held
+    fired = tick(store, push, now=due)
+    assert [i.text for i in fired] == ["Take insulin"]
+    assert push.sent == ["Take insulin"]

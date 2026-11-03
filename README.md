@@ -25,7 +25,7 @@ Saved: 3  📝 —                 My passport is in the blue drawer
 - **Recurring:** `every day at 8am`, `every weekday at 9:30am`, `every monday`, `every other friday`, `every 3 days`, `biweekly on tuesday`, `every night`, `on the 1st of every month`, `every 2 hours`
 - **Timezone-aware:** stored in UTC, shown in your timezone; "8am every day" stays 8am across DST changes
 - **Notes:** anything without a time is kept and searchable
-- **Channels:** console, macOS notifications, [ntfy](https://ntfy.sh) push, Twilio SMS, Telegram (with Done/snooze buttons), email (reply to act), webhooks (Slack, Discord, Home Assistant, anything)
+- **Channels:** console, macOS notifications, [ntfy](https://ntfy.sh) push, Twilio SMS, Telegram (with Done/snooze buttons), email (reply to act), webhooks (Slack, Discord, Home Assistant, anything). Say `text me`, `call me`, `email me` or `on telegram` in a capture to pick where that one reminder goes
 - **Email-in:** forward or send an email to a dedicated inbox to capture it
 - **Voice:** call your Twilio number and say the reminder; it's read back to you. Or have Maestro call you: press 1 for done, 2 to snooze
 - **Telegram bot:** text your own bot "dentist next tue 3pm" to capture; `/list`, `/done`, `/snooze`, `/rm`
@@ -107,6 +107,18 @@ All settings come from environment variables or a `.env` file. See [.env.example
 | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER`, `MAESTRO_SMS_TO` | SMS to and from your own phone |
 | `MAESTRO_PUBLIC_URL` | How the internet reaches your server (e.g. `https://maestro.example.com`); needed for inbound webhooks behind a proxy |
 
+### Per-item channels
+`MAESTRO_CHANNELS` is where reminders go by default. One capture can pick its own:
+
+```bash
+maestro add "pay rent friday, text me"              # this one goes out as an SMS
+maestro add "water the plants tomorrow, text me and email me"
+```
+
+`text me` (or `sms me`) means `twilio_sms`, `call me` means `twilio_call`, `email me` means `email`, and `on telegram` / `via telegram` means `telegram`. Only clear instructions count — the phrase has to stand on its own at the start or end of the capture — so "remind me to call me a cab at 5pm" and "text Sara back tonight" keep their text and the default channels. The chosen channel needs its settings (`TWILIO_*`, `SMTP_*`, …) but doesn't have to be in `MAESTRO_CHANNELS`. Asking for one that isn't configured says so at capture and falls back to the defaults; a stored choice whose channel is later unconfigured also falls back at delivery (logged, counted as `maestro_channel_fallbacks_total`) rather than being dropped. The choice shows in `maestro list` (`[via twilio_sms]`) and the web UI.
+
+Start a capture with `!` to mark it urgent — it ignores quiet hours (see below) and the `!` is dropped from the reminder text.
+
 ### Escalation
 If a reminder isn't acknowledged (marked done or snoozed, from anywhere), Maestro can try louder channels:
 
@@ -121,7 +133,7 @@ That sends an SMS 10 minutes after the first notice went out, then Telegram and 
 MAESTRO_QUIET_HOURS=22:00-07:00   # local time (MAESTRO_TIMEZONE); may wrap past midnight
 ```
 
-During the window, reminders that come due wait until it ends, on every channel, and so does escalation. Each held reminder is sent once at the end of the window, so an hourly reminder sends a single notice at 07:00, not eight. Escalation stages are timed again from the end of the window, so they stay spaced out (with `10m=twilio_sms`, the SMS comes at 07:10). A reminder is urgent, and goes through anyway, if its text starts with `!` or contains the word "urgent" ("not urgent" doesn't count): `maestro add "!take insulin at 11pm"`. The metric `maestro_reminders_held` shows how many are waiting.
+During the window, reminders that come due wait until it ends, on every channel, and so does escalation. Each held reminder is sent once at the end of the window, so an hourly reminder sends a single notice at 07:00, not eight. Escalation stages are timed again from the end of the window, so they stay spaced out (with `10m=twilio_sms`, the SMS comes at 07:10). A reminder is urgent, and goes through anyway, when it was captured starting with `!` (the `!` is dropped from the text) or containing the word "urgent" ("not urgent" doesn't count): `maestro add "!take insulin at 11pm"`. Urgency is stored on the item when it is captured; reminders stored by an older Maestro keep being read from their text. The metric `maestro_reminders_held` shows how many are waiting.
 
 ### Checking your setup
 ```bash

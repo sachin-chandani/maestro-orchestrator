@@ -61,3 +61,21 @@ def test_capture_list_snooze_done_delete(client):
 
 def test_rejects_empty_capture(client):
     assert client.post("/items", json={"text": ""}, headers=AUTH).status_code == 422
+
+
+def test_items_expose_channels_and_urgent():
+    with TestClient(create_app(Store(), api_token="t0ken")) as c:
+        item = c.post("/items", json={"text": "!pay rent tomorrow, text me"}, headers=AUTH).json()
+    assert item["channels"] == ["twilio_sms"]
+    assert item["urgent"] is True
+    assert item["text"] == "Pay rent"
+
+
+def test_capture_drops_channels_the_server_has_no_settings_for():
+    # The server knows what is configured (`requestable`): a choice it can't honour is dropped at
+    # capture rather than surprising the user at delivery time (ADR 0011).
+    with TestClient(create_app(Store(), api_token="t0ken", requestable=frozenset({"email"}))) as c:
+        dropped = c.post("/items", json={"text": "pay rent tomorrow, text me"}, headers=AUTH).json()
+        kept = c.post("/items", json={"text": "pay gas tomorrow, email me"}, headers=AUTH).json()
+    assert dropped["channels"] is None
+    assert kept["channels"] == ["email"]

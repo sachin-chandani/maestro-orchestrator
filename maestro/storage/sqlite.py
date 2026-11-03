@@ -130,6 +130,13 @@ MIGRATIONS: list[Migration] = [
         # due() asks for due_at OR snoozed_until in the past: with both indexed, SQLite searches each
         "CREATE INDEX IF NOT EXISTS idx_items_snoozed ON items (status, snoozed_until)",
     ],
+    # 9: per-item channels and the urgent flag (#20, ADR 0011). Both nullable on purpose: NULL
+    # channels means MAESTRO_CHANNELS, and NULL urgent means the item predates the flag, so its
+    # urgency keeps being read from the text. New rows always carry explicit values.
+    [
+        "ALTER TABLE items ADD COLUMN channels TEXT",
+        "ALTER TABLE items ADD COLUMN urgent INTEGER",
+    ],
 ]
 
 
@@ -256,6 +263,8 @@ class SQLiteStore(Store):
             source_text=row["source_text"],
             recurrence=row["recurrence"],
             snoozed_until=self._from_db(row["snoozed_until"]),
+            channels=row["channels"].split(",") if row["channels"] else None,
+            urgent=None if row["urgent"] is None else bool(row["urgent"]),
         )
 
     @property
@@ -269,10 +278,12 @@ class SQLiteStore(Store):
     def add(self, item: Item) -> Item:
         with self._transaction():
             cur = self.conn.execute(
-                "INSERT INTO items (text, kind, status, due_at, created_at, source_text, recurrence)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO items (text, kind, status, due_at, created_at, source_text, recurrence,"
+                " channels, urgent) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (item.text, item.kind, item.status, self._to_db(item.due_at),
-                 self._to_db(item.created_at), item.source_text, item.recurrence),
+                 self._to_db(item.created_at), item.source_text, item.recurrence,
+                 ",".join(item.channels) if item.channels else None,
+                 None if item.urgent is None else int(item.urgent)),
             )
         item.id = cur.lastrowid
         return item
@@ -288,10 +299,12 @@ class SQLiteStore(Store):
                 if existing is not None:
                     return self._item(existing), False
             cur = self.conn.execute(
-                "INSERT INTO items (text, kind, status, due_at, created_at, source_text, recurrence)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO items (text, kind, status, due_at, created_at, source_text, recurrence,"
+                " channels, urgent) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (item.text, item.kind, item.status, self._to_db(item.due_at),
-                 self._to_db(item.created_at), item.source_text, item.recurrence),
+                 self._to_db(item.created_at), item.source_text, item.recurrence,
+                 ",".join(item.channels) if item.channels else None,
+                 None if item.urgent is None else int(item.urgent)),
             )
             item.id = cur.lastrowid
             self.conn.execute(

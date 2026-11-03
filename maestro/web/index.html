@@ -164,6 +164,8 @@ function row(item) {
     if (item.status === "pending" && due < Date.now()) meta.append(el("span", { className: "badge overdue", textContent: "due" }));
   }
   if (item.recurrence_label) meta.append(el("span", { textContent: `↻ ${item.recurrence_label}` }));
+  if (item.urgent) meta.append(el("span", { className: "badge overdue", textContent: "urgent" }));
+  if (item.channels && item.channels.length) meta.append(el("span", { textContent: `via ${item.channels.join(", ")}` }));
   if (item.status === "fired") meta.append(el("span", { className: "badge fired", textContent: "sent" }));
   if (item.awaiting_acknowledgement) meta.append(el("span", { className: "badge overdue", textContent: "not acknowledged" }));
   if (item.status === "done") meta.append(el("span", { className: "badge", textContent: "done" }));

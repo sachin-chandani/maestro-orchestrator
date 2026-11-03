@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 
 from maestro import __version__, commands, recurrence
 from maestro.models import Item
-from maestro.notifier import Notifier
+from maestro.notifier import Notifier, apply_channel_choice
 from maestro.observability import METRICS, Labels
 from maestro.parser import parse, parse_duration
 from maestro.ratelimit import RateLimits, TokenBucket
@@ -98,6 +98,8 @@ class ItemOut(BaseModel):
     created_at: datetime
     recurrence: str | None
     recurrence_label: str | None
+    channels: list[str] | None  # this item's own delivery channels; null means MAESTRO_CHANNELS
+    urgent: bool | None  # urgent reminders ignore quiet hours; null on items from before the flag
     when: str  # human-readable, in the server's timezone: "Wed 28 Oct 17:00, every Monday" or "note"
     awaiting_acknowledgement: bool  # delivered, and nobody has said done or snooze yet
     source_text: str
@@ -111,6 +113,7 @@ class ItemOut(BaseModel):
             due_at=item.due_at, snoozed_until=item.snoozed_until, created_at=item.created_at,
             recurrence=item.recurrence,
             recurrence_label=recurrence.describe(item.recurrence) if item.recurrence else None,
+            channels=item.channels, urgent=item.urgent,
             when=commands.when(item),
             awaiting_acknowledgement=item.id in awaiting,
             source_text=item.source_text,
@@ -121,7 +124,8 @@ def create_app(store: Store, api_token: str | None = None, notifier: Notifier | 
                interval: float = 30.0, bot: "TelegramBot | None" = None, sms: SmsHandler | None = None,
                public_url: str | None = None, limits: RateLimits | None = None,
                voice: VoiceHandler | None = None, email: "EmailWorker | None" = None,
-               escalation: "list[Stage] | None" = None, quiet: "QuietHours | None" = None) -> FastAPI:
+               escalation: "list[Stage] | None" = None, quiet: "QuietHours | None" = None,
+               requestable: frozenset[str] | None = None) -> FastAPI:
     """Build the app. With a notifier, due reminders are also fired from a background task;
     with a bot (maestro.telegram.TelegramBot), chat messages are handled from another; with an
     SmsHandler (maestro.sms), the Twilio webhook is enabled. `public_url` is the externally visible
@@ -274,7 +278,11 @@ def create_app(store: Store, api_token: str | None = None, notifier: Notifier | 
     @app.post("/items", status_code=201, dependencies=[Depends(require_token)])
     async def capture(body: CaptureIn) -> ItemOut:
         METRICS.inc("maestro_captures_total", source="api")
-        return ItemOut.of(store.add(parse(body.text, tz=store.tz)))
+        item = parse(body.text, tz=store.tz)
+        if requestable is not None and (dropped := apply_channel_choice(item, requestable)):
+            log.warning("Capture asked for %s, which isn't configured; keeping %s",
+                        ", ".join(dropped), item.channels or "the default channels")
+        return ItemOut.of(store.add(item))
 
     @app.get("/items", dependencies=[Depends(require_token)])
     async def list_items(include_done: bool = False, q: str | None = None,

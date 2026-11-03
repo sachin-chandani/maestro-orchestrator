@@ -597,3 +597,25 @@ def test_closing_is_idempotent_and_visible(store):
     store.close()
     assert store.closed is True
     store.close()
+
+
+def test_channels_and_urgent_survive_a_round_trip(store):
+    item = store.add(Item(text="Pay rent", kind=Kind.REMINDER, created_at=NOW, due_at=TOMORROW,
+                          source_text="pay rent tomorrow, text me and email me",
+                          channels=["twilio_sms", "email"], urgent=True))
+    saved = store.get(item.id)
+    assert saved.channels == ["twilio_sms", "email"]  # order preserved
+    assert saved.urgent is True
+    assert saved == item
+
+
+def test_items_without_a_channel_choice_read_back_as_none(store):
+    saved = store.get(reminder(store).id)
+    assert saved.channels is None  # meaning: deliver on MAESTRO_CHANNELS
+    assert saved.urgent is None  # meaning: predates the flag; urgency is read from the text
+
+
+def test_an_explicitly_not_urgent_item_stays_false_not_none(store):
+    item = store.add(Item(text="Call mom", kind=Kind.REMINDER, created_at=NOW, due_at=TOMORROW,
+                          urgent=False))
+    assert store.get(item.id).urgent is False

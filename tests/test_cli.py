@@ -157,3 +157,24 @@ def test_load_dotenv(tmp_path, monkeypatch):
     assert os.environ["MAESTRO_TEST_B"] == "quoted value"
     assert os.environ["MAESTRO_TEST_C"] == "from-env"  # real environment wins
     load_dotenv(tmp_path / "missing.env")  # no error
+
+
+def test_add_warns_when_a_chosen_channel_is_not_configured(db, capsys):
+    assert run(db, "add", "pay", "rent", "tomorrow,", "text", "me") == 0
+    captured = capsys.readouterr()
+    assert "twilio_sms isn't configured" in captured.err
+    assert "default channels" in captured.err
+    with Store(db) as store:
+        assert store.get(1).channels is None  # the unconfigured choice isn't stored
+
+
+def test_add_keeps_a_configured_channel_and_list_shows_it(db, monkeypatch, capsys):
+    for name, value in [("TELEGRAM_BOT_TOKEN", "t"), ("TELEGRAM_CHAT_ID", "42")]:
+        monkeypatch.setenv(name, value)
+    run(db, "add", "pay", "rent", "tomorrow,", "on", "telegram")
+    run(db, "add", "!take", "insulin", "at", "11pm")
+    capsys.readouterr()
+    assert run(db, "list") == 0
+    out = capsys.readouterr().out
+    assert "Pay rent [via telegram]" in out
+    assert "❗ Take insulin" in out

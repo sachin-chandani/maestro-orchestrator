@@ -96,3 +96,52 @@ def test_delete_removes_delivery_rows():
     assert store.deliveries(item.id, DUE)
     store.delete(item.id)
     assert store.deliveries(item.id, DUE) == {}
+
+
+# --- per-item channels (#20) ----------------------------------------------------------------------
+
+
+def test_an_item_goes_out_on_the_channels_it_asked_for():
+    store = Store()
+    item = store.add(Item(text="Pay rent", kind=Kind.REMINDER, created_at=DUE, due_at=DUE,
+                          channels=["sms"]))
+    push, sms = Recorder(), Recorder()
+    # "sms" isn't a default channel, only configured: it lives in `extra`.
+    notifier = MultiNotifier({"push": push}, extra={"sms": sms})
+
+    finished = fire_due(store, notifier, now=DUE)
+    assert [i.id for i in finished] == [item.id]
+    assert sms.sent == [item.id]
+    assert push.sent == []  # the defaults are not used when the item chose
+
+
+def test_an_item_can_also_pick_a_default_channel():
+    store = Store()
+    item = store.add(Item(text="Pay rent", kind=Kind.REMINDER, created_at=DUE, due_at=DUE,
+                          channels=["push"]))
+    push, mail = Recorder(), Recorder()
+    fire_due(store, MultiNotifier({"push": push, "mail": mail}), now=DUE)
+    assert push.sent == [item.id] and mail.sent == []
+
+
+def test_an_unconfigured_choice_falls_back_to_the_defaults():
+    from maestro.observability import METRICS
+
+    store = Store()
+    item = store.add(Item(text="Pay rent", kind=Kind.REMINDER, created_at=DUE, due_at=DUE,
+                          channels=["telegram"]))
+    push = Recorder()
+    before = METRICS.get("maestro_channel_fallbacks_total") or 0
+    finished = fire_due(store, MultiNotifier({"push": push}), now=DUE)
+    assert [i.id for i in finished] == [item.id]  # never silently dropped
+    assert push.sent == [item.id]
+    assert METRICS.get("maestro_channel_fallbacks_total") == before + 1
+
+
+def test_items_without_a_choice_use_every_default_channel():
+    store = Store()
+    item = store.add(Item(text="Pay rent", kind=Kind.REMINDER, created_at=DUE, due_at=DUE))
+    push, sms = Recorder(), Recorder()
+    fire_due(store, MultiNotifier({"push": push}, extra={"sms": sms}), now=DUE)
+    assert push.sent == [item.id]
+    assert sms.sent == []  # extras are only for items that ask

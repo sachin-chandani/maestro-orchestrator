@@ -85,7 +85,7 @@ Exit criteria: capture from every source above, parser corpus >= 95%, exactly-on
 - [x] Acknowledgement tracking (#19)
 - [x] Escalation policies: push, then SMS, then more (#12); voice calls work as a stage (`30m=twilio_call`)
 - [x] Quiet hours (#13)
-- [ ] Per-item channel choice: "text me", "call me", "email me" (#20)
+- [x] Per-item channel choice: "text me", "call me", "email me" (#20)
 - [ ] Channel plugins via entry points (#14)
 - [ ] Local backup and restore (#59)
 - [ ] Graceful shutdown and documented at-least-once delivery (#60)
