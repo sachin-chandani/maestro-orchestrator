@@ -59,6 +59,9 @@ class Config:
     trust_proxy_headers: bool = False
     log_format: str = "text"  # or "json"
     log_level: str = "INFO"
+    backup_dir: str | None = None  # scheduled backups land here; unset means off (#59)
+    backup_every: str = "24h"  # how often the leading scheduler writes one, e.g. 24h, 12h
+    backup_keep: int = 7  # newest scheduled backups kept when a new one is written
 
     twilio_account_sid: str | None = None
     twilio_auth_token: str | None = None
@@ -111,6 +114,9 @@ class Config:
             trust_proxy_headers=_flag(env, "MAESTRO_TRUST_PROXY_HEADERS"),
             log_format=(env.get("MAESTRO_LOG_FORMAT") or "text").lower(),
             log_level=(env.get("MAESTRO_LOG_LEVEL") or "INFO").upper(),
+            backup_dir=(env.get("MAESTRO_BACKUP_DIR") or "").strip() or None,
+            backup_every=(env.get("MAESTRO_BACKUP_EVERY") or "24h").strip(),
+            backup_keep=_count(env, "MAESTRO_BACKUP_KEEP", 7),
             twilio_account_sid=env.get("TWILIO_ACCOUNT_SID") or None,
             twilio_auth_token=env.get("TWILIO_AUTH_TOKEN") or None,
             twilio_from=env.get("TWILIO_FROM_NUMBER") or None,

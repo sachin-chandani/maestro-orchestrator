@@ -93,6 +93,7 @@ All settings come from environment variables or a `.env` file. See [.env.example
 | --- | --- |
 | `MAESTRO_DB` | SQLite path (default `~/.maestro/maestro.db`). Must be on a local disk or Docker volume, not NFS/SMB (WAL mode) |
 | `MAESTRO_DB_URL` | Database URL, for a backend other than the default SQLite file: `sqlite:///data/maestro.db` or `postgresql://user:pw@host/maestro` (needs `pip install 'maestro-orchestrator[postgres]'`). Wins over `MAESTRO_DB` |
+| `MAESTRO_BACKUP_DIR` | Turns on scheduled backups into this directory (default off); `MAESTRO_BACKUP_EVERY` (default `24h`) and `MAESTRO_BACKUP_KEEP` (default 7) shape them |
 | `MAESTRO_TIMEZONE` | Your IANA timezone, e.g. `Europe/London`. Defaults to the system zone, which is UTC in Docker, so set it when self-hosting |
 | `MAESTRO_API_TOKEN` | Bearer token for the API; required unless bound to localhost |
 | `MAESTRO_RATE_LIMIT_WEBHOOK` | Webhook requests with an invalid signature allowed per minute per client (default 60, 0 = off). Genuine Twilio callbacks are never limited |
@@ -135,12 +136,32 @@ MAESTRO_QUIET_HOURS=22:00-07:00   # local time (MAESTRO_TIMEZONE); may wrap past
 
 During the window, reminders that come due wait until it ends, on every channel, and so does escalation. Each held reminder is sent once at the end of the window, so an hourly reminder sends a single notice at 07:00, not eight. Escalation stages are timed again from the end of the window, so they stay spaced out (with `10m=twilio_sms`, the SMS comes at 07:10). A reminder is urgent, and goes through anyway, when it was captured starting with `!` (the `!` is dropped from the text) or containing the word "urgent" ("not urgent" doesn't count): `maestro add "!take insulin at 11pm"`. Urgency is stored on the item when it is captured; reminders stored by an older Maestro keep being read from their text. The metric `maestro_reminders_held` shows how many are waiting.
 
+### Backups
+```bash
+maestro backup ~/maestro-backups/before-the-upgrade.json
+maestro restore ~/maestro-backups/before-the-upgrade.json
+```
+One portable JSON file whatever the database, so the same file also moves an install between SQLite and PostgreSQL. Backing up is safe while the server runs. Restoring replaces everything in one transaction and refuses while a scheduler is running (stop the server first); it saves what the database held to `maestro-pre-restore-<time>.json` next to the backup — restore that file to undo — and reports reminders that came due while the backup sat on disk; they go out on the next tick ([ADR 0013](docs/adr/0013-portable-backup-format.md)).
+
+Scheduled backups are off until you set a directory in `.env` (in Docker, keep it on the data volume):
+```bash
+MAESTRO_BACKUP_DIR=/data/backups
+MAESTRO_BACKUP_EVERY=24h   # optional
+MAESTRO_BACKUP_KEEP=7      # optional
+```
+Whichever scheduler holds the lease writes `maestro-backup-<time>.json` when the newest one is older than the interval — restarts don't reset the clock — and deletes only its own oldest files beyond the kept count. A failing backup is logged and counted; alert on `time() - maestro_backup_last_success_timestamp_seconds` staying put. `maestro doctor` shows the schedule and the newest backup's age. (`maestro run --once` doesn't write scheduled backups; from cron, call `maestro backup` instead.)
+
 ### Checking your setup
 ```bash
 maestro doctor              # timezone, database, API token, every configured channel
 maestro doctor --send-test  # also delivers a test message on each channel
 ```
 It exits non-zero if anything fails, so you can run it before a deploy (`docker compose run --rm maestro maestro doctor`).
+
+### Delivery guarantees and stopping
+Every reminder is delivered **at least once per channel**, and never silently dropped. Delivery is recorded per channel after each send, so a channel that fails is retried with backoff (five attempts, then a logged, counted give-up) without re-sending on the ones that worked. A crash or `kill -9` in the instant between a send and its record repeats that one message on the next start; that is the one case where you can see a reminder twice.
+
+Stopping is safe: on SIGTERM (`docker stop`, `systemctl stop`) Maestro finishes the reminder it is sending and its bookkeeping, stops taking new work, releases the scheduler lease so a standby takes over at once, and exits. Reminders still due are left for the next start. A chat command or email being captured is finished too. `docker-compose.yml` sets `stop_grace_period: 45s` for this; use the same with `docker stop -t 45` ([ADR 0012](docs/adr/0012-graceful-shutdown.md)).
 
 ### Monitoring
 `GET /metrics` serves Prometheus metrics (same bearer token as the API): captures by source, deliveries by channel and result, reminders fired, acknowledgements and reminders still awaiting one, scheduler ticks and lag, and item counts by kind and status. `GET /items?unacknowledged=true` lists reminders that were sent but not yet marked done or snoozed. Alert on `time() - maestro_scheduler_last_tick_timestamp_seconds > 120` to catch a stuck scheduler.
@@ -180,6 +201,8 @@ maestro snooze <id> <10m|2h|1d>
 maestro done <id>             # for a repeating reminder: this time; the series goes on
 maestro stop <id>             # end a repeating reminder
 maestro rm <id>
+maestro backup <file>         # portable backup, safe while the server runs
+maestro restore <file>        # replace everything with a backup (refuses while a scheduler runs)
 maestro run [--once]          # scheduler only (safe alongside serve or cron: one scheduler fires at a time)
 maestro serve [--host --port] # API + scheduler (needs the [server] extra)
 maestro doctor [--send-test]  # check configuration and channels
@@ -204,6 +227,7 @@ print(item.due_at, item.recurrence)   # 2026-10-24 10:00:00 weekly:5
 | `maestro/scheduler.py` | Fires due reminders, reschedules recurring ones |
 | `maestro/notifier.py` | Delivery channels and the channel registry |
 | `maestro/api.py` | FastAPI server |
+| `maestro/backup.py` | Portable backup files and the scheduled-backup loop |
 | `maestro/cli.py` | Command-line interface |
 
 ## Development

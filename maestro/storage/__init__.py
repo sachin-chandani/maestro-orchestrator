@@ -5,7 +5,16 @@ implementation and the only one today. A PostgreSQL backend (#34) will be a seco
 anything backend-independent belongs in `base` or `logic`, not in a backend module.
 """
 
-from maestro.storage.base import ACK_WINDOW, SchemaTooNewError, Store
+from maestro.storage.base import (
+    ACK_WINDOW,
+    BACKUP_TABLES,
+    COLUMN_DEFAULTS,
+    RestoreBlockedError,
+    Row,
+    SchemaTooNewError,
+    Store,
+    TableSpec,
+)
 from maestro.storage.factory import (
     StoreConfigError,
     Target,
@@ -15,5 +24,6 @@ from maestro.storage.factory import (
 )
 from maestro.storage.sqlite import MIGRATIONS, SQLiteStore
 
-__all__ = ["ACK_WINDOW", "MIGRATIONS", "SQLiteStore", "SchemaTooNewError", "Store", "StoreConfigError",
+__all__ = ["ACK_WINDOW", "BACKUP_TABLES", "COLUMN_DEFAULTS", "MIGRATIONS", "RestoreBlockedError",
+           "Row", "SQLiteStore", "SchemaTooNewError", "Store", "StoreConfigError", "TableSpec",
            "Target", "driver_errors", "open_store", "parse_url"]

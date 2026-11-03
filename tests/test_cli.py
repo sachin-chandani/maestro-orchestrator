@@ -90,7 +90,7 @@ def test_run_rejects_bad_channel_and_log_config(db, monkeypatch, capsys):
 
 
 def test_run_forever_stops_cleanly_on_ctrl_c(db, monkeypatch, capsys):
-    def interrupted(store, notifier, interval, wait, escalation=None, quiet=None):
+    def interrupted(store, notifier, interval, wait, escalation=None, quiet=None, **kwargs):
         assert interval == 5
         raise KeyboardInterrupt
 
@@ -135,10 +135,12 @@ def test_bot_wait_falls_back_to_sleeping_when_polling_fails(monkeypatch):
     monkeypatch.setattr(cli.time, "sleep", slept.append)
 
     class Broken:
-        def poll_once(self, timeout):
+        def fetch(self, timeout):
             raise ConnectionError("telegram down")
 
-    cli._bot_wait(Broken())(7)
+    from maestro.shutdown import Shutdown
+
+    cli._bot_wait(Broken(), Shutdown())(7)
     assert slept == [7]
 
 

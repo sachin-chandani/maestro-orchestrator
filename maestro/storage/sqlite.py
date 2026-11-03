@@ -18,7 +18,7 @@ import builtins
 import logging
 import sqlite3
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -27,7 +27,7 @@ from zoneinfo import ZoneInfo
 from maestro.models import Acknowledgement, Delivery, Item, Kind, Status
 from maestro.observability import METRICS
 from maestro.storage import logic, migrations
-from maestro.storage.base import Store
+from maestro.storage.base import BACKUP_TABLES, RestoreBlockedError, Row, Store, TableSpec
 from maestro.tz import UTC, get_timezone, localize
 
 log = logging.getLogger(__name__)
@@ -567,6 +567,54 @@ class SQLiteStore(Store):
     def release_lease(self, owner: str) -> None:
         with self._transaction():
             self.conn.execute("DELETE FROM scheduler_lease WHERE id = 1 AND owner = ?", (owner,))
+
+    def export_rows(self, table: TableSpec) -> builtins.list[Row]:
+        # One deferred transaction: in WAL mode that is a snapshot, so the tables of one backup agree
+        # with each other even while another process writes.
+        with self._transaction():
+            rows = self.conn.execute(
+                f"SELECT {', '.join(table.columns)} FROM {table.name}"
+            ).fetchall()
+        return [self._portable(table, row) for row in rows]
+
+    def _portable(self, table: TableSpec, row: sqlite3.Row) -> Row:
+        out: Row = {}
+        for column in table.columns:
+            value = row[column]
+            if column in table.times:
+                value = self._from_db(value)
+            elif column in table.flags and value is not None:
+                value = bool(value)
+            out[column] = value
+        return out
+
+    def replace_all(self, rows: Mapping[str, builtins.list[Row]], now: datetime) -> None:
+        with self._transaction(immediate=True):  # the write lock is held from the lease check on
+            held = self.conn.execute(
+                "SELECT owner FROM scheduler_lease WHERE id = 1 AND expires_at > ?", (self._to_db(now),)
+            ).fetchone()
+            if held is not None:
+                raise RestoreBlockedError(str(held["owner"]))
+            self.conn.execute("DELETE FROM scheduler_lease")  # whoever held it is gone; don't revive it
+            for table in BACKUP_TABLES:
+                self.conn.execute(f"DELETE FROM {table.name}")
+                placeholders = ", ".join("?" for _ in table.columns)
+                for row in rows.get(table.name, []):
+                    self.conn.execute(
+                        f"INSERT INTO {table.name} ({', '.join(table.columns)})"
+                        f" VALUES ({placeholders})",
+                        tuple(self._storable(table, column, row[column]) for column in table.columns),
+                    )
+        # items.id is AUTOINCREMENT: sqlite_sequence already holds max(what this database ever issued,
+        # the backup's highest id), so new items never reuse an id — nothing to reset by hand.
+
+    def _storable(self, table: TableSpec, column: str, value: object) -> object:
+        if column in table.times:
+            assert value is None or isinstance(value, datetime)  # replace_all is fed portable rows
+            return self._to_db(value)
+        if column in table.flags and value is not None:
+            return int(bool(value))
+        return value
 
     def deliveries(self, item_id: int, occurrence: datetime) -> dict[str, Delivery]:
         rows = self.conn.execute(

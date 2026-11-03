@@ -129,3 +129,7 @@ METRICS.describe("maestro_email_given_up_total", "counter",
                  "Emails that failed to process repeatedly and were marked read without being captured.")
 METRICS.describe("maestro_rate_limited_total", "counter",
                  "Requests answered with 429, by reason (webhook, auth_failures).")
+METRICS.describe("maestro_backup_last_success_timestamp_seconds", "gauge",
+                 "Unix time of the last scheduled backup that was written; alert when it stops moving.")
+METRICS.describe("maestro_backup_errors_total", "counter",
+                 "Scheduled backups that failed; the error is in the log.")

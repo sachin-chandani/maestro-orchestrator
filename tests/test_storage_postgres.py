@@ -436,3 +436,46 @@ def test_migrates_a_version_1_database_with_real_rows(store):
                                   channels=["twilio_sms"], urgent=False))
         saved = upgraded.get(added.id)
         assert saved.channels == ["twilio_sms"] and saved.urgent is False
+
+
+# --- backup and restore across backends (#59; the migration path ADR 0010 deferred) --------------
+
+
+def test_a_sqlite_backup_restores_into_postgresql_and_back(store, tmp_path):
+    from maestro import backup
+
+    with SQLiteStore(":memory:", tz=TZ) as sqlite:
+        pills = reminder(sqlite, recurrence="daily")
+        sqlite.add(Item(text="Insulin", kind=Kind.REMINDER, created_at=NOW, due_at=LATER,
+                        channels=["twilio_sms"], urgent=True))
+        sqlite.record_delivery(pills.id, NOW, Delivery(channel="console", attempts=1, delivered_at=NOW))
+        sqlite.complete(pills.id, via="telegram", now=NOW)
+        sqlite.claim_inbound("twilio_sms", "SM123", pills.id)
+        moved = tmp_path / "move.json"
+        backup.write(sqlite, moved)
+
+        report = backup.restore(store, backup.load(moved), now=NOW)
+        assert report.items == 2
+        assert store.list(include_done=True) == sqlite.list(include_done=True)
+        assert store.deliveries(pills.id, NOW) == sqlite.deliveries(pills.id, NOW)
+        assert store.acknowledgement(pills.id, NOW) == sqlite.acknowledgement(pills.id, NOW)
+        assert store.is_claimed("twilio_sms", "SM123")
+
+        # And back again: the file is the same format whichever backend wrote it.
+        back = tmp_path / "back.json"
+        backup.write(store, back)
+        with SQLiteStore(":memory:", tz=TZ) as again:
+            backup.restore(again, backup.load(back), now=NOW)
+            assert again.list(include_done=True) == store.list(include_done=True)
+
+
+def test_postgres_hands_out_fresh_ids_after_a_restore(store, tmp_path):
+    from maestro import backup
+
+    first = reminder(store)
+    document = backup.dump(store)
+    taller = reminder(store, text="Higher id, not in the backup")
+    backup.restore(store, document, now=NOW)
+    assert store.get(first.id).text == "Take pills"
+    added = reminder(store, text="New after the restore")
+    assert added.id > taller.id  # the sequence moved forward, never back onto a handed-out id

@@ -15,7 +15,7 @@ import pytest
 from conftest import TZ, dt
 
 from maestro.models import Acknowledgement, Delivery, Item, Kind, Status
-from maestro.storage import SQLiteStore, logic, open_store, parse_url
+from maestro.storage import BACKUP_TABLES, RestoreBlockedError, SQLiteStore, logic, open_store, parse_url
 
 NOW = dt(2026, 10, 26, 9, 0)  # a Monday
 LATER = dt(2026, 10, 26, 17, 0)
@@ -619,3 +619,101 @@ def test_an_explicitly_not_urgent_item_stays_false_not_none(store):
     item = store.add(Item(text="Call mom", kind=Kind.REMINDER, created_at=NOW, due_at=TOMORROW,
                           urgent=False))
     assert store.get(item.id).urgent is False
+
+
+# --- backup and restore (#59) -----------------------------------------------------------------
+
+
+def populate(store):
+    """A little of everything a backup must carry."""
+    pills = reminder(store, recurrence="daily")
+    urgent = store.add(Item(text="Insulin", kind=Kind.REMINDER, created_at=NOW, due_at=LATER,
+                            channels=["twilio_sms"], urgent=True, source_text="!insulin"))
+    note(store)
+    store.snooze(pills.id, LATER, via="cli", now=NOW)
+    deliver(store, pills, NOW)
+    store.record_delivery(pills.id, NOW, Delivery(channel="ntfy", attempts=2, next_attempt_at=LATER,
+                                                  last_error="HTTPError: 503"))
+    store.complete(pills.id, via="telegram", now=NOW + timedelta(minutes=1))
+    store.claim_inbound("twilio_sms", "SM123", urgent.id)
+    return pills, urgent
+
+
+def export_all(store):
+    return {table.name: store.export_rows(table) for table in BACKUP_TABLES}
+
+
+def snapshot(store, ids):
+    """Everything observable through the interface, to compare stores after a restore."""
+    return (
+        store.list(include_done=True),
+        {i: store.deliveries(i, NOW) for i in ids},
+        {i: store.acknowledgement(i, NOW) for i in ids},
+        {i: store.is_claimed("twilio_sms", "SM123") for i in ids},
+        store.unacknowledged(),
+    )
+
+
+def test_export_and_replace_round_trip_every_table(store):
+    pills, urgent = populate(store)
+    rows = export_all(store)
+    before = snapshot(store, [pills.id, urgent.id])
+
+    store.add(Item(text="Added after the backup", kind=Kind.NOTE, created_at=LATER))
+    store.delete(pills.id)
+    store.replace_all(rows, now=NOW)
+
+    assert snapshot(store, [pills.id, urgent.id]) == before
+    restored = store.get(urgent.id)
+    assert restored.channels == ["twilio_sms"] and restored.urgent is True
+
+
+def test_replace_all_keeps_ids_and_never_reuses_one(store):
+    pills, urgent = populate(store)
+    rows = export_all(store)
+    taller = store.add(Item(text="Highest id so far", kind=Kind.NOTE, created_at=NOW))
+
+    store.replace_all(rows, now=NOW)
+    assert store.get(urgent.id).text == "Insulin"  # ids survive: chat buttons still point right
+    assert store.get(taller.id) is None
+    fresh = store.add(Item(text="New after restore", kind=Kind.NOTE, created_at=NOW))
+    # Even the id of the item the backup never saw is not handed out again.
+    assert fresh.id > taller.id
+
+
+def test_replace_all_with_no_rows_empties_the_store(store):
+    populate(store)
+    store.replace_all({}, now=NOW)
+    assert store.list(include_done=True) == []
+    assert store.counts() == {}
+
+
+def test_replace_all_is_refused_while_a_scheduler_holds_the_lease(store):
+    populate(store)
+    before = snapshot(store, [1, 2])
+    assert store.acquire_lease("serve-1", NOW, NOW + timedelta(seconds=90)) == (True, "serve-1")
+
+    with pytest.raises(RestoreBlockedError, match="serve-1"):
+        store.replace_all({}, now=NOW)
+    assert snapshot(store, [1, 2]) == before  # refused before touching anything
+
+
+def test_replace_all_clears_an_expired_lease_instead_of_reviving_it(store):
+    assert store.acquire_lease("crashed", NOW - timedelta(hours=2), NOW - timedelta(hours=1))[0]
+    store.replace_all({}, now=NOW)
+    assert store.lease_holder(NOW) is None
+    assert store.acquire_lease("next", NOW, NOW + timedelta(seconds=90))[0]
+
+
+def test_exported_rows_are_portable_values(store):
+    pills, urgent = populate(store)
+    for table in BACKUP_TABLES:
+        for row in store.export_rows(table):
+            assert set(row) == set(table.columns)
+            for column, value in row.items():
+                if column in table.times:
+                    assert value is None or value.tzinfo is not None
+                elif column in table.flags:
+                    assert value is None or isinstance(value, bool)
+                else:
+                    assert value is None or isinstance(value, (int, str))

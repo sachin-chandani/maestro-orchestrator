@@ -7,7 +7,7 @@ Exit status is non-zero when any check fails, so it can gate a deploy.
 import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from maestro.config import Config
 from maestro.models import Item, Kind
@@ -15,7 +15,7 @@ from maestro.notifier import CHANNELS, ConfigError, Notifier
 from maestro.sms import WEBHOOK_PATH
 from maestro.storage import StoreConfigError, driver_errors, open_store, parse_url
 from maestro.storage.sqlite import MIGRATIONS, SQLiteStore
-from maestro.tz import get_timezone
+from maestro.tz import UTC, get_timezone
 from maestro.voice import VOICE_PATH
 
 OK, WARN, FAIL = "ok", "warn", "fail"
@@ -159,6 +159,32 @@ def _quiet_hours(config: Config) -> list[Check]:
     return [Check(OK, "quiet hours", f"{quiet}: non-urgent reminders wait; start one with ! for urgent")]
 
 
+def _backups(config: Config) -> list[Check]:
+    from maestro.backup import scheduled_backups
+
+    try:
+        backups = scheduled_backups(config)
+    except ValueError as e:
+        return [Check(FAIL, "backups", str(e))]
+    if backups is None:
+        return []
+    try:
+        backups.directory.mkdir(parents=True, exist_ok=True)  # as the first scheduled backup would
+        probe = backups.directory / ".maestro-doctor"
+        probe.touch()
+        probe.unlink()
+        written = backups.written()
+    except OSError as e:
+        return [Check(FAIL, "backups", f"{backups.describe()}: {e}")]
+    if written:
+        age = datetime.now(UTC) - written[-1][0]
+        newest = f"newest is {int(age.total_seconds() // 3600)}h old" if age >= timedelta(hours=1) \
+            else f"newest is {int(age.total_seconds() // 60)}m old"
+    else:
+        newest = "none written yet"
+    return [Check(OK, "backups", f"{backups.describe()}; {newest}")]
+
+
 def _channels(config: Config) -> tuple[list[Check], dict[str, Notifier]]:
     checks: list[Check] = []
     built: dict[str, Notifier] = {}
@@ -201,7 +227,7 @@ def run(config: Config, send_test: bool = False, out: Callable[[str], None] = pr
     checks = [_timezone(config), _database(config), *_database_settings(), _api_token(config),
               *_telegram_bot(config),
               *_inbound_sms(config), *_email_in(config, connect=send_test), *_escalation(config),
-              *_quiet_hours(config)]
+              *_quiet_hours(config), *_backups(config)]
     channel_checks, built = _channels(config)
     checks += channel_checks
     # Channels used only for escalation still need a test message, or a broken one is found mid-escalation.
