@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Maestro Today</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&amp;family=IBM+Plex+Mono:wght@500&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:#2F5BEA}a:hover{color:#1E3FB0}
+</style>
+</helmet>
+<div style="width: 390px; height: 844px; box-sizing: border-box; display: flex; flex-direction: column; background: #F3F4F6; color: #111827; font-family: 'IBM Plex Sans', system-ui, sans-serif; overflow: hidden">
+
+<header style="padding: 20px 20px 12px; display: flex; flex-direction: column; gap: 10px; background: #FFFFFF; border-bottom: 1px solid #E5E7EB">
+<div style="display: flex; align-items: center; justify-content: space-between">
+<h1 style="margin: 0; font-size: 26px; font-weight: 700; letter-spacing: -0.01em">{{heading}}</h1>
+<span style="display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 999px; background: #ECFDF3; color: #166534; font-size: 12px; font-weight: 600"><svg width="8" height="8" viewBox="0 0 8 8" aria-hidden="true"><circle cx="4" cy="4" r="4" fill="#16A34A"></circle></svg>Home server</span>
+</div>
+<div style="font-size: 13px; color: #4B5563">Tue 3 Nov · {{summary}}</div>
+</header>
+
+<main style="flex: 1 1 auto; overflow-y: auto; padding: 12px 16px 16px; display: flex; flex-direction: column; gap: 16px">
+
+<sc-if value="{{isToday}}" hint-placeholder-val="{{ true }}">
+<sc-for list="{{groups}}" as="g" hint-placeholder-count="3">
+<section style="display: flex; flex-direction: column; gap: 8px">
+<h2 style="margin: 4px 4px 0; font-size: 12px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #4B5563">{{g.name}}</h2>
+<sc-for list="{{g.items}}" as="it" hint-placeholder-count="2">
+<article style="{{it.cardStyle}}">
+<div style="display: flex; gap: 12px; align-items: flex-start">
+<div style="width: 52px; flex: 0 0 52px; font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #374151; padding-top: 2px">{{it.time}}</div>
+<div style="flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 6px">
+<div style="{{it.textStyle}}">{{it.text}}</div>
+<div style="display: flex; flex-wrap: wrap; gap: 6px">
+<sc-for list="{{it.chips}}" as="c" hint-placeholder-count="2">
+<span style="{{c.style}}">{{c.label}}</span>
+</sc-for>
+</div>
+</div>
+</div>
+<div style="display: flex; gap: 8px; justify-content: flex-end">
+<button type="button" onClick="{{it.snooze}}" aria-label="Snooze for one hour" style="min-height: 44px; padding: 0 14px; border-radius: 10px; border: 1px solid #D1D5DB; background: #FFFFFF; color: #374151; font: 500 14px 'IBM Plex Sans', sans-serif; display: flex; align-items: center; gap: 6px; cursor: pointer"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="13" r="8"></circle><path d="M12 9v4l2 2M5 3 2 6M19 3l3 3"></path></svg>+1 hour</button>
+<button type="button" onClick="{{it.toggle}}" style="{{it.doneStyle}}"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5L19 7"></path></svg>{{it.doneLabel}}</button>
+</div>
+</article>
+</sc-for>
+</section>
+</sc-for>
+</sc-if>
+
+<sc-if value="{{isLists}}" hint-placeholder-val="{{ false }}">
+<sc-for list="{{lists}}" as="l" hint-placeholder-count="2">
+<section style="background: #FFFFFF; border: 1px solid #E5E7EB; border-radius: 14px; padding: 14px 16px; display: flex; flex-direction: column; gap: 4px">
+<div style="display: flex; justify-content: space-between; align-items: baseline">
+<h2 style="margin: 0 0 6px; font-size: 17px; font-weight: 600">{{l.name}}</h2>
+<span style="font-size: 13px; color: #4B5563">{{l.left}}</span>
+</div>
+<sc-for list="{{l.items}}" as="x" hint-placeholder-count="3">
+<label style="display: flex; align-items: center; gap: 12px; min-height: 44px; font-size: 16px; cursor: pointer">
+<input type="checkbox" checked="{{x.on}}" onChange="{{x.toggle}}" style="width: 22px; height: 22px; accent-color: {{accent}}">
+<span style="{{x.style}}">{{x.t}}</span>
+</label>
+</sc-for>
+</section>
+</sc-for>
+<p style="margin: 0 4px; font-size: 13px; color: #4B5563">Try “add oat milk to the shopping list” below.</p>
+</sc-if>
+
+<sc-if value="{{isNotes}}" hint-placeholder-val="{{ false }}">
+<label style="display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: #4B5563">Search notes
+<input type="search" placeholder="What did I say about…" style="min-height: 44px; box-sizing: border-box; padding: 0 14px; border-radius: 12px; border: 1px solid #D1D5DB; background: #FFFFFF; font: 400 16px 'IBM Plex Sans', sans-serif; color: #111827">
+</label>
+<sc-for list="{{notes}}" as="n" hint-placeholder-count="3">
+<article style="background: #FFFFFF; border: 1px solid #E5E7EB; border-radius: 14px; padding: 14px 16px; display: flex; flex-direction: column; gap: 6px">
+<div style="font-size: 16px; line-height: 22px">{{n.t}}</div>
+<div style="font-size: 12px; color: #4B5563">{{n.meta}}</div>
+</article>
+</sc-for>
+</sc-if>
+
+</main>
+
+<sc-if value="{{hasToast}}" hint-placeholder-val="{{ false }}">
+<div role="status" style="margin: 0 16px 8px; padding: 12px 14px; border-radius: 12px; background: #111827; color: #FFFFFF; font-size: 14px">{{toast}}</div>
+</sc-if>
+
+<form onSubmit="{{submit}}" style="background: #FFFFFF; border-top: 1px solid #E5E7EB; padding: 10px 16px 8px; display: flex; flex-direction: column; gap: 8px">
+<sc-if value="{{hasChips}}" hint-placeholder-val="{{ false }}">
+<div aria-live="polite" style="display: flex; flex-wrap: wrap; gap: 6px; align-items: center">
+<span style="font-size: 12px; color: #4B5563">Maestro hears:</span>
+<sc-for list="{{preview}}" as="p" hint-placeholder-count="3">
+<span style="{{p.style}}">{{p.label}}</span>
+</sc-for>
+</div>
+</sc-if>
+<div style="display: flex; gap: 8px">
+<label for="capture" style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0)">Capture a reminder or note</label>
+<input id="capture" value="{{draft}}" onChange="{{type}}" placeholder="text me tomorrow at 9am to call the bank" autocomplete="off" style="flex: 1 1 auto; min-width: 0; min-height: 48px; box-sizing: border-box; padding: 0 14px; border-radius: 12px; border: 1px solid #D1D5DB; background: #F9FAFB; font: 400 16px 'IBM Plex Sans', sans-serif; color: #111827">
+<button type="submit" aria-label="Add" style="width: 48px; height: 48px; flex: 0 0 48px; border-radius: 12px; border: 0; background: {{accent}}; color: #FFFFFF; display: flex; align-items: center; justify-content: center; cursor: pointer"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"></path></svg></button>
+</div>
+</form>
+
+<nav aria-label="Sections" style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); background: #FFFFFF; border-top: 1px solid #E5E7EB; padding: 4px 8px 20px">
+<sc-for list="{{tabs}}" as="t" hint-placeholder-count="3">
+<button type="button" onClick="{{t.go}}" aria-current="{{t.current}}" style="{{t.style}}">{{t.label}}</button>
+</sc-for>
+</nav>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"accent":{"editor":"color","default":"#2F5BEA","options":["#2F5BEA","#0F766E","#7C3AED","#111827"]},"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = {
+      tab: 'today',
+      draft: '',
+      toast: '',
+      nextId: 10,
+      items: [
+        { id: 1, group: 'Today', time: '8:30', text: 'Put the bins out', chips: [['Every Tue', 'rec'], ['Telegram', 'ch']], done: true },
+        { id: 2, group: 'Today', time: '12:00', text: 'Call the bank about the card', chips: [['Text me', 'ch']], done: false },
+        { id: 3, group: 'Today', time: '17:45', text: 'Pick up the kids from practice', chips: [['Urgent', 'urgent'], ['Call if not done in 15m', 'esc']], done: false },
+        { id: 4, group: 'Today', time: '21:00', text: 'Water the plants', chips: [['Every week', 'rec'], ['6-week streak', 'ok']], done: false },
+        { id: 5, group: 'Tomorrow', time: '15:00', text: 'Dentist', chips: [['1 hour before', 'lead'], ['Push', 'ch']], done: false },
+        { id: 6, group: 'Later', time: 'Fri', text: 'Send the school trip form', chips: [['Email me', 'ch']], done: false }
+      ],
+      lists: [
+        { name: 'Shopping', items: [{ t: 'Eggs', on: false }, { t: 'Bread', on: true }, { t: 'Coffee beans', on: false }] },
+        { name: 'Packing for the trip', items: [{ t: 'Passport', on: false }, { t: 'Phone charger', on: false }] }
+      ],
+      notes: [
+        { t: 'Gift idea for Sam: the blue scarf from the Saturday market', meta: 'From Telegram · 2 days ago' },
+        { t: 'The plumber the neighbours liked is called Alex; number is on the fridge', meta: 'From a phone call · last week' },
+        { t: 'Car service is due at 60,000 km', meta: 'From SMS · Oct 12' }
+      ]
+    };
+  }
+
+  parse(text) {
+    const s = text.toLowerCase();
+    const out = [];
+    const list = s.match(/\badd (.+?) to (?:the |my )?([a-z ]+?) list\b/);
+    if (list) return { chips: [['List: ' + list[2].trim(), 'list'], ['Add: ' + list[1], 'note']], list: list };
+    if (/^\s*!/.test(text) || (/\burgent\b/.test(s) && !/\bnot urgent\b/.test(s))) out.push(['Urgent', 'urgent']);
+    const day = s.match(/\b(today|tonight|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday|next week)\b/);
+    if (day) out.push([day[1][0].toUpperCase() + day[1].slice(1), 'when']);
+    const t = s.match(/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/);
+    let time = '';
+    if (t) { time = t[1] + ':' + (t[2] || '00') + ' ' + t[3]; out.push([time, 'when']); }
+    const rec = s.match(/\bevery (day|weekday|week|month|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/);
+    if (rec) out.push(['Every ' + rec[1], 'rec']);
+    const lead = s.match(/\b(\d+|an?|one)\s*(min(?:ute)?s?|hours?|days?)\s+before\b/);
+    if (lead) out.push([lead[1] + ' ' + lead[2] + ' before', 'lead']);
+    const ch = [['text me', 'Text me'], ['call me', 'Call me'], ['email me', 'Email me'], ['on telegram', 'Telegram']];
+    ch.forEach((c) => { if (s.indexOf(c[0]) >= 0) out.push([c[1], 'ch']); });
+    if (!day && !t && !rec && text.trim()) out.push(['Note, no time', 'note']);
+    return { chips: out, day: day ? day[1] : '', time: time };
+  }
+
+  chipStyle(kind) {
+    const base = 'display: inline-flex; align-items: center; min-height: 24px; padding: 0 8px; border-radius: 6px; font-size: 12px; font-weight: 500; ';
+    const k = {
+      urgent: 'background: #FFF1E6; color: #9A3A0B;',
+      esc: 'background: #FFF1E6; color: #9A3A0B;',
+      when: 'background: #EEF2FF; color: #2A3FA8;',
+      rec: 'background: #F3F4F6; color: #374151;',
+      lead: 'background: #EEF2FF; color: #2A3FA8;',
+      ch: 'background: #F3F4F6; color: #374151;',
+      ok: 'background: #ECFDF3; color: #166534;',
+      list: 'background: #F0FDFA; color: #115E59;',
+      note: 'background: #F3F4F6; color: #374151;'
+    };
+    return base + (k[kind] || k.note);
+  }
+
+  flash(msg) {
+    this.setState({ toast: msg });
+    clearTimeout(this._t);
+    this._t = setTimeout(() => this.setState({ toast: '' }), 2600);
+  }
+
+  renderVals() {
+    const accent = this.props.accent ?? '#2F5BEA';
+    const st = this.state;
+    const parsed = this.parse(st.draft);
+    const order = ['Today', 'Tomorrow', 'Later'];
+    const groups = order.map((name) => ({
+      name: name,
+      items: st.items.filter((i) => i.group === name).map((i) => ({
+        time: i.time,
+        text: i.text,
+        chips: i.chips.map((c) => ({ label: c[0], style: this.chipStyle(c[1]) })),
+        cardStyle: 'background: #FFFFFF; border: 1px solid ' + (i.chips.some((c) => c[1] === 'urgent') && !i.done ? '#F3B48A' : '#E5E7EB') + '; border-radius: 14px; padding: 14px 14px 12px; display: flex; flex-direction: column; gap: 10px;' + (i.done ? ' opacity: 0.62;' : ''),
+        textStyle: 'font-size: 16px; line-height: 22px; font-weight: 500;' + (i.done ? ' text-decoration: line-through; color: #4B5563;' : ''),
+        doneLabel: i.done ? 'Undo' : 'Done',
+        doneStyle: 'min-height: 44px; padding: 0 16px; border-radius: 10px; border: 0; font: 600 14px \'IBM Plex Sans\', sans-serif; display: flex; align-items: center; gap: 6px; cursor: pointer; ' + (i.done ? 'background: #E5E7EB; color: #374151;' : 'background: ' + accent + '; color: #FFFFFF;'),
+        toggle: () => {
+          this.setState({ items: st.items.map((x) => x.id === i.id ? Object.assign({}, x, { done: !x.done }) : x) });
+          if (!i.done) this.flash('Done. Any pending SMS or call for it is cancelled.');
+        },
+        snooze: () => {
+          const m = i.time.match(/^(\d{1,2}):(\d{2})$/);
+          const next = m ? ((Number(m[1]) + 1) % 24) + ':' + m[2] : i.time;
+          this.setState({ items: st.items.map((x) => x.id === i.id ? Object.assign({}, x, { time: next }) : x) });
+          this.flash('Snoozed to ' + next + '. Escalation restarts from then.');
+        }
+      }))
+    })).filter((g) => g.items.length > 0);
+
+    const open = st.items.filter((i) => i.group === 'Today' && !i.done).length;
+    const lists = st.lists.map((l, li) => ({
+      name: l.name,
+      left: l.items.filter((x) => !x.on).length + ' left',
+      items: l.items.map((x, xi) => ({
+        t: x.t,
+        on: x.on,
+        style: x.on ? 'text-decoration: line-through; color: #4B5563' : '',
+        toggle: () => {
+          const next = st.lists.map((L, a) => a !== li ? L : Object.assign({}, L, { items: L.items.map((X, b) => b === xi ? Object.assign({}, X, { on: !X.on }) : X) }));
+          this.setState({ lists: next });
+        }
+      }))
+    }));
+
+    const tabs = [['today', 'Today'], ['lists', 'Lists'], ['notes', 'Notes']].map((t) => ({
+      label: t[1],
+      current: st.tab === t[0] ? 'page' : 'false',
+      style: 'min-height: 48px; border: 0; background: transparent; font: ' + (st.tab === t[0] ? '600' : '500') + ' 15px \'IBM Plex Sans\', sans-serif; color: ' + (st.tab === t[0] ? accent : '#4B5563') + '; border-top: 3px solid ' + (st.tab === t[0] ? accent : 'transparent') + '; cursor: pointer',
+      go: () => this.setState({ tab: t[0] })
+    }));
+
+    const submit = (e) => {
+      if (e && e.preventDefault) e.preventDefault();
+      const text = st.draft.trim();
+      if (!text) return;
+      const p = this.parse(text);
+      if (p.list) {
+        const name = p.list[2].trim();
+        const label = name[0].toUpperCase() + name.slice(1);
+        const found = st.lists.some((l) => l.name.toLowerCase() === name);
+        const add = { t: p.list[1][0].toUpperCase() + p.list[1].slice(1), on: false };
+        const next = found
+          ? st.lists.map((l) => l.name.toLowerCase() === name ? Object.assign({}, l, { items: l.items.concat([add]) }) : l)
+          : st.lists.concat([{ name: label, items: [add] }]);
+        this.setState({ lists: next, draft: '', tab: 'lists' });
+        this.flash('Added to ' + label + '.');
+        return;
+      }
+      const isNote = p.chips.some((c) => c[1] === 'note');
+      if (isNote) {
+        this.setState({ notes: [{ t: text, meta: 'From this phone · just now' }].concat(st.notes), draft: '', tab: 'notes' });
+        this.flash('Saved as a note.');
+        return;
+      }
+      const group = p.day === 'tomorrow' ? 'Tomorrow' : (p.day && p.day !== 'today' && p.day !== 'tonight') ? 'Later' : 'Today';
+      const shown = p.chips.filter((c) => c[1] !== 'when');
+      const item = { id: st.nextId, group: group, time: p.time ? p.time.replace(/ (am|pm)$/, (m, x) => x === 'pm' ? 'pm' : 'am').replace(' ', '') : (p.day ? p.day.slice(0, 3) : 'Today'), text: text, chips: shown, done: false };
+      this.setState({ items: st.items.concat([item]), nextId: st.nextId + 1, draft: '', tab: 'today' });
+      this.flash('Reminder set. It will reach you even if this app is closed.');
+    };
+
+    return {
+      accent: accent,
+      heading: st.tab === 'today' ? 'Today' : st.tab === 'lists' ? 'Lists' : 'Notes',
+      summary: open + ' left today',
+      isToday: st.tab === 'today',
+      isLists: st.tab === 'lists',
+      isNotes: st.tab === 'notes',
+      groups: groups,
+      lists: lists,
+      notes: st.notes,
+      tabs: tabs,
+      draft: st.draft,
+      type: (e) => this.setState({ draft: e.target.value }),
+      submit: submit,
+      hasChips: parsed.chips.length > 0,
+      preview: parsed.chips.map((c) => ({ label: c[0], style: this.chipStyle(c[1]) })),
+      hasToast: !!st.toast,
+      toast: st.toast
+    };
+  }
+}
+</script>
+</body>
+</html>

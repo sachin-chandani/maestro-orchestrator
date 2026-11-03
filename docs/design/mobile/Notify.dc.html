@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Reminders on the lock screen</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&amp;family=IBM+Plex+Mono:wght@500&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:#BFD0FF}a:hover{color:#FFFFFF}
+</style>
+</helmet>
+<div style="width: 390px; height: 844px; box-sizing: border-box; padding: 56px 12px 28px; display: flex; flex-direction: column; gap: 10px; background: #1B2230; color: #FFFFFF; font-family: 'IBM Plex Sans', system-ui, sans-serif">
+
+<div style="display: flex; flex-direction: column; align-items: center; gap: 2px; margin-bottom: 28px">
+<div style="font-size: 17px; font-weight: 500; color: #E5E7EB">Tuesday 3 November</div>
+<div style="font-size: 84px; font-weight: 600; line-height: 92px; letter-spacing: -0.02em">17:45</div>
+</div>
+
+<article style="background: #F9FAFB; color: #111827; border-radius: 18px; padding: 14px 14px 12px; display: flex; flex-direction: column; gap: 10px">
+<div style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: #4B5563">
+<span style="width: 20px; height: 20px; border-radius: 6px; background: {{accent}}; color: #FFFFFF; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700">M</span>
+<span style="font-weight: 600; letter-spacing: 0.04em">MAESTRO</span><span style="flex: 1 1 auto"></span><span>now</span>
+</div>
+<div style="display: flex; flex-direction: column; gap: 4px">
+<div style="font-size: 16px; font-weight: 600">Pick up the kids from practice</div>
+<div style="font-size: 14px; line-height: 20px; color: #374151"><span style="color: #9A3A0B; font-weight: 600">Urgent.</span> Not done in 15 minutes? Maestro will call you.</div>
+</div>
+<div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px">
+<button type="button" style="min-height: 44px; border-radius: 10px; border: 0; background: {{accent}}; color: #FFFFFF; font: 600 15px 'IBM Plex Sans', sans-serif">Done</button>
+<button type="button" style="min-height: 44px; border-radius: 10px; border: 1px solid #D1D5DB; background: #FFFFFF; color: #111827; font: 500 15px 'IBM Plex Sans', sans-serif">Snooze 10 min</button>
+</div>
+</article>
+
+<article style="background: rgba(249, 250, 251, 0.92); color: #111827; border-radius: 18px; padding: 14px; display: flex; flex-direction: column; gap: 4px">
+<div style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: #4B5563">
+<span style="width: 20px; height: 20px; border-radius: 6px; background: #16A34A; display: flex; align-items: center; justify-content: center"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16v11H8l-4 4z"></path></svg></span>
+<span style="font-weight: 600; letter-spacing: 0.04em">MESSAGES</span><span style="flex: 1 1 auto"></span><span>12:00</span>
+</div>
+<div style="font-size: 15px; font-weight: 600">Your Maestro number</div>
+<div style="font-size: 14px; line-height: 20px; color: #374151">Reminder: call the bank about the card. Reply DONE, or SNOOZE 1h.</div>
+</article>
+
+<article style="background: rgba(249, 250, 251, 0.92); color: #111827; border-radius: 18px; padding: 14px; display: flex; flex-direction: column; gap: 4px">
+<div style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: #4B5563">
+<span style="width: 20px; height: 20px; border-radius: 6px; background: #2AABEE; display: flex; align-items: center; justify-content: center"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 4 3 11l6 2 2 6 3-4 5 4z"></path></svg></span>
+<span style="font-weight: 600; letter-spacing: 0.04em">TELEGRAM</span><span style="flex: 1 1 auto"></span><span>08:30</span>
+</div>
+<div style="font-size: 15px; font-weight: 600">Maestro bot</div>
+<div style="font-size: 14px; line-height: 20px; color: #374151">Put the bins out · every Tuesday. Done ✓</div>
+</article>
+
+<div style="flex: 1 1 auto"></div>
+
+<div style="margin: 0 8px; padding: 12px 14px; border-radius: 14px; border: 1px solid #3A4456; display: flex; flex-direction: column; gap: 4px; font-size: 13px; line-height: 19px; color: #E5E7EB">
+<b style="font-weight: 600; color: #FFFFFF">Quiet hours 22:00–07:00</b>
+Only urgent reminders get through at night. Everything else waits for the morning and arrives once.
+</div>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"accent":{"editor":"color","default":"#2F5BEA","options":["#2F5BEA","#0F766E","#7C3AED","#111827"]},"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return { accent: this.props.accent ?? '#2F5BEA' };
+  }
+}
+</script>
+</body>
+</html>

@@ -42,7 +42,7 @@ Dates are targets, not promises. Work is tracked in [GitHub issues](https://gith
 | API | FastAPI, OpenAPI schema published with each release |
 | Storage | SQLite (default), PostgreSQL via the same store interface |
 | Scheduling | In-process loop; optional external worker for multi-instance setups |
-| Web UI | Server-rendered (Jinja + HTMX), no build step |
+| Web UI | React + TypeScript app (Vite), built in CI and served by `maestro serve` (ADR 0014); design in `docs/design/mobile/` |
 | Packaging | PyPI wheel, multi-arch Docker image on GHCR (amd64, arm64 for Raspberry Pi) |
 | Docs | MkDocs Material on GitHub Pages |
 | CI/CD | GitHub Actions: lint, test matrix, Docker build, release on tag |
