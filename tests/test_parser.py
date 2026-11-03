@@ -58,6 +58,8 @@ def test_time_later_today_stays_today():
         ("take out the bins tonight, on telegram", "Take out the bins", ["telegram"]),
         ("submit the report by eod; via telegram", "Submit the report", ["telegram"]),
         ("text me to stretch at 3pm", "Stretch", ["twilio_sms"]),
+        ("please call me to leave for the airport at 6am tomorrow", "Leave for the airport",
+         ["twilio_call"]),
         ("email me about the invoice on monday", "The invoice", ["email"]),
         ("remind me to renew the passport on monday, sms me", "Renew the passport", ["twilio_sms"]),
     ],

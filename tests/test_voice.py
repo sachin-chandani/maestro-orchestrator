@@ -183,3 +183,11 @@ def test_calls_whose_caller_id_failed_verification_are_rejected(voice, verdict, 
     root = xml(voice.incoming(call(StirVerstat=verdict)))
     assert (root.find("Gather") is not None) == answered
     assert (root.find("Reject") is not None) == (not answered)
+
+
+def test_capture_reads_out_when_a_chosen_channel_is_not_configured():
+    voice = VoiceHandler(Store(), TOKEN, OWNER, requestable=frozenset())
+    root = xml(voice.capture(call(SpeechResult="Pay rent tomorrow. Text me.", Confidence="0.95")))
+    (item,) = voice.store.list()
+    assert item.text == "Pay rent" and item.channels is None
+    assert root.find("Say").text.endswith("Note: twilio_sms isn't configured; using the default channels.")

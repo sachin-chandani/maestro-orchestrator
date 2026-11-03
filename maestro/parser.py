@@ -94,7 +94,7 @@ TRAILING_CHANNEL_RE = re.compile(
 )
 # At the start with a connector, the way "remind me to" reads: "text me to stretch at 3",
 # "email me about the invoice friday". "call me a cab" has no connector and stays text.
-LEADING_CHANNEL_RE = re.compile(rf"^\s*{_CHANNEL}\s+(?:to|that|about)\s+", re.I)
+LEADING_CHANNEL_RE = re.compile(rf"^\s*(?:please\s+)?{_CHANNEL}\s+(?:to|that|about)\s+", re.I)
 
 # The word "urgent" marks a reminder urgent unless it is negated ("not urgent"). Kept here rather
 # than in maestro.quiet (which imports this module's parse_duration indirectly) to avoid a cycle;

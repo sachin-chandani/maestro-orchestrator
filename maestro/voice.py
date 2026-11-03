@@ -101,8 +101,8 @@ class VoiceHandler(TwilioHandler):
         if confidence < MIN_CONFIDENCE:
             return _twiml(_say(f"I'm not sure I heard that right. I heard: {speech}. Nothing was saved. "
                                "Please call again."), "<Hangup/>")
-        item = self.save(speech, params.get("CallSid"), source="voice")
-        return _twiml(_say(confirmation(item)), "<Hangup/>")
+        item, note = self.save(speech, params.get("CallSid"), source="voice")
+        return _twiml(_say(confirmation(item) + (f" Note: {note}" if note else "")), "<Hangup/>")
 
 
 def reminder_action_url(public_url: str, item: Item) -> str:
