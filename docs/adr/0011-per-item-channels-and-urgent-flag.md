@@ -12,7 +12,7 @@ Every reminder went to every channel in `MAESTRO_CHANNELS`, and urgency (for qui
   - `urgent` NULL means "written before the flag existed": `quiet.is_urgent` then falls back to the old text rules, so an upgrade never changes which reminders break through quiet hours. New items always carry an explicit True/False.
 - **Unconfigured choices fall back, loudly, twice:**
   - At capture, where the configuration is known (CLI, API server), a channel without its settings is dropped from the item with a message, so the user hears it immediately. Chat captures (Telegram, SMS, email-in) skip this check and store the choice.
-  - At delivery, an item whose chosen channels are all unavailable goes out on the defaults instead — logged and counted (`maestro_channel_fallbacks_total`) — because a reminder is never silently dropped.
+  - At delivery, chosen channels that are unavailable are reported — logged and counted (`maestro_channel_fallbacks_total`), once per occurrence when it first fires — and the rest of the choice is used; with nothing left, the defaults are, because a reminder is never silently dropped.
 - **A choice widens what is built, not what is sent by default.** `build_notifier` also builds the requestable channels (`twilio_sms`, `twilio_call`, `email`, `telegram`) that are configured but not in `MAESTRO_CHANNELS`, kept in `MultiNotifier.extra`; they are only used for items that asked.
 - **Escalation ignores per-item channels.** The choice applies to the first notice; escalation stages are the operator's "make sure they see it" ladder and keep their configured channels, so an item choosing a quiet channel can't silence its own escalation.
 

@@ -15,6 +15,7 @@ from collections.abc import Callable
 
 from maestro import commands
 from maestro.models import Item, Kind
+from maestro.notifier import apply_channel_choice
 from maestro.observability import METRICS
 from maestro.parser import parse
 from maestro.storage import Store
@@ -91,10 +92,13 @@ class TelegramBot:
     """Turns chat messages into captures and commands. Network fetches and store access are split
     (fetch / handle) so the server can fetch in a worker thread and handle on its event loop."""
 
-    def __init__(self, client: TelegramClient, store: Store, chat_id: str | None):
+    def __init__(self, client: TelegramClient, store: Store, chat_id: str | None,
+                 requestable: frozenset[str] | None = None):
         self.client = client
         self.store = store
         self.chat_id = str(chat_id) if chat_id else None
+        # The per-item channels this deployment can honour; None skips the capture-time check (#20).
+        self.requestable = requestable
         self.offset: int | None = None
 
     def fetch(self, timeout: int = 25) -> list[dict]:
@@ -149,9 +153,14 @@ class TelegramBot:
 
         if not text.startswith("/"):
             METRICS.inc("maestro_captures_total", source="telegram")
-            item = self.store.add(parse(text, tz=self.store.tz))
+            parsed = parse(text, tz=self.store.tz)
+            note = ""
+            if self.requestable is not None and (dropped := apply_channel_choice(parsed, self.requestable)):
+                kept = ", ".join(parsed.channels) if parsed.channels else "the default channels"
+                note = f"\n({', '.join(dropped)} isn't configured; using {kept})"
+            item = self.store.add(parsed)
             buttons = _action_buttons(item) if item.kind == Kind.REMINDER else None
-            self.client.send(chat_id, f"Saved {commands.line(item)}", buttons)
+            self.client.send(chat_id, f"Saved {commands.line(item)}{note}", buttons)
             return
 
         # A slash command that didn't parse: explain its usage, or that it doesn't exist.

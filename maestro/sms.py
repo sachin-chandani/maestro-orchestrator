@@ -15,6 +15,7 @@ from xml.sax.saxutils import escape
 
 from maestro import commands
 from maestro.models import Item, Kind
+from maestro.notifier import apply_channel_choice
 from maestro.observability import METRICS
 from maestro.parser import parse
 from maestro.storage import Store
@@ -53,10 +54,13 @@ class TwilioHandler:
 
     kind = "message"
 
-    def __init__(self, store: Store, auth_token: str, owner_number: str):
+    def __init__(self, store: Store, auth_token: str, owner_number: str,
+                 requestable: frozenset[str] | None = None):
         self.store = store
         self.auth_token = auth_token
         self.owner = normalise_number(owner_number)
+        # The per-item channels this deployment can honour; None skips the capture-time check (#20).
+        self.requestable = requestable
 
     def verify(self, url: str, params: dict[str, str], signature: str | None) -> bool:
         return verify_signature(self.auth_token, url, params, signature)
@@ -64,6 +68,9 @@ class TwilioHandler:
     def save(self, text: str, external_id: str | None, source: str) -> Item:
         """Parse and save text from an inbound message, once per provider message/call id."""
         parsed = parse(text, tz=self.store.tz)
+        if self.requestable is not None and (dropped := apply_channel_choice(parsed, self.requestable)):
+            log.warning("%s capture asked for %s, which isn't configured; keeping %s", source,
+                        ", ".join(dropped), parsed.channels or "the default channels")
         if not external_id:
             item, created = self.store.add(parsed), True
         else:

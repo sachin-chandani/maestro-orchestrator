@@ -145,3 +145,33 @@ def test_items_without_a_choice_use_every_default_channel():
     fire_due(store, MultiNotifier({"push": push}, extra={"sms": sms}), now=DUE)
     assert push.sent == [item.id]
     assert sms.sent == []  # extras are only for items that ask
+
+
+def test_partial_availability_keeps_the_configured_part_of_the_choice():
+    from maestro.observability import METRICS
+
+    store = Store()
+    item = store.add(Item(text="Pay rent", kind=Kind.REMINDER, created_at=DUE, due_at=DUE,
+                          channels=["telegram", "mail"]))
+    push, mail = Recorder(), Recorder()
+    before = METRICS.get("maestro_channel_fallbacks_total") or 0
+    fire_due(store, MultiNotifier({"push": push}, extra={"mail": mail}), now=DUE)
+    assert mail.sent == [item.id]  # the configured half of the choice
+    assert push.sent == []  # not widened to the defaults
+    assert METRICS.get("maestro_channel_fallbacks_total") == before + 1
+
+
+def test_the_fallback_is_counted_once_per_occurrence_not_per_tick():
+    from maestro.observability import METRICS
+
+    store = Store()
+    store.add(Item(text="Pay rent", kind=Kind.REMINDER, created_at=DUE, due_at=DUE,
+                   channels=["telegram"]))
+    flaky = Recorder(failures=2)  # keeps the occurrence retrying over several ticks
+    notifier = MultiNotifier({"push": flaky})
+    before = METRICS.get("maestro_channel_fallbacks_total") or 0
+    now = DUE
+    for _ in range(3):
+        fire_due(store, notifier, now=now)
+        now += timedelta(hours=1)  # always past the backoff
+    assert flaky.sent and METRICS.get("maestro_channel_fallbacks_total") == before + 1

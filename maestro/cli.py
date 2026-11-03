@@ -242,7 +242,8 @@ def _build_bot(config: Config, store: Store) -> "TelegramBot | None":
 
     if not config.telegram_chat_id:
         logging.warning("TELEGRAM_CHAT_ID is not set: send /start to your bot to get it")
-    return TelegramBot(TelegramClient.for_token(config.telegram_bot_token), store, config.telegram_chat_id)
+    return TelegramBot(TelegramClient.for_token(config.telegram_bot_token), store, config.telegram_chat_id,
+                       requestable=requestable_channels(config))
 
 
 def _build_email(config: Config, store: Store) -> "EmailWorker | None":
@@ -250,7 +251,9 @@ def _build_email(config: Config, store: Store) -> "EmailWorker | None":
     from maestro.email_in import EmailPoller, EmailWorker
 
     settings = email_settings(config)
-    return EmailWorker(EmailPoller(store, settings)) if settings else None
+    if not settings:
+        return None
+    return EmailWorker(EmailPoller(store, settings, requestable=requestable_channels(config)))
 
 
 def _wait_with(bot: "TelegramBot | None", email: "EmailWorker | None") -> Callable[[float], None]:
@@ -298,8 +301,9 @@ def _serve(store: Store, config: Config, notifier: Notifier, args: argparse.Name
         from maestro.sms import SmsHandler
         from maestro.voice import VoiceHandler
 
-        sms = SmsHandler(store, config.twilio_auth_token, config.sms_to)
-        voice = VoiceHandler(store, config.twilio_auth_token, config.sms_to)
+        requestable = requestable_channels(config)
+        sms = SmsHandler(store, config.twilio_auth_token, config.sms_to, requestable=requestable)
+        voice = VoiceHandler(store, config.twilio_auth_token, config.sms_to, requestable=requestable)
     app = create_app(store, api_token=config.api_token, notifier=notifier, interval=args.interval, bot=bot,
                      sms=sms, voice=voice, email=email, escalation=escalation, quiet=quiet,
                      public_url=config.public_url, requestable=requestable_channels(config),

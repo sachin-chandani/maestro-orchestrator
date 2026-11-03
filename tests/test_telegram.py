@@ -201,3 +201,23 @@ def test_malformed_get_updates_response_is_an_error(setup):
     with pytest.raises(TelegramError, match="expected a list"):
         bot.fetch(timeout=1)
     assert bot.offset is None
+
+
+def test_capture_reports_a_channel_choice_it_cannot_honour():
+    transport, store = FakeTransport(), Store()
+    bot = TelegramBot(TelegramClient(transport), store, str(CHAT), requestable=frozenset({"email"}))
+    bot.handle(message("pay rent tomorrow at 9am, text me and email me"))
+    (item,) = store.list()
+    assert item.channels == ["email"]  # the configured half is kept
+    (reply,) = transport.sent()
+    assert "twilio_sms isn't configured" in reply["text"]
+    assert "using email" in reply["text"]
+
+
+def test_capture_without_the_check_stores_the_choice_untouched(setup):
+    transport, store, bot = setup  # requestable=None: delivery-time fallback covers it
+    bot.handle(message("pay rent tomorrow at 9am, text me"))
+    (item,) = store.list()
+    assert item.channels == ["twilio_sms"]
+    (reply,) = transport.sent()
+    assert "configured" not in reply["text"]

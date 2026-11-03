@@ -6,7 +6,7 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
-- Per-item channels: say `text me`, `call me`, `email me` or `on telegram` in a capture and that one reminder is delivered there instead of `MAESTRO_CHANNELS`. Only clear instructions count ("call me a cab" stays text); several can be combined (`text me and email me`). The chosen channel needs its settings but not a `MAESTRO_CHANNELS` entry; asking for an unconfigured one says so at capture and falls back to the defaults, and a stored choice that loses its configuration falls back at delivery (logged; metric `maestro_channel_fallbacks_total`). Shown in `maestro list`, the web UI and the API (`channels`) (#20)
+- Per-item channels: say `text me`, `call me`, `email me` or `on telegram` in a capture and that one reminder is delivered there instead of `MAESTRO_CHANNELS`. Only clear instructions count ("call me a cab" stays text); several can be combined (`text me and email me`). The chosen channel needs its settings but not a `MAESTRO_CHANNELS` entry; asking for an unconfigured one says so at capture (CLI, API, Telegram; SMS/voice and email captures log it) and keeps the rest of the choice, and a stored choice that loses its configuration falls back at delivery — the still-configured channels, else the defaults — logged once per occurrence (metric `maestro_channel_fallbacks_total`). Shown in `maestro list`, the web UI and the API (`channels`) (#20)
 - An `urgent` flag, set at capture from a leading `!` (now dropped from the reminder text) or the word "urgent"; quiet hours read the flag. Items stored by an older Maestro keep being judged by their text. Shown in `maestro list`, the web UI and the API (`urgent`) (#20)
 
 ### Changed

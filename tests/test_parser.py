@@ -112,3 +112,35 @@ def test_not_urgent_is_not_urgent():
 def test_new_items_are_explicitly_not_urgent_by_default():
     # False, not None: only rows from before the flag existed carry None (ADR 0011).
     assert parse("call mom tomorrow at 5pm", now=NOW).urgent is False
+
+
+@pytest.mark.parametrize(
+    "source, text, channels",
+    [
+        # Regressions: "and then", dictation's sentence-final period, and "please" are boundaries.
+        ("pay rent friday and then call me", "Pay rent", ["twilio_call"]),
+        ("pay rent friday, text me and then email me", "Pay rent", ["twilio_sms", "email"]),
+        ("Pay rent Friday. Text me.", "Pay rent", ["twilio_sms"]),
+        ("water the plants tomorrow, please text me", "Water the plants", ["twilio_sms"]),
+    ],
+)
+def test_connector_and_sentence_boundaries_are_recognised(source, text, channels):
+    item = parse(source, now=NOW)
+    assert item.text == text
+    assert item.channels == channels
+
+
+@pytest.mark.parametrize(
+    "source, text",
+    [
+        # Regression: when time phrases consume everything else, the message body must not get the
+        # channel phrase back — it was an instruction, never part of the task.
+        ("every day at 9, text me", "Every day at 9"),
+        ("tomorrow, text me", "Tomorrow"),
+        ("in 10 minutes, call me", "In 10 minutes"),
+    ],
+)
+def test_channel_phrase_never_leaks_back_into_an_emptied_text(source, text):
+    item = parse(source, now=NOW)
+    assert item.text == text
+    assert item.channels is not None

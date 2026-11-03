@@ -85,10 +85,12 @@ DAY_OF_MONTH_RE = re.compile(r"\b(?:on|by)\s+the\s+(\d{1,2})(?:st|nd|rd|th)\b", 
 # their text and the default channels.
 _CHANNEL = (r"(?:(?P<twilio_sms>(?:text|sms)\s+me)|(?P<twilio_call>call\s+me)"
             r"|(?P<email>email\s+me)|(?P<telegram>(?:on|via)\s+telegram|telegram\s+me))")
-# At the very end, set off by a comma/semicolon, "and"/"then", or being the whole text:
-# "pay rent friday, text me", "feed the cat and email me", "take out the bins tonight, on telegram".
+# At the very end, set off by punctuation (a comma, or dictation's sentence-final period),
+# "and"/"then"/"and then"/"please", or being the whole text: "pay rent friday, text me",
+# "feed the cat and then email me", "Pay rent Friday. Text me.", "water the plants, please text me".
+_CHANNEL_SEP = r"(?:^|[,;.!]\s*(?:and\s+then\s+|and\s+|then\s+)?|\s+(?:and\s+then|and|then|please)\s+)"
 TRAILING_CHANNEL_RE = re.compile(
-    rf"(?:^|[,;]\s*(?:and\s+|then\s+)?|\s+(?:and|then)\s+){_CHANNEL}\s*[.!]*\s*$", re.I
+    rf"{_CHANNEL_SEP}(?:please\s+)?{_CHANNEL}\s*[.!]*\s*$", re.I
 )
 # At the start with a connector, the way "remind me to" reads: "text me to stretch at 3",
 # "email me about the invoice friday". "call me a cab" has no connector and stays text.
@@ -318,6 +320,9 @@ def parse(source: str, now: datetime | None = None, tz: tzinfo | None = None) ->
     text = MERIDIEM_RE.sub(lambda m: f"{m[1]} {m[2]}m", source)
     parts = _Parts(text=PREFIX_RE.sub("", text, count=1))
     channels = _extract_channels(parts)
+    # If the time phrases consume the rest ("tomorrow, text me"), the message body falls back to
+    # this, not the raw capture: the channel phrase was an instruction, never part of the task.
+    without_channels = parts.text
 
     rule, matches = recurrence.extract(parts.text, now.date())
     if rule:
@@ -350,6 +355,8 @@ def parse(source: str, now: datetime | None = None, tz: tzinfo | None = None) ->
     text = _clean(parts.text)
     if strip_connector:
         text = re.sub(r"^(?:to|that|about)\s+", "", text, flags=re.I)
+    if not text and channels:
+        text = _clean(without_channels)
     text = text or source.strip() or source_text.strip()  # "!" alone: the "!" is the whole capture
     return Item(
         text=text[0].upper() + text[1:],

@@ -60,7 +60,9 @@ def test_doctor_names_the_postgres_server_it_reached():
     ok, lines = run_doctor(Config(db_path=pgsupport.URL, channels=["console"], api_token="t"))
     assert ok, lines
     assert lines[1].startswith("✓ database: postgresql ")
-    assert ", schema 1, 0 items" in lines[1]
+    from maestro.storage.postgres import MIGRATIONS as PG_MIGRATIONS
+
+    assert f", schema {len(PG_MIGRATIONS)}, 0 items" in lines[1]
     assert "journal" not in lines[1]  # that is a SQLite thing
     assert "hunter2" not in lines[1]
 
