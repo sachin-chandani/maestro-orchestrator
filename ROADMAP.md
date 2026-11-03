@@ -4,6 +4,13 @@
 
 It runs on your machine, a Raspberry Pi or a $5 VPS. You bring your own keys (Twilio, Telegram, SMTP, ntfy), and your data stays in a database you own.
 
+## Who it's for
+- **The self-hoster with a busy life.** Runs a Pi or a small VPS, wants reminders that reach them wherever they are (text, call, chat, email), and doesn't want their life in someone else's cloud.
+- **The "I'll forget otherwise" person.** Bills, plants, school forms, bin day. Recurring reminders that escalate until acknowledged, and a record of whether they kept up.
+- **The note-taker.** Captures thoughts from wherever they are and wants to find them again, in lists, by tag, or by asking.
+
+**What success looks like:** capture takes under 5 seconds from any device; no reminder is silently missed; setup takes under 15 minutes from `pip install` to the first test message.
+
 Dates are targets, not promises. Work is tracked in [GitHub issues](https://github.com/sachin-chandani/maestro-orchestrator/issues) and [milestones](https://github.com/sachin-chandani/maestro-orchestrator/milestones).
 
 ---
@@ -90,8 +97,9 @@ Exit criteria: capture from every source above, parser corpus >= 95%, exactly-on
 - [ ] Local backup and restore (#59)
 - [ ] Graceful shutdown and documented at-least-once delivery (#60)
 - [ ] Telegram: act on the reminder you replied to (#61)
+- [ ] Lead-time alerts: "remind me an hour before" (#84)
 
-Exit criteria: escalation proven end to end with fakes, acknowledgements on every channel, backups restorable.
+Exit criteria: escalation proven end to end with fakes, acknowledgements on every channel, backups restorable, a third-party channel installable without core changes.
 
 ## v0.5: Web UI and companion apps (target Dec 13, 2026)
 - [x] Minimal web UI at `/`: capture, reminders and notes, search, done/snooze/delete, auto-refresh
@@ -100,6 +108,11 @@ Exit criteria: escalation proven end to end with fakes, acknowledgements on ever
 - [ ] Installable PWA with web push (#24)
 - [ ] iCalendar (`.ics`) feed (#25) and two-way CalDAV sync (#26)
 - [ ] Companion mobile app spike (#27)
+- [ ] Edit a reminder by replying: "make it 4pm" (#85)
+- [ ] Matrix channel, built as the first entry-point plugin (#86)
+- [ ] Mobile layout, keyboard and screen-reader accessibility (#87)
+
+Exit criteria: everything doable from the CLI is doable from the web UI on a phone; e2e tests and an accessibility check run in CI; installable as an app with push.
 
 ## v0.6: Second brain (target Jan 17, 2027)
 - [ ] Full-text search with SQLite FTS5 (#28)
@@ -107,6 +120,10 @@ Exit criteria: escalation proven end to end with fakes, acknowledgements on ever
 - [ ] Daily and weekly digest (#30)
 - [ ] Import from Apple Reminders, Google Tasks, Todoist (#31); export to JSON and Markdown (#32)
 - [ ] Ask questions over your notes, offline-first (#33)
+- [ ] Lists: "add milk to the shopping list" (#88)
+- [ ] Streaks and adherence for recurring reminders (#89)
+
+Exit criteria: search behaves the same on SQLite and Postgres; import → export → import round-trips without loss; one grouping model (lists vs tags) decided and documented.
 
 ## v0.7: Production-grade self-hosting (target Feb 7, 2027)
 - [x] Storage interface and PostgreSQL backend (#34)
@@ -114,12 +131,18 @@ Exit criteria: escalation proven end to end with fakes, acknowledgements on ever
 - [ ] Encrypted off-site backups to S3-compatible storage (#37)
 - [ ] Deployment guides: Raspberry Pi, Fly.io, Railway, systemd, Caddy (#38) and a Helm chart (#39)
 - [ ] Per-token API rate limits and audit log (#40)
+- [ ] Move existing data between SQLite and PostgreSQL (#90)
+- [ ] Guided first-run setup: `maestro init` (#91)
+
+Exit criteria: a new user reaches the first test message in under 15 minutes with `maestro init`; an existing SQLite install moves to Postgres with one documented command; restores tested on both backends.
 
 ## v1.0: Stable (target Feb 28, 2027)
 - [ ] Documentation site (#41)
 - [ ] API stability and deprecation policy (#42)
 - [ ] Security review and threat model (#43)
 - [ ] Performance at 10k items (#44)
+
+Exit criteria: public API, CLI, settings and plugin API frozen with a deprecation policy; threat model published; documented performance targets met in CI.
 
 ## Later / ideas
 - Delegated reminders: ask someone you trust to nudge you. This involves other people's contact details, so it would be strictly opt-in with explicit consent from the other person.
