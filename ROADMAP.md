@@ -119,6 +119,7 @@ Exit criteria: escalation proven end to end with fakes, acknowledgements on ever
 - [ ] Show what Maestro understood while you type (#94)
 - [ ] Settings for channels, quiet hours and escalation without a restart (#98)
 - [ ] Share to Maestro from any app, plus home-screen shortcuts (#97)
+- [ ] The web UI as a React app, built on mock data first, then connected to the backend (#109, ADR 0014)
 
 Exit criteria: a new phone goes from scanning a pairing code to its first push notification in under 2 minutes; everything doable from the CLI is doable from the web UI on a phone; e2e tests and an accessibility check run in CI; installable as an app with push.
 
