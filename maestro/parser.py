@@ -79,6 +79,49 @@ WEEKEND_TIME = time(10, 0)
 # Needs "on"/"by" so "the 5th element" stays text.
 DAY_OF_MONTH_RE = re.compile(r"\b(?:on|by)\s+the\s+(\d{1,2})(?:st|nd|rd|th)\b", re.I)
 
+# Per-item channels (#20): "text me", "call me", "email me", "on telegram" pick where this one item
+# is delivered. Only clear, self-directed instructions count — the phrase must sit on a clause
+# boundary — so "call me a cab", "remind me to text Sara" and "ask if the kids will call me" keep
+# their text and the default channels.
+_CHANNEL = (r"(?:(?P<twilio_sms>(?:text|sms)\s+me)|(?P<twilio_call>call\s+me)"
+            r"|(?P<email>email\s+me)|(?P<telegram>(?:on|via)\s+telegram|telegram\s+me))")
+# At the very end, set off by punctuation (a comma, or dictation's sentence-final period),
+# "and"/"then"/"and then"/"please", or being the whole text: "pay rent friday, text me",
+# "feed the cat and then email me", "Pay rent Friday. Text me.", "water the plants, please text me".
+_CHANNEL_SEP = r"(?:^|[,;.!]\s*(?:and\s+then\s+|and\s+|then\s+)?|\s+(?:and\s+then|and|then|please)\s+)"
+TRAILING_CHANNEL_RE = re.compile(
+    rf"{_CHANNEL_SEP}(?:please\s+)?{_CHANNEL}\s*[.!]*\s*$", re.I
+)
+# At the start with a connector, the way "remind me to" reads: "text me to stretch at 3",
+# "email me about the invoice friday". "call me a cab" has no connector and stays text.
+LEADING_CHANNEL_RE = re.compile(rf"^\s*(?:please\s+)?{_CHANNEL}\s+(?:to|that|about)\s+", re.I)
+
+# The word "urgent" marks a reminder urgent unless it is negated ("not urgent"). Kept here rather
+# than in maestro.quiet (which imports this module's parse_duration indirectly) to avoid a cycle;
+# quiet.is_urgent uses it for items stored before the urgent flag existed.
+URGENT_WORD_RE = re.compile(r"\burgent\b", re.I)
+NOT_URGENT_RE = re.compile(r"\b(?:not|non|no|isn'?t|nothing)[\s-]+urgent\b", re.I)
+
+
+def text_says_urgent(text: str) -> bool:
+    """The pre-flag text rule: a leading "!" or the word "urgent" (but not "not urgent")."""
+    if text.lstrip().startswith("!"):
+        return True
+    return bool(URGENT_WORD_RE.search(text)) and not NOT_URGENT_RE.search(text)
+
+
+def _extract_channels(parts: "_Parts") -> list[str]:
+    """Cut channel-choice phrases out of the text and return the channel names, in the order said."""
+    channels: list[str] = []
+    while m := TRAILING_CHANNEL_RE.search(parts.text):
+        channels.insert(0, next(name for name, value in m.groupdict().items() if value))
+        parts.text = parts.text[: m.start()]
+    while m := LEADING_CHANNEL_RE.match(parts.text):
+        channels.insert(0, next(name for name, value in m.groupdict().items() if value))
+        parts.text = parts.text[m.end():]
+    seen: set[str] = set()
+    return [c for c in channels if not (c in seen or seen.add(c))]  # type: ignore[func-returns-value]
+
 UNIT_DELTAS = {
     "minute": timedelta(minutes=1), "min": timedelta(minutes=1),
     "hour": timedelta(hours=1), "hr": timedelta(hours=1),
@@ -262,6 +305,13 @@ def parse(source: str, now: datetime | None = None, tz: tzinfo | None = None) ->
     """
     zone: tzinfo = tz or (now.tzinfo if now and now.tzinfo else None) or get_timezone()
     now = localize(now, zone) if now else datetime.now(zone)
+    # A leading "!" marks the reminder urgent (#20) and is dropped from the text; it stays in
+    # source_text. The word "urgent" marks it too, but reads as part of the task, so it is kept.
+    bang = source.lstrip().startswith("!")
+    if bang:
+        source_text, source = source, source.lstrip().lstrip("!").lstrip()
+    else:
+        source_text = source
     prefix = PREFIX_RE.match(source)
     # "remind me in 15 minutes to check the oven": the prefix had no connector, so once the time is
     # removed a leading "to" is left over. ("remind me about that email" keeps "that".)
@@ -269,6 +319,10 @@ def parse(source: str, now: datetime | None = None, tz: tzinfo | None = None) ->
     # Dictation and careful typists write "5 p.m."; the rules below expect "5 pm".
     text = MERIDIEM_RE.sub(lambda m: f"{m[1]} {m[2]}m", source)
     parts = _Parts(text=PREFIX_RE.sub("", text, count=1))
+    channels = _extract_channels(parts)
+    # If the time phrases consume the rest ("tomorrow, text me"), the message body falls back to
+    # this, not the raw capture: the channel phrase was an instruction, never part of the task.
+    without_channels = parts.text
 
     rule, matches = recurrence.extract(parts.text, now.date())
     if rule:
@@ -301,12 +355,16 @@ def parse(source: str, now: datetime | None = None, tz: tzinfo | None = None) ->
     text = _clean(parts.text)
     if strip_connector:
         text = re.sub(r"^(?:to|that|about)\s+", "", text, flags=re.I)
-    text = text or source.strip()
+    if not text and channels:
+        text = _clean(without_channels)
+    text = text or source.strip() or source_text.strip()  # "!" alone: the "!" is the whole capture
     return Item(
         text=text[0].upper() + text[1:],
         kind=Kind.REMINDER if due_at else Kind.NOTE,
         created_at=now.replace(microsecond=0),
         due_at=due_at,
-        source_text=source,
+        source_text=source_text,
         recurrence=rule,
+        channels=channels or None,
+        urgent=bang or text_says_urgent(text),
     )

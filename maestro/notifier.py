@@ -272,10 +272,15 @@ class WebhookNotifier:
 
 
 class MultiNotifier:
-    """Named channels. The scheduler delivers to each separately so one failure doesn't re-send the rest."""
+    """Named channels. The scheduler delivers to each separately so one failure doesn't re-send the rest.
 
-    def __init__(self, channels: dict[str, Notifier]):
+    `extra` holds channels that aren't in MAESTRO_CHANNELS but are configured, so an item that asked
+    for one ("text me", #20) can be delivered on it. They are never sent to by default.
+    """
+
+    def __init__(self, channels: dict[str, Notifier], extra: dict[str, Notifier] | None = None):
         self.channels = channels
+        self.extra = extra or {}
 
     def send(self, item: Item) -> None:
         for notifier in self.channels.values():
@@ -363,11 +368,47 @@ CHANNELS: dict[str, Callable[[Config], Notifier]] = {
 }
 
 
+# The channels a capture can pick in plain language ("text me", "call me", ...; see maestro.parser).
+REQUESTABLE_CHANNELS = ("twilio_sms", "twilio_call", "email", "telegram")
+
+
+def requestable_channels(config: Config) -> frozenset[str]:
+    """The channels an item may ask for that this deployment has the settings for."""
+    configured = set()
+    for name in REQUESTABLE_CHANNELS:
+        try:
+            CHANNELS[name](config)
+        except ConfigError:
+            continue
+        configured.add(name)
+    return frozenset(configured)
+
+
+def apply_channel_choice(item: Item, configured: frozenset[str]) -> list[str]:
+    """Keep the channels a capture asked for that are configured; return the dropped ones so the
+    capture can say so right away instead of surprising the user at delivery time (ADR 0011)."""
+    if not item.channels:
+        return []
+    kept = [name for name in item.channels if name in configured]
+    dropped = [name for name in item.channels if name not in configured]
+    item.channels = kept or None
+    return dropped
+
+
 def build_notifier(config: Config) -> MultiNotifier:
     unknown = [name for name in config.channels if name not in CHANNELS]
     if unknown:
         raise ConfigError(f"Unknown channel(s): {', '.join(unknown)}. Available: {', '.join(CHANNELS)}")
-    return MultiNotifier({name: CHANNELS[name](config) for name in config.channels})
+    # Channels that aren't defaults but are configured stay available for items that ask for them.
+    extra = {}
+    for name in REQUESTABLE_CHANNELS:
+        if name in config.channels:
+            continue
+        try:
+            extra[name] = CHANNELS[name](config)
+        except ConfigError:
+            continue
+    return MultiNotifier({name: CHANNELS[name](config) for name in config.channels}, extra=extra)
 
 
 def default_channels() -> list[str]:

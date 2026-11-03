@@ -15,6 +15,7 @@ from xml.sax.saxutils import escape
 
 from maestro import commands
 from maestro.models import Item, Kind
+from maestro.notifier import apply_channel_choice
 from maestro.observability import METRICS
 from maestro.parser import parse
 from maestro.storage import Store
@@ -53,17 +54,26 @@ class TwilioHandler:
 
     kind = "message"
 
-    def __init__(self, store: Store, auth_token: str, owner_number: str):
+    def __init__(self, store: Store, auth_token: str, owner_number: str,
+                 requestable: frozenset[str] | None = None):
         self.store = store
         self.auth_token = auth_token
         self.owner = normalise_number(owner_number)
+        # The per-item channels this deployment can honour; None skips the capture-time check (#20).
+        self.requestable = requestable
 
     def verify(self, url: str, params: dict[str, str], signature: str | None) -> bool:
         return verify_signature(self.auth_token, url, params, signature)
 
-    def save(self, text: str, external_id: str | None, source: str) -> Item:
-        """Parse and save text from an inbound message, once per provider message/call id."""
+    def save(self, text: str, external_id: str | None, source: str) -> tuple[Item, str]:
+        """Parse and save text from an inbound message, once per provider message/call id. Also
+        returns a note for the sender when a chosen channel isn't configured (#20), else ""."""
         parsed = parse(text, tz=self.store.tz)
+        note = ""
+        if self.requestable is not None and (dropped := apply_channel_choice(parsed, self.requestable)):
+            kept = "the other requested channels" if parsed.channels else "the default channels"
+            note = f"{', '.join(dropped)} isn't configured; using {kept}."
+            log.warning("%s capture: %s", source, note)
         if not external_id:
             item, created = self.store.add(parsed), True
         else:
@@ -72,7 +82,7 @@ class TwilioHandler:
             METRICS.inc("maestro_captures_total", source=source)
         else:
             log.info("Twilio retried %s %s; returning the item already saved", source, external_id)
-        return item
+        return item, note
 
     def is_owner(self, params: dict[str, str], field: str = "From") -> bool:
         """Whether the owner is on the other end: the sender, or for calls Maestro placed, `To`."""
@@ -97,6 +107,6 @@ class SmsHandler(TwilioHandler):
         if command := commands.parse_command(text):
             return twiml(commands.run(self.store, command, channel=CHANNEL))
 
-        item = self.save(text, params.get("MessageSid"), source="sms")
+        item, note = self.save(text, params.get("MessageSid"), source="sms")
         hint = f" Reply 'done {item.id}' or 'snooze {item.id} 1h'." if item.kind == Kind.REMINDER else ""
-        return twiml(f"Saved {commands.line(item)}.{hint}")
+        return twiml(f"Saved {commands.line(item)}.{hint}" + (f" Note: {note}" if note else ""))

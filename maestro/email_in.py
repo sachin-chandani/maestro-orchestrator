@@ -34,7 +34,7 @@ from typing import Protocol
 
 from maestro import commands
 from maestro.models import Item
-from maestro.notifier import REMINDER_MESSAGE_ID_RE
+from maestro.notifier import REMINDER_MESSAGE_ID_RE, apply_channel_choice
 from maestro.observability import METRICS
 from maestro.parser import parse
 from maestro.storage import Store
@@ -160,9 +160,12 @@ def dedupe_key(message: EmailMessage, raw: bytes) -> str:
 
 class EmailPoller:
     def __init__(self, store: Store, settings: EmailSettings,
-                 connect: Callable[[EmailSettings], Mailbox] | None = None):
+                 connect: Callable[[EmailSettings], Mailbox] | None = None,
+                 requestable: frozenset[str] | None = None):
         self.store = store
         self.settings = settings
+        # The per-item channels this deployment can honour; None skips the capture-time check (#20).
+        self.requestable = requestable
         self.connect = connect or _connect  # looked up at construction, so it can be swapped in tests
         self.failures: dict[str, int] = {}  # by message hash: how many polls each has failed
 
@@ -248,8 +251,11 @@ class EmailPoller:
             if not text:
                 log.info("Ignoring email %s: no subject or text", fetched.uid)
                 return Outcome(None, done=True)
-            item, created = self.store.add_once("email", dedupe_key(message, fetched.raw),
-                                                parse(text, tz=self.store.tz))
+            parsed = parse(text, tz=self.store.tz)
+            if self.requestable is not None and (dropped := apply_channel_choice(parsed, self.requestable)):
+                log.warning("Email capture asked for %s, which isn't configured; keeping %s",
+                            ", ".join(dropped), parsed.channels or "the default channels")
+            item, created = self.store.add_once("email", dedupe_key(message, fetched.raw), parsed)
             if created:
                 METRICS.inc("maestro_captures_total", source="email")
             return Outcome(item, done=True)

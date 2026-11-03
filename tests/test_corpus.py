@@ -33,6 +33,8 @@ class Case:
     due: datetime | None
     rule: str | None
     line: int
+    channels: list[str] | None = None  # per-item channels (#20)
+    urgent: bool = False
 
 
 def load() -> list[Case]:
@@ -40,9 +42,14 @@ def load() -> list[Case]:
     for number, raw in enumerate(CORPUS.read_text().splitlines(), start=1):
         if not raw.strip() or raw.startswith("#"):
             continue
-        source, text, due, rule = (part.strip() for part in raw.split("|"))
+        # The 5th column is optional: channel names and/or "urgent", joined by "+", e.g.
+        # "twilio_sms+urgent". Absent or "-" means default channels and not urgent.
+        source, text, due, rule, *extra = (part.strip() for part in raw.split("|"))
+        flags = [f for f in (extra[0] if extra else "").split("+") if f and f != "-"]
         due_at = None if due == "-" else datetime.fromisoformat(due).replace(tzinfo=TZ)
-        cases.append(Case(source, text, due_at, None if rule == "-" else rule, number))
+        cases.append(Case(source, text, due_at, None if rule == "-" else rule, number,
+                          channels=[f for f in flags if f != "urgent"] or None,
+                          urgent="urgent" in flags))
     return cases
 
 
@@ -58,6 +65,10 @@ def check(case: Case) -> str | None:
         problems.append(f"due {got_due} != {want_due}")
     if (item.recurrence or None) != case.rule:
         problems.append(f"rule {item.recurrence} != {case.rule}")
+    if (item.channels or None) != case.channels:
+        problems.append(f"channels {item.channels} != {case.channels}")
+    if bool(item.urgent) != case.urgent:
+        problems.append(f"urgent {item.urgent} != {case.urgent}")
     return "; ".join(problems) or None
 
 

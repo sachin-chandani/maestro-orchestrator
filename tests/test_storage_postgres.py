@@ -410,3 +410,29 @@ def test_the_same_inbound_message_arriving_twice_at_once_captures_one_item(store
     assert sum(created for _, created in results) == 1
     assert len({item_id for item_id, _ in results}) == 1
     assert len(store.list()) == 1
+
+
+def test_migrates_a_version_1_database_with_real_rows(store):
+    """Migration 2 (per-item channels and the urgent flag, #20) applied to a database created
+    before it, with rows in place; see ADR 0011 for the NULL semantics."""
+    store.conn.execute("ALTER TABLE items DROP COLUMN channels")
+    store.conn.execute("ALTER TABLE items DROP COLUMN urgent")
+    store.conn.execute(
+        "INSERT INTO items (text, kind, status, due_at, created_at, source_text)"
+        " VALUES ('!take insulin', 'reminder', 'pending', %s, %s, '!take insulin at 11pm')",
+        (dt(2026, 10, 26, 23, 0), NOW),
+    )
+    store.conn.execute("UPDATE schema_version SET version = 1")
+    with open_store(pgsupport.URL, tz=TZ) as upgraded:
+        assert upgraded.schema_version == len(MIGRATIONS)
+        (item,) = upgraded.list()
+        assert item.channels is None and item.urgent is None
+
+        from maestro.quiet import is_urgent
+
+        assert is_urgent(item)  # pre-flag rows keep the text rule
+        # New rows written after the upgrade carry explicit values.
+        added = upgraded.add(Item(text="Pay rent", kind=Kind.REMINDER, created_at=NOW, due_at=LATER,
+                                  channels=["twilio_sms"], urgent=False))
+        saved = upgraded.get(added.id)
+        assert saved.channels == ["twilio_sms"] and saved.urgent is False

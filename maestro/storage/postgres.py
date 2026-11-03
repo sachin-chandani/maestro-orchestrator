@@ -96,6 +96,13 @@ MIGRATIONS: list[list[str]] = [
             expires_at TIMESTAMPTZ NOT NULL
         )""",
     ],
+    # 2: per-item channels and the urgent flag (#20, ADR 0011), matching SQLite's migration 9. Both
+    # nullable on purpose: NULL channels means MAESTRO_CHANNELS, and NULL urgent means the item
+    # predates the flag, so its urgency keeps being read from the text.
+    [
+        "ALTER TABLE items ADD COLUMN channels TEXT",
+        "ALTER TABLE items ADD COLUMN urgent BOOLEAN",
+    ],
 ]
 
 
@@ -241,18 +248,21 @@ class PostgresStore(Store):
             source_text=row["source_text"],
             recurrence=row["recurrence"],
             snoozed_until=self._from_db(row["snoozed_until"]),
+            channels=row["channels"].split(",") if row["channels"] else None,
+            urgent=row["urgent"],
         )
 
     _INSERT_ITEM = (
-        "INSERT INTO items (text, kind, status, due_at, created_at, source_text, recurrence)"
-        " VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id"
+        "INSERT INTO items (text, kind, status, due_at, created_at, source_text, recurrence,"
+        " channels, urgent) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id"
     )
 
     def _insert(self, item: Item) -> int:
         row = self._execute(
             self._INSERT_ITEM,
             (item.text, str(item.kind), str(item.status), self._to_db(item.due_at),
-             self._to_db(item.created_at), item.source_text, item.recurrence),
+             self._to_db(item.created_at), item.source_text, item.recurrence,
+             ",".join(item.channels) if item.channels else None, item.urgent),
         ).fetchone()
         assert row is not None  # RETURNING always yields a row
         return int(row["id"])

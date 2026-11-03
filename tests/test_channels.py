@@ -200,3 +200,57 @@ def test_empty_path_is_a_temporary_database(tmp_path, monkeypatch):
         store.add(Item(text="Call mom", kind=Kind.REMINDER, created_at=dt(2026, 10, 23)))
         assert store.journal_mode != "wal"
     assert list(tmp_path.iterdir()) == []
+
+
+def test_migrates_v8_database_and_old_rows_keep_text_based_urgency(tmp_path):
+    """Rows written before schema 9 have no channels or urgent flag: they come back as None, so
+    delivery uses the defaults and quiet hours keep reading urgency from the text (ADR 0011)."""
+    from conftest import dt
+
+    from maestro.quiet import is_urgent
+
+    path = tmp_path / "v8.db"
+    with Store(path) as store:
+        store.add(Item(text="!take insulin", kind=Kind.REMINDER, created_at=dt(2026, 10, 23),
+                       due_at=dt(2026, 10, 23, 23, 0)))
+        store.add(Item(text="water the plants", kind=Kind.REMINDER, created_at=dt(2026, 10, 23),
+                       due_at=dt(2026, 10, 24, 9, 0)))
+        store.conn.execute("ALTER TABLE items DROP COLUMN channels")
+        store.conn.execute("ALTER TABLE items DROP COLUMN urgent")
+        store.conn.execute("PRAGMA user_version = 8")  # as a 0.3 database
+        store.conn.commit()
+    with Store(path) as store:
+        assert store.schema_version == len(MIGRATIONS)
+        insulin, plants = store.list()
+        assert insulin.channels is None and insulin.urgent is None
+        assert is_urgent(insulin)  # "!" in the text still counts for pre-flag rows
+        assert not is_urgent(plants)
+
+
+def test_configured_channels_outside_the_defaults_are_available_as_extras():
+    config = Config.from_env({"MAESTRO_CHANNELS": "console",
+                              "TELEGRAM_BOT_TOKEN": "t", "TELEGRAM_CHAT_ID": "42"})
+    notifier = build_notifier(config)
+    assert list(notifier.channels) == ["console"]  # defaults are untouched
+    assert list(notifier.extra) == ["telegram"]  # only for items that asked for it
+
+
+def test_requestable_channels_reports_what_is_configured():
+    from maestro.notifier import requestable_channels
+
+    config = Config.from_env({"TELEGRAM_BOT_TOKEN": "t", "TELEGRAM_CHAT_ID": "42"})
+    assert requestable_channels(config) == frozenset({"telegram"})
+    assert requestable_channels(Config()) == frozenset()
+
+
+def test_apply_channel_choice_drops_only_what_is_missing():
+    from conftest import dt
+
+    from maestro.notifier import apply_channel_choice
+
+    item = Item(text="Pay rent", kind=Kind.REMINDER, created_at=dt(2026, 10, 23),
+                channels=["twilio_sms", "telegram"])
+    assert apply_channel_choice(item, frozenset({"telegram"})) == ["twilio_sms"]
+    assert item.channels == ["telegram"]
+    assert apply_channel_choice(item, frozenset()) == ["telegram"]
+    assert item.channels is None  # nothing left: fall back to the defaults

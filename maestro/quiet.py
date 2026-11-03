@@ -7,9 +7,10 @@ included), and escalation waits too. They stay due, so each is sent once when th
 hourly reminder held overnight sends one notice at 07:00, not eight. Escalation stages that came due
 in the window are timed again from its end, so they stay spaced out instead of arriving together.
 
-A reminder is urgent, and ignores quiet hours, when its text starts with "!" or contains the word
-"urgent" (but not "not urgent"), e.g. "!take insulin at 11pm". A per-item setting can replace this
-with per-item channels (#20).
+A reminder is urgent, and ignores quiet hours, when its `urgent` flag is set (#20): the parser sets
+it from a leading "!" (e.g. "!take insulin at 11pm") or the word "urgent" (but not "not urgent").
+Items stored before the flag existed carry None and are read by those same text rules, so upgrading
+never changes which reminders break through.
 """
 
 import re
@@ -18,16 +19,15 @@ from datetime import datetime, time, timedelta
 
 from maestro.models import Item
 from maestro.notifier import ConfigError
+from maestro.parser import text_says_urgent
 
 _TIME = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
-_URGENT = re.compile(r"\burgent\b", re.IGNORECASE)
-_NOT_URGENT = re.compile(r"\b(?:not|non|no|isn'?t|nothing)[\s-]+urgent\b", re.IGNORECASE)
 
 
 def is_urgent(item: Item) -> bool:
-    if item.text.lstrip().startswith("!"):
-        return True
-    return bool(_URGENT.search(item.text)) and not _NOT_URGENT.search(item.text)
+    if item.urgent is not None:
+        return item.urgent
+    return text_says_urgent(item.text)  # stored before the flag existed: the text decides
 
 
 @dataclass(frozen=True)

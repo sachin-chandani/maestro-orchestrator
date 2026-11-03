@@ -157,3 +157,10 @@ def test_deleting_an_item_forgets_its_inbound_id(handler):
     handler.store.delete(handler.store.list()[0].id)
     handler.handle(params)  # not a retry of anything that still exists
     assert len(handler.store.list()) == 1
+
+
+def test_capture_tells_the_sender_when_a_chosen_channel_is_not_configured():
+    handler = SmsHandler(Store(), TOKEN, OWNER, requestable=frozenset())
+    reply = handler.handle(sms("pay rent tomorrow, call me"))
+    assert handler.store.get(1).channels is None  # the unconfigured choice isn't stored
+    assert "Note: twilio_call isn't configured; using the default channels." in reply

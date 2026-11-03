@@ -108,6 +108,27 @@ def _channels(notifier: Notifier) -> dict[str, Notifier]:
     return notifier.channels if isinstance(notifier, MultiNotifier) else {"default": notifier}
 
 
+def _channels_for(store: Store, item: Item, item_id: int, due_at: datetime,
+                  defaults: dict[str, Notifier], notifier: Notifier) -> dict[str, Notifier]:
+    """The channels this one item goes out on: the ones it asked for (#20), or the defaults.
+
+    A choice that can't be honoured is never dropped silently (ADR 0011): channels that aren't
+    configured any more are reported — once per occurrence, when it first fires, not on every
+    retry tick — and whatever remains is used; with nothing left, the defaults are.
+    """
+    if not item.channels:
+        return defaults
+    pool = {**getattr(notifier, "extra", {}), **defaults}
+    chosen = {name: pool[name] for name in item.channels if name in pool}
+    if missing := [name for name in item.channels if name not in pool]:
+        if not store.deliveries(item_id, due_at):  # the occurrence's first tick
+            METRICS.inc("maestro_channel_fallbacks_total")
+            kept = ", ".join(chosen) if chosen else "the default channels"
+            log.warning("Reminder #%s asks for %s, which isn't configured; sending on %s",
+                        item.id, ", ".join(missing), kept)
+    return chosen or defaults
+
+
 def _occurrence(item: Item, now: datetime) -> tuple[int, datetime, bool] | None:
     """(id, occurrence, whether it's a snoozed one) for a stored, scheduled item that's due, else None.
     A snoozed occurrence of a recurring reminder goes first (it's always before the series' next one),
@@ -208,7 +229,8 @@ def fire_due(store: Store, notifier: Notifier, now: datetime | None = None, leas
         try:
             # Channels see the occurrence being sent as the due time (it's in message ids and call URLs).
             notice = dataclasses.replace(item, due_at=due_at, snoozed_until=None) if snoozed else item
-            if not _deliver(store, notice, item_id, due_at, channels, now):
+            if not _deliver(store, notice, item_id, due_at,
+                            _channels_for(store, item, item_id, due_at, channels, notifier), now):
                 continue
             METRICS.inc("maestro_reminders_fired_total")
             if snoozed:

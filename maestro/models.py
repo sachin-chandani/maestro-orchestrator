@@ -26,6 +26,11 @@ class Item:
     # A recurring reminder snoozed by the person: this occurrence is sent again then, while due_at keeps
     # the series' own time (ADR 0009). Always before due_at; None for one-off reminders.
     snoozed_until: datetime | None = None
+    # Channels this item is delivered on ("text me" -> ["twilio_sms"]); None means MAESTRO_CHANNELS.
+    channels: list[str] | None = None
+    # Urgent reminders ignore quiet hours. None means the item predates the flag (schema 9 / ADR 0011):
+    # urgency is then read from the text, as it was before. New items always carry an explicit value.
+    urgent: bool | None = None
     id: int | None = None
 
 
