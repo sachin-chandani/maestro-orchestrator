@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Connect your phone</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&amp;family=IBM+Plex+Mono:wght@500&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:#2F5BEA}a:hover{color:#1E3FB0}
+</style>
+</helmet>
+<div style="width: 390px; height: 844px; box-sizing: border-box; padding: 28px 20px 24px; display: flex; flex-direction: column; gap: 20px; background: #FFFFFF; color: #111827; font-family: 'IBM Plex Sans', system-ui, sans-serif">
+
+<div style="display: flex; gap: 6px" aria-label="Step 1 of 3">
+<span style="flex: 1 1 0; height: 4px; border-radius: 2px; background: {{accent}}"></span>
+<span style="flex: 1 1 0; height: 4px; border-radius: 2px; background: #E5E7EB"></span>
+<span style="flex: 1 1 0; height: 4px; border-radius: 2px; background: #E5E7EB"></span>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 8px">
+<h1 style="margin: 0; font-size: 26px; font-weight: 700; letter-spacing: -0.01em">Connect to your Maestro</h1>
+<p style="margin: 0; font-size: 15px; line-height: 22px; color: #4B5563">On your server, run <code style="font-family: 'IBM Plex Mono', monospace; font-size: 14px; background: #F3F4F6; padding: 2px 6px; border-radius: 4px">maestro pair</code> and scan the code it shows.</p>
+</div>
+
+<div style="position: relative; height: 280px; border-radius: 20px; background: #111827; display: flex; align-items: center; justify-content: center">
+<svg width="172" height="172" viewBox="0 0 172 172" role="img" aria-label="Pairing code in the camera frame">
+<rect x="0" y="0" width="172" height="172" rx="12" fill="#FFFFFF"></rect>
+<g fill="#111827">
+<rect x="16" y="16" width="40" height="40" rx="4"></rect><rect x="116" y="16" width="40" height="40" rx="4"></rect><rect x="16" y="116" width="40" height="40" rx="4"></rect>
+<rect x="68" y="16" width="12" height="12"></rect><rect x="88" y="28" width="12" height="12"></rect><rect x="68" y="44" width="12" height="12"></rect>
+<rect x="16" y="68" width="12" height="12"></rect><rect x="40" y="80" width="12" height="12"></rect><rect x="68" y="68" width="24" height="24"></rect>
+<rect x="104" y="68" width="12" height="12"></rect><rect x="128" y="80" width="12" height="12"></rect><rect x="144" y="68" width="12" height="12"></rect>
+<rect x="68" y="104" width="12" height="12"></rect><rect x="92" y="116" width="12" height="12"></rect><rect x="116" y="104" width="12" height="12"></rect>
+<rect x="140" y="128" width="16" height="12"></rect><rect x="68" y="140" width="24" height="16"></rect><rect x="116" y="144" width="12" height="12"></rect>
+</g>
+<g fill="#FFFFFF"><rect x="24" y="24" width="24" height="24" rx="2"></rect><rect x="124" y="24" width="24" height="24" rx="2"></rect><rect x="24" y="124" width="24" height="24" rx="2"></rect></g>
+<g fill="#111827"><rect x="30" y="30" width="12" height="12"></rect><rect x="130" y="30" width="12" height="12"></rect><rect x="30" y="130" width="12" height="12"></rect></g>
+</svg>
+<svg width="236" height="236" viewBox="0 0 236 236" aria-hidden="true" style="position: absolute; left: 50%; top: 50%; margin: -118px 0 0 -118px" fill="none" stroke="#FFFFFF" stroke-width="4" stroke-linecap="round"><path d="M2 40V14A12 12 0 0 1 14 2h26M196 2h26a12 12 0 0 1 12 12v26M234 196v26a12 12 0 0 1-12 12h-26M40 234H14A12 12 0 0 1 2 222v-26"></path></svg>
+</div>
+
+<div style="display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 12px; background: #ECFDF3; color: #166534">
+<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5L19 7"></path></svg>
+<div style="display: flex; flex-direction: column; gap: 2px; font-size: 14px"><b style="font-weight: 600">Found “Home server”</b><span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px">https://[your-server-address]</span></div>
+</div>
+
+<ul style="margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 10px; font-size: 14px; line-height: 20px; color: #374151">
+<li style="display: flex; gap: 10px"><span style="font-weight: 600; color: #111827; width: 16px">2</span>Allow notifications, so reminders reach you with the app closed.</li>
+<li style="display: flex; gap: 10px"><span style="font-weight: 600; color: #111827; width: 16px">3</span>Add to Home Screen. It opens like any other app.</li>
+</ul>
+
+<div style="flex: 1 1 auto"></div>
+
+<p style="margin: 0; font-size: 13px; line-height: 19px; color: #4B5563">This phone gets its own key. You can remove it any time from Settings on any device, without changing your server’s main token.</p>
+
+<div style="display: flex; flex-direction: column; gap: 10px">
+<button type="button" style="min-height: 52px; border-radius: 12px; border: 0; background: {{accent}}; color: #FFFFFF; font: 600 16px 'IBM Plex Sans', sans-serif; cursor: pointer">Connect this phone</button>
+<a href="#manual" style="min-height: 44px; display: flex; align-items: center; justify-content: center; font-size: 15px; font-weight: 500">Type the address instead</a>
+</div>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"accent":{"editor":"color","default":"#2F5BEA","options":["#2F5BEA","#0F766E","#7C3AED","#111827"]},"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return { accent: this.props.accent ?? '#2F5BEA' };
+  }
+}
+</script>
+</body>
+</html>

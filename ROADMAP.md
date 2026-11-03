@@ -42,7 +42,7 @@ Dates are targets, not promises. Work is tracked in [GitHub issues](https://gith
 | API | FastAPI, OpenAPI schema published with each release |
 | Storage | SQLite (default), PostgreSQL via the same store interface |
 | Scheduling | In-process loop; optional external worker for multi-instance setups |
-| Web UI | Server-rendered (Jinja + HTMX), no build step |
+| Web UI | React + TypeScript app (Vite), built in CI and served by `maestro serve` (ADR 0014); design in `docs/design/mobile/` |
 | Packaging | PyPI wheel, multi-arch Docker image on GHCR (amd64, arm64 for Raspberry Pi) |
 | Docs | MkDocs Material on GitHub Pages |
 | CI/CD | GitHub Actions: lint, test matrix, Docker build, release on tag |
@@ -119,6 +119,7 @@ Exit criteria: escalation proven end to end with fakes, acknowledgements on ever
 - [ ] Show what Maestro understood while you type (#94)
 - [ ] Settings for channels, quiet hours and escalation without a restart (#98)
 - [ ] Share to Maestro from any app, plus home-screen shortcuts (#97)
+- [ ] The web UI as a React app, built on mock data first, then connected to the backend (#109, ADR 0014)
 
 Exit criteria: a new phone goes from scanning a pairing code to its first push notification in under 2 minutes; everything doable from the CLI is doable from the web UI on a phone; e2e tests and an accessibility check run in CI; installable as an app with push.
 
