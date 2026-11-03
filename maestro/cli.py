@@ -3,11 +3,11 @@
 import argparse
 import logging
 import os
-import signal
 import sys
 import time
 from collections.abc import Callable
 from datetime import datetime
+from pathlib import Path
 from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
@@ -25,7 +25,9 @@ from maestro.notifier import (
 from maestro.observability import configure_logging
 from maestro.parser import parse, parse_duration
 from maestro.scheduler import Lease, fire_due, run_forever
+from maestro.shutdown import Shutdown
 from maestro.storage import (
+    RestoreBlockedError,
     SchemaTooNewError,
     Store,
     StoreConfigError,
@@ -33,9 +35,10 @@ from maestro.storage import (
     open_store,
     parse_url,
 )
-from maestro.tz import add_elapsed, get_timezone
+from maestro.tz import UTC, add_elapsed, get_timezone
 
 if TYPE_CHECKING:
+    from maestro.backup import ScheduledBackups
     from maestro.email_in import EmailWorker
     from maestro.escalation import Stage
     from maestro.quiet import QuietHours
@@ -85,6 +88,12 @@ def _build_parser(config: Config) -> argparse.ArgumentParser:
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8000)
     serve.add_argument("--interval", type=float, default=30.0, help="seconds between checks")
+
+    bak = sub.add_parser("backup", help="write the whole database to a portable file")
+    bak.add_argument("file", help="where to write it; the same file restores into SQLite or PostgreSQL")
+
+    restore = sub.add_parser("restore", help="replace the database's contents with a backup")
+    restore.add_argument("file", help="a file written by `maestro backup`")
 
     doctor = sub.add_parser("doctor", help="check configuration and channels before deploying")
     doctor.add_argument("--send-test", action="store_true", help="deliver a test message on every channel")
@@ -184,15 +193,19 @@ def _dispatch(args: argparse.Namespace, config: Config, store: Store, tz: ZoneIn
                 print(f"No item #{args.id}", file=sys.stderr)
                 return 1
             print(f"Snoozed: {_format(snoozed).strip()}")
+    elif args.command in ("backup", "restore"):
+        return _backup_restore(args, store, tz)
     elif args.command in ("run", "serve"):
         try:
             configure_logging(config.log_format, config.log_level)
             notifier = build_notifier(config)
+            from maestro.backup import scheduled_backups
             from maestro.escalation import build_stages
             from maestro.quiet import parse_quiet_hours
 
             escalation = build_stages(config)
             quiet = parse_quiet_hours(config.quiet_hours)
+            backups = scheduled_backups(config)
         except (ConfigError, ValueError) as e:
             print(f"Config error: {e}", file=sys.stderr)
             return 2
@@ -203,7 +216,7 @@ def _dispatch(args: argparse.Namespace, config: Config, store: Store, tz: ZoneIn
             print(f"Config error: {e}", file=sys.stderr)
             return 2
         if args.command == "serve":
-            return _serve(store, config, notifier, args, bot, email, escalation, quiet)
+            return _serve(store, config, notifier, args, bot, email, escalation, quiet, backups)
         if args.once:
             # Respect a running server's lease, and hand it straight back afterwards.
             lease = Lease()
@@ -215,14 +228,16 @@ def _dispatch(args: argparse.Namespace, config: Config, store: Store, tz: ZoneIn
             extra = " and listening on Telegram" if bot else ""
             print(f"Watching for due reminders every {args.interval:g}s via {', '.join(config.channels)}"
                   f"{extra}. Ctrl+C to stop.")
-            # docker stop / systemctl stop send SIGTERM: exit through the normal path so the scheduler
-            # lease is released and a standby takes over at once instead of after the TTL.
-            signal.signal(signal.SIGTERM, _exit_on_sigterm)
+            # docker stop / systemctl stop send SIGTERM: finish the reminder or command in flight, then
+            # exit through the normal path so the scheduler lease is released and a standby takes over
+            # at once instead of after the TTL (ADR 0012). An idle wait is cut short.
+            shutdown = Shutdown()
+            shutdown.install(chain=False)
             if email:
                 email.start()
             try:
-                run_forever(store, notifier, args.interval, wait=_wait_with(bot, email),
-                            escalation=escalation, quiet=quiet)
+                run_forever(store, notifier, args.interval, wait=_wait_with(bot, email, shutdown),
+                            escalation=escalation, quiet=quiet, shutdown=shutdown, backups=backups)
             except KeyboardInterrupt:
                 pass
             finally:
@@ -231,8 +246,49 @@ def _dispatch(args: argparse.Namespace, config: Config, store: Store, tz: ZoneIn
     return 0
 
 
-def _exit_on_sigterm(signum: int, frame: object) -> None:
-    raise SystemExit(0)
+def _backup_restore(args: argparse.Namespace, store: Store, tz: ZoneInfo) -> int:
+    """`maestro backup <file>` and `maestro restore <file>` (#59, ADR 0013). Anything that stops
+    either one — an unreadable file, an unwritable directory, a running scheduler — is a sentence
+    and exit code 2, because the operator can fix all of them."""
+    from maestro import backup
+
+    path = Path(args.file).expanduser()
+    try:
+        if args.command == "backup":
+            document = backup.write(store, path)
+            print(f"Backed up {_counted(len(document['tables']['items']['rows']), 'item')} to {path}.")
+            return 0
+        document = backup.load(path)
+        now = datetime.now(tz).replace(microsecond=0)
+        if (holder := store.lease_holder(now)) is not None:
+            # replace_all re-checks inside its transaction; this early look just keeps a refused
+            # restore from leaving a pre-restore file behind.
+            raise RestoreBlockedError(holder)
+        # The data about to be replaced is saved first, so a restore of the wrong file is undoable
+        # the same way. An empty database isn't worth a file.
+        if sum(store.counts().values()):
+            kept = path.parent / f"maestro-pre-restore-{now.astimezone(UTC):%Y%m%dT%H%M%SZ}.json"
+            backup.write(store, kept)
+            print(f"Saved what the database held to {kept}; `maestro restore` it if this was a mistake.")
+        report = backup.restore(store, document, now=now)
+        print(f"Restored {_counted(report.items, 'item')} from {path}.")
+        if report.overdue:
+            print(f"{_counted(report.overdue, 'reminder')} came due while the backup sat on disk; "
+                  "the next scheduler tick will send them.")
+        return 0
+    except backup.BackupError as e:
+        print(f"Restore error: {e}", file=sys.stderr)
+        return 2
+    except RestoreBlockedError as e:
+        print(f"Restore refused: {e}.", file=sys.stderr)
+        return 2
+    except OSError as e:
+        print(f"{args.command.capitalize()} error: {e}", file=sys.stderr)
+        return 2
+
+
+def _counted(count: int, what: str) -> str:
+    return f"{count} {what}{'' if count == 1 else 's'}"
 
 
 def _build_bot(config: Config, store: Store) -> "TelegramBot | None":
@@ -256,35 +312,48 @@ def _build_email(config: Config, store: Store) -> "EmailWorker | None":
     return EmailWorker(EmailPoller(store, settings, requestable=requestable_channels(config)))
 
 
-def _wait_with(bot: "TelegramBot | None", email: "EmailWorker | None") -> Callable[[float], None]:
+def _wait_with(bot: "TelegramBot | None", email: "EmailWorker | None",
+               shutdown: Shutdown | None = None) -> Callable[[float], None]:
     """Between scheduler ticks: capture mail the background worker fetched (never blocks), then
-    long-poll Telegram (or just sleep)."""
-    then = _bot_wait(bot) if bot else time.sleep
+    long-poll Telegram (or just sleep). Capturing is finished once started; a stop requested during
+    it skips the wait so the loop can exit."""
+    shutdown = shutdown or Shutdown()
+    then = _bot_wait(bot, shutdown) if bot else time.sleep
 
     def wait(seconds: float) -> None:
         if email:
-            email.process()
-        then(seconds)
+            with shutdown.busy():
+                email.process()
+        if not shutdown.requested:
+            then(seconds)
 
     return wait
 
 
-def _bot_wait(bot: "TelegramBot") -> Callable[[float], None]:
-    """Use the wait between scheduler ticks to long-poll Telegram, so messages are answered right away."""
+def _bot_wait(bot: "TelegramBot", shutdown: Shutdown) -> Callable[[float], None]:
+    """Use the wait between scheduler ticks to long-poll Telegram, so messages are answered right away.
+    The poll itself may be interrupted (Telegram re-sends what wasn't confirmed); handling a fetched
+    batch, which writes to the store and replies, is finished first."""
 
     def wait(seconds: float) -> None:
         try:
-            bot.poll_once(timeout=max(1, int(seconds)))
+            updates = bot.fetch(timeout=max(1, int(seconds)))
         except Exception:
             logging.exception("Telegram polling failed; retrying after the next tick")
-            time.sleep(seconds)
+            if not shutdown.requested:
+                time.sleep(seconds)
+            return
+        with shutdown.busy():
+            for update in updates:
+                bot.handle(update)
 
     return wait
 
 
 def _serve(store: Store, config: Config, notifier: Notifier, args: argparse.Namespace,
            bot: "TelegramBot | None" = None, email: "EmailWorker | None" = None,
-           escalation: "list[Stage] | None" = None, quiet: "QuietHours | None" = None) -> int:
+           escalation: "list[Stage] | None" = None, quiet: "QuietHours | None" = None,
+           backups: "ScheduledBackups | None" = None) -> int:
     try:
         import uvicorn
 
@@ -306,6 +375,7 @@ def _serve(store: Store, config: Config, notifier: Notifier, args: argparse.Name
         voice = VoiceHandler(store, config.twilio_auth_token, config.sms_to, requestable=requestable)
     app = create_app(store, api_token=config.api_token, notifier=notifier, interval=args.interval, bot=bot,
                      sms=sms, voice=voice, email=email, escalation=escalation, quiet=quiet,
+                     backups=backups,
                      public_url=config.public_url, requestable=requestable_channels(config),
                      limits=RateLimits(config.rate_limit_webhook, config.rate_limit_auth_failures,
                                        config.trust_proxy_headers))

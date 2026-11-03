@@ -87,8 +87,8 @@ Exit criteria: capture from every source above, parser corpus >= 95%, exactly-on
 - [x] Quiet hours (#13)
 - [x] Per-item channel choice: "text me", "call me", "email me" (#20)
 - [ ] Channel plugins via entry points (#14)
-- [ ] Local backup and restore (#59)
-- [ ] Graceful shutdown and documented at-least-once delivery (#60)
+- [x] Local backup and restore (#59)
+- [x] Graceful shutdown and documented at-least-once delivery (#60)
 - [ ] Telegram: act on the reminder you replied to (#61)
 
 Exit criteria: escalation proven end to end with fakes, acknowledgements on every channel, backups restorable.

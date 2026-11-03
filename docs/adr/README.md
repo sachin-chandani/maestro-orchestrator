@@ -16,3 +16,5 @@ Add a new numbered file for each decision; supersede rather than edit old ones.
 | [0009](0009-recurring-actions-apply-to-one-occurrence.md) | Done and snooze on a recurring reminder apply to one occurrence | Accepted |
 | [0010](0010-postgresql-backend.md) | PostgreSQL as a second backend behind one storage interface | Accepted |
 | [0011](0011-per-item-channels-and-urgent-flag.md) | Per-item channels and the urgent flag are stored, with fallbacks that never drop a reminder | Accepted |
+| [0012](0012-graceful-shutdown.md) | SIGTERM finishes the work in flight, then stops | Accepted |
+| [0013](0013-portable-backup-format.md) | One portable backup format, restored transactionally | Accepted |

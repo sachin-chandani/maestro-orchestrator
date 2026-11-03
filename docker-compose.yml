@@ -2,6 +2,9 @@ services:
   maestro:
     build: .
     restart: unless-stopped
+    # SIGTERM lets a reminder being sent finish and be recorded before the process exits (ADR 0012);
+    # the default 10 s is not always enough for one reminder across every channel.
+    stop_grace_period: 45s
     env_file: .env
     ports:
       - "127.0.0.1:8000:8000"

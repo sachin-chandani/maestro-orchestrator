@@ -15,6 +15,7 @@ import socket
 import time
 import uuid
 from collections.abc import Callable
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
@@ -24,10 +25,12 @@ from maestro.models import Delivery, Item
 from maestro.notifier import MultiNotifier, Notifier
 from maestro.observability import METRICS
 from maestro.quiet import is_urgent
+from maestro.shutdown import Shutdown
 from maestro.storage import Store
 from maestro.tz import UTC, localize
 
 if TYPE_CHECKING:
+    from maestro.backup import ScheduledBackups
     from maestro.escalation import Stage
     from maestro.quiet import QuietHours
 
@@ -179,12 +182,15 @@ def _deliver(store: Store, item: Item, item_id: int, due_at: datetime, channels:
 
 
 def fire_due(store: Store, notifier: Notifier, now: datetime | None = None, lease: Lease | None = None,
-             escalation: "list[Stage] | None" = None, quiet: "QuietHours | None" = None) -> list[Item]:
+             escalation: "list[Stage] | None" = None, quiet: "QuietHours | None" = None,
+             shutdown: Shutdown | None = None) -> list[Item]:
     """Deliver due reminders, then any escalation stages that are due. Returns the items whose
     occurrence is finished this tick.
 
     With a lease, nothing is sent unless this scheduler holds it, and it is renewed before each item.
     During quiet hours, non-urgent reminders and their escalations are held (left due) until the window ends.
+    With a `shutdown` that gets requested mid-tick, the reminder being delivered is finished and recorded,
+    and the rest are left due for the next scheduler.
     """
     now = localize(now, store.tz) if now else datetime.now(UTC)
     if lease and not lease.acquire(store, now):
@@ -197,7 +203,7 @@ def fire_due(store: Store, notifier: Notifier, now: datetime | None = None, leas
     def held(item: Item) -> bool:
         return quiet is not None and quiet.holds(item, local)
 
-    finished = []
+    finished: list[Item] = []
     due: list[tuple[Item, int, datetime, bool]] = []
     holding = 0
     for item in store.due(now):
@@ -224,6 +230,11 @@ def fire_due(store: Store, notifier: Notifier, now: datetime | None = None, leas
     lag = max(((now - late_since(item, due_at)).total_seconds() for item, _, due_at, _ in due), default=0)
     METRICS.set("maestro_scheduler_lag_seconds", lag)
     for item, item_id, due_at, snoozed in due:
+        if shutdown and shutdown.requested:
+            # Stopping (SIGTERM): the reminder in flight was finished and recorded; the rest stay due
+            # for the next leader, which takes them within a tick.
+            log.info("Stopping with %d due reminder(s) left for the next scheduler", len(due) - len(finished))
+            break
         if lease and not lease.acquire(store, now):
             break  # lost the lease mid-tick: the new holder takes it from here
         try:
@@ -252,19 +263,25 @@ def fire_due(store: Store, notifier: Notifier, now: datetime | None = None, leas
             # One broken item (e.g. a corrupt recurrence rule) must not stop the others.
             METRICS.inc("maestro_scheduler_errors_total")
             log.exception("Failed to process reminder #%s", item_id)
-    if escalation and (not lease or lease.acquire(store, now)):
+    def may_continue() -> bool:
+        # Escalation stops for the same two reasons the main loop does: someone else leads, or we're stopping.
+        return not (shutdown and shutdown.requested) and (not lease or lease.acquire(store, now))
+
+    if escalation and may_continue():
         from maestro.escalation import escalate
 
-        escalate(store, escalation, now, _deliver, MAX_ATTEMPTS,
-                 renew=(lambda: lease.acquire(store, now)) if lease else (lambda: True), quiet=quiet)
+        escalate(store, escalation, now, _deliver, MAX_ATTEMPTS, renew=may_continue, quiet=quiet)
     return finished
 
 
 def tick(store: Store, notifier: Notifier, lease: Lease | None = None,
-         escalation: "list[Stage] | None" = None, quiet: "QuietHours | None" = None) -> None:
-    """One scheduler pass for a long-running loop: errors are logged and counted, never raised."""
+         escalation: "list[Stage] | None" = None, quiet: "QuietHours | None" = None,
+         shutdown: Shutdown | None = None) -> None:
+    """One scheduler pass for a long-running loop: errors are logged and counted, never raised.
+    A tick is `busy` work: a SIGTERM during it is honoured between reminders, not in the middle of one."""
     try:
-        fire_due(store, notifier, lease=lease, escalation=escalation, quiet=quiet)
+        with shutdown.busy() if shutdown else nullcontext():
+            fire_due(store, notifier, lease=lease, escalation=escalation, quiet=quiet, shutdown=shutdown)
     except Exception:
         METRICS.inc("maestro_scheduler_errors_total")
         log.exception("Scheduler tick failed; retrying next tick")
@@ -272,14 +289,24 @@ def tick(store: Store, notifier: Notifier, lease: Lease | None = None,
 
 def run_forever(store: Store, notifier: Notifier, interval: float = 30.0,
                 wait: Callable[[float], None] = time.sleep, lease: Lease | None = None,
-                escalation: "list[Stage] | None" = None, quiet: "QuietHours | None" = None) -> None:
+                escalation: "list[Stage] | None" = None, quiet: "QuietHours | None" = None,
+                shutdown: Shutdown | None = None, backups: "ScheduledBackups | None" = None) -> None:
     """Fire due reminders every `interval` seconds. `wait` can do useful work while it waits,
-    e.g. long-poll a chat bot for new messages. The lease is released on the way out (Ctrl+C,
-    SIGTERM handled as an exception) so a standby scheduler can take over at once."""
+    e.g. long-poll a chat bot for new messages. Stops when `shutdown` is requested (SIGTERM), after
+    the reminder in flight is finished, or on an exception from `wait` (Ctrl+C); either way the
+    lease is released on the way out so a standby scheduler can take over at once. With `backups`,
+    the leader writes a scheduled backup after a tick when one is due (#59)."""
     lease = lease or Lease.for_interval(interval)
+    shutdown = shutdown or Shutdown()
     try:
         while True:
-            tick(store, notifier, lease, escalation, quiet)
+            tick(store, notifier, lease, escalation, quiet, shutdown)
+            if shutdown.requested:
+                # Either the tick saw the request and finished the reminder in flight, or it arrived
+                # during the wait: fire_due stops before delivering anything once a stop is asked for.
+                break
+            if backups and lease.held:  # only the leader, so one database gets one backup series
+                backups.maybe_run(store)
             wait(interval)
     finally:
         lease.release(store)

@@ -8,11 +8,13 @@ connection is never used from two threads at once.
 import asyncio
 import hmac
 import logging
+import signal
+import threading
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import datetime
 from importlib.resources import files
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeVar
 from urllib.parse import parse_qs
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, status
@@ -26,6 +28,7 @@ from maestro.observability import METRICS, Labels
 from maestro.parser import parse, parse_duration
 from maestro.ratelimit import RateLimits, TokenBucket
 from maestro.scheduler import Lease, tick
+from maestro.shutdown import Shutdown
 from maestro.sms import WEBHOOK_PATH, SmsHandler, TwilioHandler
 from maestro.storage import Store
 from maestro.tz import add_elapsed
@@ -38,23 +41,31 @@ from maestro.voice import (
 )
 
 if TYPE_CHECKING:
+    from maestro.backup import ScheduledBackups
     from maestro.email_in import EmailWorker
     from maestro.escalation import Stage
     from maestro.quiet import QuietHours
     from maestro.telegram import TelegramBot
 
 log = logging.getLogger(__name__)
+T = TypeVar("T")
 
 WEB_UI = files("maestro").joinpath("web/index.html").read_text(encoding="utf-8")
 
 
 async def _scheduler_loop(store: Store, notifier: Notifier, interval: float,
-                          escalation: "list[Stage] | None" = None, quiet: "QuietHours | None" = None) -> None:
-    # Runs on the event loop with the request handlers, keeping SQLite access single-threaded.
+                          escalation: "list[Stage] | None" = None, quiet: "QuietHours | None" = None,
+                          shutdown: Shutdown | None = None,
+                          backups: "ScheduledBackups | None" = None) -> None:
+    # Runs on the event loop with the request handlers, keeping SQLite access single-threaded. A tick
+    # blocks the loop, so a SIGTERM during one is seen by the tick itself (through `shutdown`), which
+    # stops between reminders; the cancellation lands at the sleep.
     lease = Lease.for_interval(interval)
     try:
-        while True:
-            tick(store, notifier, lease, escalation, quiet)
+        while not (shutdown and shutdown.requested):
+            tick(store, notifier, lease, escalation, quiet, shutdown)
+            if backups and lease.held and not (shutdown and shutdown.requested):
+                backups.maybe_run(store)  # only the leader, so one database gets one backup series
             await asyncio.sleep(interval)
     finally:  # cancelled at shutdown: hand over to any standby scheduler right away
         lease.release(store)
@@ -67,11 +78,44 @@ async def _email_loop(worker: "EmailWorker") -> None:
         await asyncio.sleep(1)
 
 
+async def _in_background_thread(fn: Callable[[], T]) -> T:
+    """Run a blocking call in a thread the process doesn't wait for at exit.
+
+    `asyncio.to_thread` uses the default executor, which `asyncio.run` joins at shutdown: a Telegram
+    long poll (up to 35 s) would hold `docker stop` for that long. A daemon thread is abandoned
+    instead; what it was fetching is re-sent by Telegram, since it was never confirmed.
+    """
+    loop = asyncio.get_running_loop()
+    future: asyncio.Future[T] = loop.create_future()
+
+    def settle(result: T | None, error: Exception | None) -> None:
+        if future.done():
+            return  # cancelled while the thread was working
+        if error is not None:
+            future.set_exception(error)
+        else:
+            future.set_result(result)  # type: ignore[arg-type]  # None only ever comes with an error
+
+    def run() -> None:
+        try:
+            outcome: tuple[T | None, Exception | None] = (fn(), None)
+        except Exception as e:
+            outcome = (None, e)
+        try:
+            loop.call_soon_threadsafe(settle, *outcome)
+        except RuntimeError:
+            pass  # the loop is closed: the process is exiting and nobody is waiting
+
+    threading.Thread(target=run, name="maestro-telegram", daemon=True).start()
+    return await future
+
+
 async def _bot_loop(bot: "TelegramBot") -> None:
-    # The long poll runs in a worker thread; handling (which touches SQLite) stays on the event loop.
+    # The long poll runs in a background thread; handling (which touches SQLite) stays on the event
+    # loop and, being synchronous, always finishes the fetched batch before a cancellation lands.
     while True:
         try:
-            updates = await asyncio.to_thread(bot.fetch)
+            updates = await _in_background_thread(bot.fetch)
         except Exception:
             log.exception("Telegram polling failed; retrying in 10s")
             await asyncio.sleep(10)
@@ -125,7 +169,8 @@ def create_app(store: Store, api_token: str | None = None, notifier: Notifier | 
                public_url: str | None = None, limits: RateLimits | None = None,
                voice: VoiceHandler | None = None, email: "EmailWorker | None" = None,
                escalation: "list[Stage] | None" = None, quiet: "QuietHours | None" = None,
-               requestable: frozenset[str] | None = None) -> FastAPI:
+               requestable: frozenset[str] | None = None,
+               backups: "ScheduledBackups | None" = None) -> FastAPI:
     """Build the app. With a notifier, due reminders are also fired from a background task;
     with a bot (maestro.telegram.TelegramBot), chat messages are handled from another; with an
     SmsHandler (maestro.sms), the Twilio webhook is enabled. `public_url` is the externally visible
@@ -134,19 +179,29 @@ def create_app(store: Store, api_token: str | None = None, notifier: Notifier | 
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        # uvicorn has already installed its SIGTERM handler (which stops serving); ours runs first and
+        # tells a tick in progress to stop between reminders, then hands the signal on (ADR 0012).
+        shutdown = Shutdown()
+        previous = shutdown.install(chain=True)
         tasks: list[asyncio.Task[None]] = []
         if notifier:
-            tasks.append(asyncio.create_task(_scheduler_loop(store, notifier, interval, escalation, quiet)))
+            tasks.append(asyncio.create_task(_scheduler_loop(store, notifier, interval, escalation, quiet,
+                                                             shutdown, backups)))
         if bot:
             tasks.append(asyncio.create_task(_bot_loop(bot)))
         if email:
             email.start()
             tasks.append(asyncio.create_task(_email_loop(email)))
         yield
+        shutdown.request()
         for task in tasks:
             task.cancel()
+        # Wait for them, so the lease is released and the batch in hand is handled before the loop closes.
+        await asyncio.gather(*tasks, return_exceptions=True)
         if email:
             email.stop()
+        if previous is not None:
+            signal.signal(signal.SIGTERM, previous)
 
     app = FastAPI(title="Maestro", version=__version__, lifespan=lifespan,
                   description="Self-hosted second brain: capture things to remember, get reminded.")

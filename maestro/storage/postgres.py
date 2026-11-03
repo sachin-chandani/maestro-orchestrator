@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import builtins
 import logging
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -29,7 +29,7 @@ from psycopg.rows import dict_row
 from maestro.models import Acknowledgement, Delivery, Item, Kind, Status
 from maestro.observability import METRICS
 from maestro.storage import logic, migrations
-from maestro.storage.base import Store
+from maestro.storage.base import BACKUP_TABLES, RestoreBlockedError, Row, Store, TableSpec
 from maestro.tz import UTC, get_timezone, localize
 
 log = logging.getLogger(__name__)
@@ -594,3 +594,54 @@ class PostgresStore(Store):
     def release_lease(self, owner: str) -> None:
         with self._transaction():
             self._execute("DELETE FROM scheduler_lease WHERE id = 1 AND owner = %s", (owner,))
+
+    # --- backup and restore (#59) ---------------------------------------------------------------
+
+    def export_rows(self, table: TableSpec) -> builtins.list[Row]:
+        # One transaction per backup would be nicer, except the interface hands over one table at a
+        # time; REPEATABLE READ here would end at the method's return anyway. A single statement is
+        # a consistent snapshot of its table, and the backup is taken while writers are idle (the
+        # scheduler between ticks) or by the leader itself.
+        rows = self._execute(f"SELECT {', '.join(table.columns)} FROM {table.name}").fetchall()
+        return [self._portable(table, row) for row in rows]
+
+    def _portable(self, table: TableSpec, row: dict) -> Row:
+        out: Row = {}
+        for column in table.columns:
+            value = row[column]
+            if column in table.times:
+                value = self._from_db(value)
+            out[column] = value  # timestamptz and boolean already come back as datetime and bool
+        return out
+
+    def replace_all(self, rows: Mapping[str, builtins.list[Row]], now: datetime) -> None:
+        with self._transaction():
+            self._lock(_LEASE_LOCK)  # held to commit: no scheduler can take the lease mid-restore
+            held = self._execute(
+                "SELECT owner FROM scheduler_lease WHERE id = 1 AND expires_at > %s", (self._to_db(now),)
+            ).fetchone()
+            if held is not None:
+                raise RestoreBlockedError(str(held["owner"]))
+            self._execute("DELETE FROM scheduler_lease")  # whoever held it is gone; don't revive it
+            for table in BACKUP_TABLES:
+                self._execute(f"DELETE FROM {table.name}")
+                placeholders = ", ".join("%s" for _ in table.columns)
+                for row in rows.get(table.name, []):
+                    self._execute(
+                        f"INSERT INTO {table.name} ({', '.join(table.columns)})"
+                        f" VALUES ({placeholders})",
+                        tuple(self._storable(table, column, row[column]) for column in table.columns),
+                    )
+            # Unlike SQLite's AUTOINCREMENT, the id sequence ignores explicit inserts: move it past
+            # the backup's highest id, never backwards, so new items don't reuse an id.
+            self._execute(
+                "SELECT setval('items_id_seq',"
+                " GREATEST((SELECT last_value FROM items_id_seq), COALESCE((SELECT MAX(id) FROM items),"
+                " 1)))"
+            )
+
+    def _storable(self, table: TableSpec, column: str, value: object) -> object:
+        if column in table.times:
+            assert value is None or isinstance(value, datetime)  # replace_all is fed portable rows
+            return self._to_db(value)
+        return value

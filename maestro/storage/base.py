@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import builtins
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import datetime
 from types import TracebackType
 from typing import Self
@@ -21,11 +23,69 @@ from zoneinfo import ZoneInfo
 from maestro.models import Acknowledgement, Delivery, Item, Status
 from maestro.storage.logic import ACK_WINDOW
 
-__all__ = ["ACK_WINDOW", "SchemaTooNewError", "Store"]
+__all__ = ["ACK_WINDOW", "BACKUP_TABLES", "COLUMN_DEFAULTS", "RestoreBlockedError", "Row",
+           "SchemaTooNewError", "Store", "TableSpec"]
+
+#: One exported or restored row: portable values only — aware datetimes for time columns, bool for
+#: flag columns, otherwise int, str or None. Never a backend's own storage type.
+Row = dict[str, object]
 
 
 class SchemaTooNewError(RuntimeError):
     """The database was migrated by a newer Maestro than this one."""
+
+
+class RestoreBlockedError(RuntimeError):
+    """A restore was refused because a scheduler holds an unexpired lease (a server is running)."""
+
+    def __init__(self, holder: str):
+        self.holder = holder
+        super().__init__(
+            f"a scheduler is running ({holder}); stop it first, or wait for its lease to expire"
+        )
+
+
+@dataclass(frozen=True)
+class TableSpec:
+    """One table as it appears in a backup (#59): its name and columns, and which columns hold
+    timestamps or booleans, so every backend exports and restores the same portable values.
+
+    A migration that adds a column must extend the spec, or backups would silently omit it;
+    `tests/test_backup.py` compares the spec against each backend's real schema.
+    """
+
+    name: str
+    columns: tuple[str, ...]
+    times: frozenset[str] = frozenset()
+    flags: frozenset[str] = frozenset()
+
+
+#: Everything a backup carries. The scheduler lease is deliberately absent: it names a process on a
+#: machine, not data, and restoring it could stop the next scheduler from starting.
+BACKUP_TABLES: tuple[TableSpec, ...] = (
+    TableSpec("items",
+              ("id", "text", "kind", "status", "due_at", "created_at", "source_text", "recurrence",
+               "snoozed_until", "channels", "urgent"),
+              times=frozenset({"due_at", "created_at", "snoozed_until"}),
+              flags=frozenset({"urgent"})),
+    TableSpec("deliveries",
+              ("item_id", "occurrence", "channel", "attempts", "delivered_at", "next_attempt_at",
+               "last_error"),
+              times=frozenset({"occurrence", "delivered_at", "next_attempt_at"})),
+    TableSpec("acknowledgements",
+              ("item_id", "occurrence", "acknowledged_at", "via"),
+              times=frozenset({"occurrence", "acknowledged_at"})),
+    TableSpec("inbound_messages", ("source", "external_id", "item_id")),
+)
+
+#: What restore fills in when a backup from an older Maestro lacks a column: exactly the value the
+#: schema migrations would give an existing row. Columns absent here are required, and a backup
+#: without them is refused. `tests/test_backup.py` checks these against the real schema defaults.
+COLUMN_DEFAULTS: dict[str, Row] = {
+    "items": {"source_text": "", "recurrence": None, "snoozed_until": None, "channels": None,
+              "urgent": None},
+    "deliveries": {"attempts": 0, "delivered_at": None, "next_attempt_at": None, "last_error": None},
+}
 
 
 class Store(ABC):
@@ -210,3 +270,22 @@ class Store(ABC):
     @abstractmethod
     def release_lease(self, owner: str) -> None:
         """Give up the lease (on shutdown) so a standby scheduler can take over at once."""
+
+    # --- backup and restore (#59) ------------------------------------------------------------
+
+    @abstractmethod
+    def export_rows(self, table: TableSpec) -> builtins.list[Row]:
+        """Every row of one backup table, as portable values (see `Row`). The tables of one backup
+        are read in a single snapshot: items never reference deliveries the backup doesn't hold."""
+
+    @abstractmethod
+    def replace_all(self, rows: Mapping[str, builtins.list[Row]], now: datetime) -> None:
+        """Replace the contents of every backup table with `rows`, atomically: after a crash
+        mid-restore the old data is still there.
+
+        Ids are kept exactly as given (they live on in chat buttons and reply flows), and new items
+        after the restore never reuse an id the database has already handed out, even one the backup
+        no longer contains. The stale scheduler lease is cleared. Raises RestoreBlockedError without
+        touching anything if a scheduler holds an unexpired lease at `now` — the check happens inside
+        the same transaction, so a scheduler can't start unnoticed between check and load.
+        """
