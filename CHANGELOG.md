@@ -6,6 +6,7 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- The new React web app (ADR 0014), served by `maestro serve` at `/app` while it's built; `/` keeps the current page. The wheel and the Docker image include it (Node is only needed to build it); a source checkout without a build gets a page at `/app` explaining how to build. For now it's a placeholder on sample data; see `web-app/README.md` (#100)
 - Per-item channels: say `text me`, `call me`, `email me` or `on telegram` in a capture and that one reminder is delivered there instead of `MAESTRO_CHANNELS`. Only clear instructions count ("call me a cab" stays text); several can be combined (`text me and email me`). The chosen channel needs its settings but not a `MAESTRO_CHANNELS` entry; asking for an unconfigured one says so at capture (CLI, API, Telegram; SMS/voice and email captures log it) and keeps the rest of the choice, and a stored choice that loses its configuration falls back at delivery — the still-configured channels, else the defaults — logged once per occurrence (metric `maestro_channel_fallbacks_total`). Shown in `maestro list`, the web UI and the API (`channels`) (#20)
 - An `urgent` flag, set at capture from a leading `!` (now dropped from the reminder text) or the word "urgent"; quiet hours read the flag. Items stored by an older Maestro keep being judged by their text. Shown in `maestro list`, the web UI and the API (`urgent`) (#20)
 

@@ -32,6 +32,9 @@ path = "maestro/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["maestro"]
+# The React app built by `npm run build` in web-app/ (ADR 0014). It's gitignored, which hatch would
+# otherwise skip; without a build the wheel still works and /app explains how to build.
+artifacts = ["maestro/web/app/**"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

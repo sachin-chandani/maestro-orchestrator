@@ -9,6 +9,8 @@
 node_modules/
 dist/
 build/
+# Built React app (npm run build in web-app/)
+maestro/web/app/
 __pycache__/
 *.pyc
 .venv/

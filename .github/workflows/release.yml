@@ -28,6 +28,12 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
       - run: pip install build '.[dev]'
       - run: ruff check . && pytest -q
+      # The wheel ships the built React app (ADR 0014), so build it first.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm ci && npm run build
+        working-directory: web-app
       - run: python -m build
       - uses: actions/upload-artifact@v4
         with:

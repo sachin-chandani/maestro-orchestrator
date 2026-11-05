@@ -37,6 +37,25 @@ jobs:
       # Coverage gate: fail_under in pyproject.toml.
       - run: pytest -q --cov --cov-report=term
 
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web-app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web-app/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run format:check
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
   audit:
     runs-on: ubuntu-latest
     steps:
@@ -49,6 +68,12 @@ jobs:
       # so its dependencies (and the runner's pip) can't fail the job.
       - run: pip freeze --exclude-editable > runtime-requirements.txt
       - run: pipx run pip-audit --requirement runtime-requirements.txt --no-deps --disable-pip
+      # The web app's shipped dependencies; dev tools (lint, test) never reach users, like pip-audit above.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm audit --omit=dev
+        working-directory: web-app
 
   docker:
     runs-on: ubuntu-latest

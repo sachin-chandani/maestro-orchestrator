@@ -1,0 +1,6 @@
+# Keep the build context small and never copy a local build over the one made in the image.
+.git
+.venv
+**/__pycache__
+web-app/node_modules
+maestro/web/app

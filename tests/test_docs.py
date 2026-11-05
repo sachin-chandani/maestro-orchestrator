@@ -66,8 +66,9 @@ def test_notes_say_note(client):
 
 
 def test_links_to_repository_files_resolve():
-    def visible(path: Path) -> bool:  # skips .venv, .github, caches
-        return not any(part.startswith(".") for part in path.relative_to(ROOT).parts)
+    def visible(path: Path) -> bool:  # skips .venv, .github, caches and installed npm packages
+        parts = path.relative_to(ROOT).parts
+        return not any(part.startswith(".") or part == "node_modules" for part in parts)
 
     docs = [p for p in ROOT.rglob("*.md") if visible(p)]
     assert len(docs) > 10

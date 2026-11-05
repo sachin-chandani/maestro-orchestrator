@@ -12,11 +12,13 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import datetime
 from importlib.resources import files
+from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import parse_qs
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, status
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from maestro import __version__, commands, recurrence
@@ -46,6 +48,15 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 WEB_UI = files("maestro").joinpath("web/index.html").read_text(encoding="utf-8")
+
+# The React app (ADR 0014), built into here by `npm run build` in web-app/ and served at /app.
+WEB_APP_DIR = Path(__file__).parent / "web" / "app"
+WEB_APP_MISSING = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Maestro web app not built</title></head>
+<body><h1>The web app hasn't been built</h1>
+<p>From a source checkout, run <code>cd web-app &amp;&amp; npm ci &amp;&amp; npm run build</code>,
+then restart <code>maestro serve</code>. The current web UI is at <a href="/">/</a>.</p></body></html>
+"""
 
 
 async def _scheduler_loop(store: Store, notifier: Notifier, interval: float,
@@ -255,6 +266,14 @@ def create_app(store: Store, api_token: str | None = None, notifier: Notifier | 
     async def web_ui() -> HTMLResponse:
         # The page itself holds no data; it calls the token-protected API from the browser.
         return HTMLResponse(WEB_UI)
+
+    # Public like /: the app holds no data and calls the token-protected API from the browser.
+    if (WEB_APP_DIR / "index.html").is_file():
+        app.mount("/app", StaticFiles(directory=WEB_APP_DIR, html=True), name="web-app")
+    else:
+        @app.get("/app/{path:path}", include_in_schema=False)
+        async def web_app_missing(path: str) -> HTMLResponse:
+            return HTMLResponse(WEB_APP_MISSING, status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
 
     @app.get("/health")
     async def health() -> dict:

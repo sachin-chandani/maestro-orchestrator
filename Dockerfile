@@ -1,8 +1,17 @@
+# Build the React app (ADR 0014). Node stays in this stage; the final image only gets the built files.
+FROM node:22-slim AS web
+WORKDIR /src/web-app
+COPY web-app/package.json web-app/package-lock.json ./
+RUN npm ci
+COPY web-app ./
+RUN npm run build  # writes to /src/maestro/web/app
+
 FROM python:3.12-slim
 
 WORKDIR /app
 COPY pyproject.toml README.md LICENSE ./
 COPY maestro ./maestro
+COPY --from=web /src/maestro/web/app ./maestro/web/app
 # [postgres] so MAESTRO_DB_URL=postgresql://... works out of the box; SQLite is still the default.
 RUN pip install --no-cache-dir '.[server,postgres]' && useradd --create-home maestro
 
