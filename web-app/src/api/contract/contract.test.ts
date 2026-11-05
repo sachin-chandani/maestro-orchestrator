@@ -1,0 +1,112 @@
+// Contract tests (#101): the same scenarios against every MaestroClient, so a screen sees the same
+// behaviour whichever one it is given. HttpClient runs against fakeServer (FastAPI's answers, no
+// network); running it against a real `maestro serve` is left to #108.
+
+import { describe, expect, it } from 'vitest'
+import { SUPPORT, type MaestroClient } from '../client.ts'
+import { ApiError } from '../errors.ts'
+import { HttpClient } from '../http/HttpClient.ts'
+import { MockClient } from '../mock/MockClient.ts'
+import { fakeServer } from './fakeServer.ts'
+
+const TZ = 'Asia/Kolkata'
+const START = '2026-11-05T14:00:00+05:30'
+
+const mock = () => new MockClient({ now: () => new Date(START), timeZone: TZ, storage: null })
+
+const clients: [string, () => MaestroClient][] = [
+  ['MockClient', mock],
+  [
+    'HttpClient',
+    () => new HttpClient({ token: 't0ken', fetch: fakeServer(mock(), { token: 't0ken' }).fetch }),
+  ],
+]
+
+async function rejection(promise: Promise<unknown>): Promise<ApiError> {
+  try {
+    await promise
+  } catch (error) {
+    if (error instanceof ApiError) return error
+    throw error
+  }
+  throw new Error('Expected the call to fail')
+}
+
+describe.each(clients)('%s', (_, make) => {
+  it('captures and reads back the same item', async () => {
+    const client = make()
+    const item = await client.capture('text me tomorrow at 9am to call the bank')
+
+    expect(item).toMatchObject({ text: 'Call the bank', due_at: '2026-11-06T09:00:00+05:30' })
+    expect(await client.getItem(item.id)).toEqual(item)
+  })
+
+  it('lists with the same filters and order', async () => {
+    const client = make()
+
+    const open = await client.listItems()
+    expect(open[0]?.text).toBe('Call the bank about the card')
+    expect((await client.listItems({ include_done: true })).length).toBe(open.length + 1)
+    expect((await client.listItems({ unacknowledged: true })).map((i) => i.id)).toEqual([1])
+    expect((await client.listItems({ q: 'car service' })).map((i) => i.id)).toEqual([9, 12])
+  })
+
+  it('keeps a recurring series going after done (ADR 0009)', async () => {
+    const client = make()
+
+    expect(await client.done(3)).toMatchObject({
+      status: 'pending',
+      due_at: '2026-11-12T17:00:00+05:30',
+    })
+  })
+
+  it('snoozes, stops and deletes', async () => {
+    const client = make()
+
+    expect((await client.snooze(2, '10m')).due_at).toBe('2026-11-05T14:10:00+05:30')
+    expect((await client.stop(3)).status).toBe('done')
+    await client.deleteItem(4)
+    expect((await rejection(client.getItem(4))).kind).toBe('not_found')
+  })
+
+  it('fails the same way', async () => {
+    const client = make()
+
+    expect(await rejection(client.getItem(999))).toMatchObject({
+      kind: 'not_found',
+      message: 'No item #999',
+    })
+    expect(await rejection(client.snooze(2, 'xx'))).toMatchObject({
+      kind: 'invalid',
+      message: "Can't read duration 'xx'; try 10m, 2h or 1d",
+    })
+    expect((await rejection(client.capture(''))).kind).toBe('invalid')
+  })
+
+  it('searches notes, newest first', async () => {
+    const client = make()
+
+    expect((await client.searchNotes('')).map((i) => i.id)).toEqual([10, 11, 12])
+    expect((await client.searchNotes('plumber')).map((i) => i.id)).toEqual([11])
+  })
+
+  it('reports the server timezone', async () => {
+    expect((await make().health()).timezone).toBe(TZ)
+  })
+
+  it('rejects what the backend does not have yet', async () => {
+    const client = make()
+    for (const [method, support] of Object.entries(SUPPORT)) {
+      if (support.level !== 'none') continue
+      // Called on the client, without arguments: they reject before reading any.
+      const calls = client as unknown as Record<string, () => Promise<unknown>>
+      expect((await rejection(calls[method]?.() ?? Promise.resolve())).kind, method).toBe(
+        'unsupported',
+      )
+    }
+  })
+
+  it('starts connected', () => {
+    expect(make().connection()).toEqual({ status: 'connected' })
+  })
+})

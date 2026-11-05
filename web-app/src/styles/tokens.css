@@ -1,0 +1,122 @@
+/*
+ * Design tokens (#102), from docs/design/mobile/README.md. Components use these variables only,
+ * never raw colours, so the dark theme and later changes happen here.
+ *
+ * Light values are the design's. Dark values are ours (the design has none) and follow the system
+ * setting; every text pair passes WCAG 2.2 AA, checked in tokens.test.ts.
+ */
+
+:root {
+  color-scheme: light dark;
+
+  /* Surfaces */
+  --color-ground: #f3f4f6; /* app background */
+  --color-surface: #ffffff; /* cards, bars */
+  --color-surface-sunken: #f9fafb; /* input fill */
+  --color-line: #e5e7eb; /* borders between surfaces */
+  --color-line-control: #d1d5db; /* borders of inputs and secondary buttons */
+
+  /* Text */
+  --color-ink: #111827; /* main text */
+  --color-ink-secondary: #374151; /* times, secondary buttons, neutral chips */
+  --color-muted: #4b5563; /* secondary text */
+
+  /* Accent: primary actions, current tab, focus */
+  --color-accent: #2f5bea; /* filled buttons */
+  --color-on-accent: #ffffff; /* text on --color-accent */
+  --color-accent-text: #2f5bea; /* links, current tab */
+  --color-accent-text-hover: #1e3fb0;
+  --color-focus: #2f5bea;
+
+  /* Meaning: text on its own background (chips, pills) */
+  --color-urgent: #9a3a0b;
+  --color-urgent-bg: #fff1e6;
+  --color-urgent-border: #f3b48a; /* urgent, not-done cards; decorative, the chip says "Urgent" */
+  --color-info: #2a3fa8;
+  --color-info-bg: #eef2ff;
+  --color-ok: #166534;
+  --color-ok-bg: #ecfdf3;
+  --color-ok-dot: #16a34a;
+  --color-list: #115e59;
+  --color-list-bg: #f0fdfa;
+  --color-neutral: #374151; /* recurrence, channel and note chips */
+  --color-neutral-bg: #f3f4f6;
+
+  /* Toast */
+  --color-toast: #ffffff;
+  --color-toast-bg: #111827;
+
+  /* Type */
+  --font-sans: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  --text-xs: 12px; /* chips, group headings */
+  --text-sm: 13px; /* summaries, meta */
+  --text-md: 14px; /* buttons, toasts */
+  --text-base: 16px; /* body, inputs (16px stops iOS zooming into a field) */
+  --text-lg: 17px; /* list titles */
+  --text-title: 26px; /* screen titles */
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+
+  /* Shape */
+  --radius-card: 14px;
+  --radius-input: 12px; /* inputs and bars */
+  --radius-button: 10px;
+  --radius-chip: 6px;
+  --radius-pill: 999px;
+
+  /* Space: the steps the design uses */
+  --space-1: 4px;
+  --space-2: 6px;
+  --space-3: 8px;
+  --space-4: 10px;
+  --space-5: 12px;
+  --space-6: 14px;
+  --space-7: 16px;
+  --space-8: 20px;
+
+  /* Size */
+  --touch-target: 44px; /* smallest tap area */
+  --control-height: 48px; /* capture input, submit button, tabs */
+  --chip-height: 24px;
+  --focus-ring: 2px;
+  --content-width: 640px; /* readable column on wide screens */
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-ground: #111827;
+    --color-surface: #1f2937;
+    --color-surface-sunken: #111827;
+    --color-line: #374151;
+    --color-line-control: #6b7280;
+
+    --color-ink: #f3f4f6;
+    --color-ink-secondary: #d1d5db;
+    --color-muted: #9ca3af;
+
+    --color-accent: #2f5bea;
+    --color-on-accent: #ffffff;
+    --color-accent-text: #93aeff;
+    --color-accent-text-hover: #c3d1ff;
+    --color-focus: #93aeff;
+
+    --color-urgent: #fdba8c;
+    --color-urgent-bg: #3d1d0c;
+    --color-urgent-border: #c2410c;
+    --color-info: #b9c6ff;
+    --color-info-bg: #1e2a5c;
+    --color-ok: #86efac;
+    --color-ok-bg: #0f2e1d;
+    --color-ok-dot: #4ade80;
+    --color-list: #7de8d5;
+    --color-list-bg: #0b2e2b;
+    --color-neutral: #d1d5db;
+    --color-neutral-bg: #374151;
+
+    --color-toast: #111827;
+    --color-toast-bg: #f3f4f6;
+  }
+}

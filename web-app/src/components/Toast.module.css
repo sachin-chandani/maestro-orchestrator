@@ -1,0 +1,14 @@
+.toast {
+  margin: 0 var(--space-7) var(--space-3);
+  padding: var(--space-5) var(--space-6);
+  border-radius: var(--radius-input);
+  background: var(--color-toast-bg);
+  color: var(--color-toast);
+  font-size: var(--text-md);
+  line-height: 20px;
+}
+
+/* The live region stays in the page while empty, so screen readers announce what arrives in it. */
+.region:empty {
+  display: none;
+}

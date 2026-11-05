@@ -1,0 +1,79 @@
+.panel {
+  border: 1px dashed var(--color-line-control);
+  border-radius: var(--radius-card);
+  background: var(--color-surface);
+  font-size: var(--text-md);
+}
+
+.summary {
+  display: flex;
+  align-items: center;
+  min-height: var(--touch-target);
+  padding: 0 var(--space-6);
+  font-weight: var(--weight-semibold);
+  color: var(--color-ink-secondary);
+  cursor: pointer;
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  padding: 0 var(--space-6) var(--space-6);
+}
+
+.fieldset {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3) var(--space-6);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.legend {
+  margin-bottom: var(--space-2);
+  padding: 0;
+  font-weight: var(--weight-medium);
+}
+
+.option {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--touch-target);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  font-weight: var(--weight-medium);
+}
+
+.select {
+  min-height: var(--touch-target);
+  padding: 0 var(--space-5);
+  border: 1px solid var(--color-line-control);
+  border-radius: var(--radius-input);
+  background: var(--color-surface-sunken);
+  color: var(--color-ink);
+  font-weight: var(--weight-regular);
+}
+
+.button {
+  align-self: flex-start;
+  min-height: var(--touch-target);
+  padding: 0 var(--space-6);
+  border: 1px solid var(--color-line-control);
+  border-radius: var(--radius-button);
+  background: var(--color-surface);
+  color: var(--color-ink-secondary);
+  cursor: pointer;
+}
+
+.note {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-muted);
+}

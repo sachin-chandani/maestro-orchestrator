@@ -1,0 +1,63 @@
+.bar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-7) var(--space-3);
+  background: var(--color-surface);
+  border-top: 1px solid var(--color-line);
+}
+
+.preview {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Keeps its height when empty, so the bar doesn't jump as chips come and go. */
+.preview:empty {
+  display: none;
+}
+
+.hears {
+  font-size: var(--text-xs);
+  color: var(--color-muted);
+}
+
+.row {
+  display: flex;
+  gap: var(--space-3);
+}
+
+.input {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: var(--control-height);
+  padding: 0 var(--space-6);
+  border-radius: var(--radius-input);
+  border: 1px solid var(--color-line-control);
+  background: var(--color-surface-sunken);
+  color: var(--color-ink);
+  font-size: var(--text-base);
+}
+
+.input::placeholder {
+  color: var(--color-muted);
+}
+
+.submit {
+  flex: 0 0 var(--control-height);
+  width: var(--control-height);
+  height: var(--control-height);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: var(--radius-input);
+  background: var(--color-accent);
+  color: var(--color-on-accent);
+  cursor: pointer;
+}

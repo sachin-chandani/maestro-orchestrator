@@ -2,7 +2,16 @@
 
 The React web app for Maestro (ADR [0014](../docs/adr/0014-react-web-app.md), tracked in #109). It is built from the design reference in [`docs/design/mobile/`](../docs/design/mobile/README.md).
 
-This is the scaffold from #100. It renders a placeholder page from static sample data and needs no backend.
+It shows today's reminders (#101, #102) through one API client with two implementations: `MockClient` (sample data, in the browser) and `HttpClient` (`maestro serve`). Screens get the client from `ClientProvider` and never know which one it is.
+
+| How you run it               | Client                                      |
+| ---------------------------- | ------------------------------------------- |
+| `npm run dev`                | MockClient                                  |
+| `npm run dev:api`            | HttpClient, through the proxy below         |
+| `npm run build` (any build)  | MockClient, until signing in arrives (#108) |
+| `VITE_MAESTRO_MOCK=1` or `0` | Forces MockClient or HttpClient             |
+
+In development, **Dev tools** at the bottom of the page switch client and, on sample data, reset it, delay every call, or make calls fail (unreachable, 500, 401, 429), to try loading and error states. Sample data is kept in this browser's localStorage. Dev tools and the gallery are left out of production builds.
 
 ## Requirements
 
@@ -50,6 +59,16 @@ npm run preview       # serve the built files locally at /app/
 Tests sit next to the code they cover (`App.test.tsx` beside `App.tsx`) and never touch the network.
 
 Every component and screen gets an accessibility check: `axeViolations(container)` from `src/test/axe.ts` returns one line per [axe](https://github.com/dequelabs/axe-core) violation, and tests expect it to be empty. jsdom has no layout, so that check leaves out colour contrast. Check contrast in a real browser.
+
+## Components
+
+`src/components/` holds the core components from the design (#102): `Chip`, `ReminderCard`, `CaptureBar`, `TabBar`, `ConnectionPill`, `Toast` and `EmptyState`. They take props and report back through callbacks; fetching data is the screens' job. With `npm run dev`, open `/app/?gallery` to see each one in every state, on mock data. The gallery is left out of production builds.
+
+## Styles
+
+`src/styles/tokens.css` holds the design tokens from [`docs/design/mobile/README.md`](../docs/design/mobile/README.md) as CSS variables, with a dark theme that follows the system setting. Other stylesheets use the variables only: `src/styles/tokens.test.ts` fails on a raw colour or an unknown variable, and checks every text and focus colour pair for WCAG AA contrast in both themes.
+
+Fonts: IBM Plex is named first and used where it is installed; otherwise the system font shows. Nothing is loaded from a font service.
 
 ## Tool versions
 

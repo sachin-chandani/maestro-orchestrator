@@ -1,0 +1,43 @@
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-pill);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  white-space: nowrap;
+}
+
+.connected {
+  background: var(--color-ok-bg);
+  color: var(--color-ok);
+}
+
+.offline {
+  background: var(--color-neutral-bg);
+  color: var(--color-neutral);
+}
+
+.signed_out,
+.rate_limited {
+  background: var(--color-urgent-bg);
+  color: var(--color-urgent);
+}
+
+.dot {
+  flex: 0 0 auto;
+}
+
+.connected .dot {
+  fill: var(--color-ok-dot);
+}
+
+/* Hollow when not connected: the shape differs, not only the colour. */
+.offline .dot,
+.signed_out .dot,
+.rate_limited .dot {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+}
