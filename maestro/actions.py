@@ -76,11 +76,13 @@ def _as_moment(name: str, value: Any) -> datetime | None:
 
 
 def _as_channels(name: str, value: Any) -> list[str] | None:
+    # Copied, so a caller's list can't change an action after the fact; an empty list is "no choice
+    # made", the same as None, so there is only one way to say it.
     if value is None:
         return None
     if not isinstance(value, list) or not all(isinstance(c, str) and c for c in value):
         raise ValueError(f"{name} must be a list of channel names")
-    return list(value)
+    return list(value) or None
 
 
 FIELD_TYPES: dict[str, Callable[[str, Any], Any]] = {
@@ -119,7 +121,11 @@ class Action:
             value = getattr(self, f.name)
             if value == f.default:
                 continue
-            data[f.name] = value.isoformat() if isinstance(value, datetime) else value
+            if isinstance(value, datetime):
+                value = value.isoformat()
+            elif isinstance(value, list):
+                value = list(value)  # a copy: changing the JSON must not change the action
+            data[f.name] = value
         return data
 
 
@@ -277,10 +283,20 @@ def apply(store: Store, actions: list[Action], source: str, *, dedupe_key: str |
           prefix: str = "") -> list[Applied]:
     """Carry out actions against the store: the one place actions become store calls (ADR 0015).
 
-    `source` names where the capture came from. With `dedupe_key` (a provider's message or call id)
-    the capture happens at most once, however often the provider retries. `requestable` is the set
-    of channels this deployment can honour; None skips that check. `channel` and `prefix` are the
-    channel a done / snooze / stop came from and the prefix its help text uses.
+    `source` names where the capture came from, and is the namespace a `dedupe_key` is unique in
+    ("twilio_sms", "email", …), so it has to stay the same between releases for a retry that
+    straddles an upgrade to still be recognised.
+
+    With `dedupe_key` (a provider's message or call id) the capture happens at most once, however
+    often the provider retries. A caller with no id must pass None, not "": an empty key would make
+    every keyless capture from that source look like the same message. Today the inbound paths
+    normalise it (SMS and voice send `external_id or None`, an email always has a Message-ID or a
+    hash of itself), so a message with no id is simply captured each time it arrives, as it was
+    before ADR 0015.
+
+    `requestable` is the set of channels this deployment can honour; None skips that check.
+    `channel` and `prefix` are the channel a done / snooze / stop came from and the prefix its help
+    text uses.
     """
     return [_apply_one(store, action, source, dedupe_key, requestable, channel, prefix)
             for action in actions]

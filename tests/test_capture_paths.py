@@ -278,3 +278,28 @@ def test_only_apply_turns_a_capture_into_store_calls():
             saves.append(name)
     assert parses == ["maestro/interpret.py"], f"the parser is called outside interpret: {parses}"
     assert saves == ["maestro/actions.py"], f"items are saved outside apply: {saves}"
+
+
+# --- a provider that sends no id (#113 review) ------------------------------------------------
+
+
+@pytest.mark.parametrize("missing", [{}, {"MessageSid": ""}], ids=["absent", "empty"])
+def test_an_sms_without_a_message_id_is_captured_every_time(sms_handler, missing):
+    """No id, nothing to dedupe on: each arrival is its own capture, as it was before ADR 0015.
+    An empty id must never be used as a key, or every keyless SMS would collapse into one item."""
+    params = {"From": SMS_OWNER, "To": "+15550001111", "Body": "dentist on friday at 3pm", **missing}
+    first, second = sms_handler.handle(params), sms_handler.handle(params)
+    assert "#1 Dentist" in first and "#2 Dentist" in second
+    assert len(sms_handler.store.list()) == 2
+    assert not sms_handler.store.is_claimed("twilio_sms", "")
+    assert METRICS.get("maestro_captures_total", source="sms") == 2
+
+
+@pytest.mark.parametrize("missing", [{}, {"CallSid": ""}], ids=["absent", "empty"])
+def test_a_call_without_a_call_id_is_captured_every_time(voice, missing):
+    spoken = {"From": SMS_OWNER, "To": "+15550001111", "SpeechResult": "gym at 7am",
+              "Confidence": "0.93", **missing}
+    voice.capture(spoken)
+    voice.capture(spoken)
+    assert len(voice.store.list()) == 2
+    assert not voice.store.is_claimed("twilio_voice", "")

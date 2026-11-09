@@ -256,3 +256,65 @@ def test_an_iso_string_is_read_into_a_datetime_whoever_passes_it():
                                 "due_at": "2026-10-24T17:00:00-04:00"})
     with pytest.raises(ValueError, match="which timezone"):
         CreateNote(text="x", created_at="2026-10-24T17:00:00")  # type: ignore[arg-type]
+
+
+# --- what the fields hold, whoever set them (#113 review) -------------------------------------
+
+
+def test_what_a_validator_reads_is_what_the_action_keeps(store):
+    """The validators normalise as well as check, so the value they return has to be the one kept."""
+    action = CreateReminder(text="Call mom", due_at="2026-10-24T17:00:00-04:00",  # type: ignore[arg-type]
+                            created_at="2026-10-23T18:00:00-04:00")  # type: ignore[arg-type]
+    assert isinstance(action.due_at, datetime) and isinstance(action.created_at, datetime)
+    # …all the way into the store, which would reject a string.
+    (result,) = apply(store, [action], source="api")
+    assert store.get(result.saved.id).due_at == dt(2026, 10, 24, 17, 0)
+    assert store.get(result.saved.id).created_at == dt(2026, 10, 23, 18, 0)
+
+
+def test_a_subclass_check_runs_after_the_fields_are_read():
+    """CreateReminder's "needs a due_at" must judge the read value, not the raw one."""
+    assert CreateReminder(text="x", due_at="2026-10-24T17:00:00-04:00").due_at  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="needs a due_at"):
+        CreateReminder(text="x")
+    with pytest.raises(ValueError, match="Can't read duration"):
+        Snooze(item_id=1, duration="ages")
+
+
+def test_an_action_does_not_share_a_list_with_its_caller_or_its_json():
+    asked = ["twilio_sms", "email"]
+    action = CreateNote(text="Blue drawer", channels=asked)
+    asked.append("telegram")  # the caller reuses its list
+    assert action.channels == ["twilio_sms", "email"]
+    data = action.to_json()
+    data["channels"].append("telegram")  # a caller edits the JSON before sending it
+    assert action.channels == ["twilio_sms", "email"]
+
+
+def test_no_channel_choice_has_one_spelling():
+    """[] and None both mean "wherever it normally goes", so an action only ever holds None."""
+    assert CreateNote(text="x", channels=[]).channels is None
+    assert from_json({"type": "create_note", "text": "x", "channels": []}) == CreateNote(text="x")
+    assert "channels" not in CreateNote(text="x", channels=[]).to_json()
+
+
+# --- dedupe keys (#113 review) ----------------------------------------------------------------
+
+
+def test_a_capture_with_no_dedupe_key_is_saved_every_time(store):
+    """No key means no claim to dedupe on: each arrival is a separate capture, as before ADR 0015."""
+    for _ in range(2):
+        apply(store, actions_for("dentist at 9am"), source="twilio_sms", dedupe_key=None)
+    assert len(store.list()) == 2
+    assert store.is_claimed("twilio_sms", "") is False  # nothing was claimed under an empty key
+
+
+def test_the_dedupe_namespace_is_the_source_it_was_given(store):
+    """The namespace is part of the stored claim, so it has to be exactly what the channel passes."""
+    captured = actions_for("dentist at 9am")
+    apply(store, captured, source="twilio_sms", dedupe_key="ID1")
+    apply(store, captured, source="twilio_voice", dedupe_key="ID1")
+    apply(store, captured, source="email", dedupe_key="ID1")
+    assert len(store.list()) == 3  # the same id from three providers is three different messages
+    assert all(store.is_claimed(s, "ID1") for s in ("twilio_sms", "twilio_voice", "email"))
+    assert not store.is_claimed("telegram", "ID1")
