@@ -10,14 +10,14 @@ in `apply`.
 """
 
 from collections.abc import Callable
-from dataclasses import dataclass, field, fields
+from dataclasses import MISSING, dataclass, field, fields
 from datetime import datetime
 from typing import Any, ClassVar
 
-from maestro import commands
+from maestro import commands, recurrence
 from maestro.models import Item, Kind
 from maestro.notifier import apply_channel_choice
-from maestro.parser import parse_duration
+from maestro.parser import DURATION_UNITS, parse_duration
 from maestro.storage import Store
 from maestro.tz import get_timezone
 
@@ -75,6 +75,12 @@ def _as_moment(name: str, value: Any) -> datetime | None:
     return moment
 
 
+def _as_recurrence(name: str, value: Any) -> str | None:
+    """A stored recurrence rule ("weekly:0", "interval:120"), never the phrase it came from."""
+    text = _as_optional_text(name, value)
+    return None if text is None else recurrence.validate(text)
+
+
 def _as_channels(name: str, value: Any) -> list[str] | None:
     # Copied, so a caller's list can't change an action after the fact; an empty list is "no choice
     # made", the same as None, so there is only one way to say it.
@@ -90,11 +96,42 @@ FIELD_TYPES: dict[str, Callable[[str, Any], Any]] = {
     "source_text": _as_raw_text,
     "due_at": _as_moment,
     "created_at": _as_moment,
-    "recurrence": _as_optional_text,
+    "recurrence": _as_recurrence,
     "channels": _as_channels,
     "urgent": _as_bool,
     "item_id": _as_item_id,
     "duration": _as_optional_text,
+}
+
+
+# One JSON Schema fragment per field, keyed like FIELD_TYPES: the two tables describe the same thing
+# in two directions. The schema is what a model is *told*; the validators are what is *enforced*.
+# A field in one and not the other fails `test_actions.py`, so neither can drift.
+FIELD_SCHEMAS: dict[str, dict[str, Any]] = {
+    "text": {"type": "string", "minLength": 1,
+             "description": "What to remind, do or remember, in the user's words, cleaned of the time "
+                            "phrase and of any 'remind me to' prefix, first letter capitalised."},
+    "source_text": {"type": "string",
+                    "description": "The message exactly as it arrived, if several actions come from "
+                                   "one message; otherwise omit it."},
+    "due_at": {"type": "string", "format": "date-time",
+               "description": "When to deliver, as ISO 8601 with a UTC offset, e.g. "
+                              "2026-10-28T17:00:00-04:00. Required for a reminder."},
+    "created_at": {"type": "string", "format": "date-time",
+                   "description": "Omit: Maestro records when the capture happened."},
+    "recurrence": {"type": ["string", "null"], "pattern": recurrence.RULE_PATTERN,
+                   "description": "A repeat rule: daily, weekdays, weekly:<0-6 with 0 Monday>, "
+                                  "interval:<minutes>, days:<n>, weeks:<n>:<0-6>, monthly:<1-31>. "
+                                  "null when it happens once."},
+    "channels": {"type": ["array", "null"], "items": {"type": "string", "minLength": 1},
+                 "description": "Only when the user names where this one goes ('text me', 'email me'): "
+                                "twilio_sms, twilio_call, email, telegram. Otherwise null."},
+    "urgent": {"type": "boolean",
+               "description": "true only when the message says so ('urgent', a leading '!')."},
+    "item_id": {"type": ["integer", "null"], "minimum": 1,
+                "description": "The number of an existing item, or null for the one last delivered."},
+    "duration": {"type": ["string", "null"], "pattern": rf"^\s*\d+\s*{DURATION_UNITS}\s*$",
+                 "description": "How long to snooze: 10m, 2h or 1d. null for the default."},
 }
 
 
@@ -106,6 +143,9 @@ class Action:
     """One thing to do. Subclasses declare their fields; `TYPE` is the tag in the JSON form."""
 
     TYPE: ClassVar[str] = ""
+    # Fields a subclass needs even though they carry a default (defaults exist only so inherited
+    # fields can keep theirs). `json_schema` lists them as required; `__post_init__` enforces them.
+    REQUIRED: ClassVar[tuple[str, ...]] = ()
 
     def __post_init__(self) -> None:
         # Validated the same way whether the action came from JSON or from Python, and read in the
@@ -156,6 +196,7 @@ class CreateReminder(_Create):
     """Save something to be delivered at a time, and escalated if it isn't acknowledged."""
 
     TYPE: ClassVar[str] = "create_reminder"
+    REQUIRED: ClassVar[tuple[str, ...]] = ("due_at",)
 
     due_at: datetime | None = None  # required; optional only so the inherited fields keep defaults
     recurrence: str | None = None  # see maestro.recurrence for the rule format
@@ -225,6 +266,36 @@ class Stop(Action):
 
 ACTIONS: tuple[type[Action], ...] = (CreateReminder, CreateTask, CreateNote, Done, Snooze, Stop)
 BY_TYPE: dict[str, type[Action]] = {a.TYPE: a for a in ACTIONS}
+CREATE_ACTIONS: tuple[type[Action], ...] = (CreateReminder, CreateTask, CreateNote)
+
+
+# --- the schema ----------------------------------------------------------------------------
+
+
+def action_schema(cls: type[Action]) -> dict[str, Any]:
+    """The JSON Schema of one action, derived from its dataclass: its fields are the properties,
+    `type` is a constant, and anything without a default (or named in REQUIRED) is required."""
+    properties: dict[str, Any] = {"type": {"const": cls.TYPE}}
+    required = ["type"]
+    for f in fields(cls):
+        properties[f.name] = dict(FIELD_SCHEMAS[f.name])
+        if f.default is MISSING or f.name in cls.REQUIRED:
+            required.append(f.name)
+    return {
+        "type": "object",
+        "description": (cls.__doc__ or "").strip().split("\n")[0],
+        "properties": properties,
+        "required": required,
+        "additionalProperties": False,
+    }
+
+
+def json_schema(kinds: tuple[type[Action], ...] = ACTIONS) -> dict[str, Any]:
+    """The schema of a list of actions: what an interpreter that works from a schema (a model,
+    #115) is given, so it fills in exactly what the rules fill in. Built from the actions, never
+    written by hand, so a field added here is in the schema and in the gate at once. `kinds` limits
+    it to the actions that caller is willing to accept."""
+    return {"type": "array", "items": {"oneOf": [action_schema(cls) for cls in kinds]}}
 
 
 def from_json(data: Any) -> Action:

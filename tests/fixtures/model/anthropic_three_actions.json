@@ -1,0 +1,39 @@
+{
+ "id": "msg_01FAKEFAKEFAKEFAKEFAKEFAK2",
+ "type": "message",
+ "role": "assistant",
+ "model": "claude-sonnet-5-5",
+ "content": [
+  {
+   "type": "text",
+   "text": "Here are the actions."
+  },
+  {
+   "type": "tool_use",
+   "id": "toolu_01FAKEFAKEFAKEFAKEFAKEFAK2",
+   "name": "propose_actions",
+   "input": {
+    "actions": [
+     {
+      "type": "create_task",
+      "text": "Book flights"
+     },
+     {
+      "type": "create_task",
+      "text": "Add sunscreen to the packing list"
+     },
+     {
+      "type": "create_note",
+      "text": "The hotel code is 4471"
+     }
+    ]
+   }
+  }
+ ],
+ "stop_reason": "tool_use",
+ "stop_sequence": null,
+ "usage": {
+  "input_tokens": 640,
+  "output_tokens": 120
+ }
+}

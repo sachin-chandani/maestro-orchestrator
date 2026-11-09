@@ -1,0 +1,31 @@
+{
+ "id": "chatcmpl-FAKEFAKEFAKEFAKEFAKEFAKE",
+ "object": "chat.completion",
+ "created": 1761573600,
+ "model": "gpt-5.5-mini",
+ "choices": [
+  {
+   "index": 0,
+   "finish_reason": "tool_calls",
+   "message": {
+    "role": "assistant",
+    "content": null,
+    "tool_calls": [
+     {
+      "id": "call_FAKEFAKEFAKEFAKEFAKEFAKE",
+      "type": "function",
+      "function": {
+       "name": "propose_actions",
+       "arguments": "{\"actions\": [{\"type\": \"create_reminder\", \"text\": \"Dentist\", \"due_at\": \"2026-10-28T15:00:00-04:00\", \"recurrence\": null, \"channels\": null, \"urgent\": false}]}"
+      }
+     }
+    ]
+   }
+  }
+ ],
+ "usage": {
+  "prompt_tokens": 598,
+  "completion_tokens": 64,
+  "total_tokens": 662
+ }
+}

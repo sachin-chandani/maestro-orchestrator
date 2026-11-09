@@ -1,0 +1,31 @@
+{
+ "id": "chatcmpl-FAKEFAKEFAKEFAKEFAKEFAK2",
+ "object": "chat.completion",
+ "created": 1761573601,
+ "model": "gpt-5.5-mini",
+ "choices": [
+  {
+   "index": 0,
+   "finish_reason": "length",
+   "message": {
+    "role": "assistant",
+    "content": null,
+    "tool_calls": [
+     {
+      "id": "call_FAKEFAKEFAKEFAKEFAKEFAK2",
+      "type": "function",
+      "function": {
+       "name": "propose_actions",
+       "arguments": "{\"actions\": [{\"type\": \"create_rem"
+      }
+     }
+    ]
+   }
+  }
+ ],
+ "usage": {
+  "prompt_tokens": 598,
+  "completion_tokens": 1024,
+  "total_tokens": 1622
+ }
+}

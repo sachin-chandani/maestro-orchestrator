@@ -318,3 +318,79 @@ def test_the_dedupe_namespace_is_the_source_it_was_given(store):
     assert len(store.list()) == 3  # the same id from three providers is three different messages
     assert all(store.is_claimed(s, "ID1") for s in ("twilio_sms", "twilio_voice", "email"))
     assert not store.is_claimed("telegram", "ID1")
+
+
+# --- the schema (#115) -----------------------------------------------------------------------
+
+
+def test_every_json_type_has_a_schema_and_every_schema_a_type():
+    """The two tables describe the same fields: what a model is told and what is enforced."""
+    assert set(actions.FIELD_SCHEMAS) == set(actions.FIELD_TYPES)
+
+
+def test_the_schema_is_derived_from_the_actions():
+    from dataclasses import fields
+
+    schema = actions.json_schema()
+    by_type = {entry["properties"]["type"]["const"]: entry for entry in schema["items"]["oneOf"]}
+    assert set(by_type) == set(actions.BY_TYPE)
+    for cls in actions.ACTIONS:
+        entry = by_type[cls.TYPE]
+        assert set(entry["properties"]) == {"type", *(f.name for f in fields(cls))}
+        assert entry["additionalProperties"] is False
+        assert entry["description"]  # the docstring's first line
+
+
+def test_required_fields_are_what_the_gate_insists_on():
+    required = {entry["properties"]["type"]["const"]: set(entry["required"])
+                for entry in actions.json_schema()["items"]["oneOf"]}
+    assert required["create_reminder"] == {"type", "text", "due_at"}  # due_at via REQUIRED
+    assert required["create_task"] == {"type", "text"}
+    assert required["create_note"] == {"type", "text"}
+    assert required["done"] == {"type"}
+    assert required["snooze"] == {"type"}
+
+
+def test_the_schema_can_be_limited_to_the_actions_a_caller_accepts():
+    schema = actions.json_schema(actions.CREATE_ACTIONS)
+    kinds = [entry["properties"]["type"]["const"] for entry in schema["items"]["oneOf"]]
+    assert kinds == ["create_reminder", "create_task", "create_note"]
+
+
+@pytest.mark.parametrize("action", ROUND_TRIP, ids=lambda a: str(a.to_json()))
+def test_every_json_form_fits_its_own_schema(action):
+    """A structural check without a schema library: the keys the JSON form carries are properties,
+    nothing required is missing, and the type tag is the constant."""
+    entry = actions.action_schema(type(action))
+    data = action.to_json()
+    assert set(data) <= set(entry["properties"])
+    assert set(entry["required"]) <= set(data)
+    assert data["type"] == entry["properties"]["type"]["const"]
+
+
+@pytest.mark.parametrize("rule", ["daily", "weekdays", "weekly:0", "weekly:6", "interval:120",
+                                  "days:3", "weeks:2:4", "monthly:1", "monthly:31"])
+def test_a_stored_recurrence_rule_is_accepted(rule):
+    assert CreateReminder(text="x", due_at=NOW, recurrence=rule).recurrence == rule
+
+
+@pytest.mark.parametrize("rule", ["every monday", "weekly:7", "weekly", "monthly:0", "monthly:32",
+                                  "interval:0", "days:0", "weeks:2", "hourly", ""])
+def test_a_recurrence_that_is_not_a_rule_is_rejected(rule):
+    """A model that writes the phrase instead of the rule can't get it past the gate (#115)."""
+    with pytest.raises(ValueError, match="recurrence rule|non-empty"):
+        from_json({"type": "create_reminder", "text": "x", "due_at": NOW.isoformat(), "recurrence": rule})
+
+
+def test_the_recurrence_pattern_in_the_schema_agrees_with_the_validator():
+    import re
+
+    from maestro import recurrence
+
+    pattern = re.compile(actions.FIELD_SCHEMAS["recurrence"]["pattern"])
+    for rule in ["daily", "weekly:3", "interval:90", "days:2", "weeks:3:0", "monthly:15"]:
+        assert pattern.match(rule) and recurrence.validate(rule) == rule
+    for bad in ["every monday", "weekly:7", "monthly:32"]:
+        assert not pattern.match(bad)
+        with pytest.raises(ValueError):
+            recurrence.validate(bad)

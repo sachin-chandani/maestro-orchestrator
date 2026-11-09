@@ -1,0 +1,21 @@
+{
+ "id": "chatcmpl-890",
+ "object": "chat.completion",
+ "created": 1761573603,
+ "model": "local-model",
+ "choices": [
+  {
+   "index": 0,
+   "finish_reason": "stop",
+   "message": {
+    "role": "assistant",
+    "content": "{\"actions\": [{\"type\": \"create_task\", \"text\": \"Book flights\"}, {\"type\": \"create_task\", \"text\": \"Add sunscreen to the packing list\"}, {\"type\": \"create_note\", \"text\": \"The hotel code is 4471\"}]}"
+   }
+  }
+ ],
+ "usage": {
+  "prompt_tokens": 580,
+  "completion_tokens": 90,
+  "total_tokens": 670
+ }
+}

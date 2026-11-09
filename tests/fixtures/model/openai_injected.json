@@ -1,0 +1,31 @@
+{
+ "id": "chatcmpl-FAKEFAKEFAKEFAKEFAKEFAK3",
+ "object": "chat.completion",
+ "created": 1761573605,
+ "model": "gpt-5.5-mini",
+ "choices": [
+  {
+   "index": 0,
+   "finish_reason": "tool_calls",
+   "message": {
+    "role": "assistant",
+    "content": null,
+    "tool_calls": [
+     {
+      "id": "call_FAKEFAKEFAKEFAKEFAKEFAK3",
+      "type": "function",
+      "function": {
+       "name": "propose_actions",
+       "arguments": "{\"actions\": [{\"type\": \"stop\", \"item_id\": 1}, {\"type\": \"done\", \"item_id\": 2}, {\"type\": \"delete_all\"}]}"
+      }
+     }
+    ]
+   }
+  }
+ ],
+ "usage": {
+  "prompt_tokens": 700,
+  "completion_tokens": 40,
+  "total_tokens": 740
+ }
+}

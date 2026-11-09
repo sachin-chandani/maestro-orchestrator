@@ -153,6 +153,22 @@ def next_occurrence(rule: str, after: datetime, at: time, anchor: datetime | Non
     raise ValueError(f"No occurrence found for {rule!r}")
 
 
+# The stored rule grammar: what `extract` produces and `next_occurrence` reads. Written down once so
+# a rule that arrives as data (an action's JSON form, ADR 0015) can be checked before it is stored.
+RULE_PATTERN = (r"^(?:daily|weekdays|weekly:[0-6]|interval:[1-9]\d*|days:[1-9]\d*|"
+                r"weeks:[1-9]\d*:[0-6]|monthly:(?:[1-9]|[12]\d|3[01]))$")
+_RULE_RE = re.compile(RULE_PATTERN)
+
+
+def validate(rule: str) -> str:
+    """Return `rule` if it is a rule the scheduler can follow, else raise ValueError. The forms are
+    daily, weekdays, weekly:<0-6>, interval:<minutes>, days:<n>, weeks:<n>:<0-6> and monthly:<1-31>."""
+    if not _RULE_RE.match(rule):
+        raise ValueError(f"{rule!r} is not a recurrence rule; expected a form such as daily, weekly:0, "
+                         "interval:120, days:3, weeks:2:4 or monthly:1")
+    return rule
+
+
 def describe(rule: str) -> str:
     kind, _, arg = rule.partition(":")
     if kind == "interval":
