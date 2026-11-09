@@ -20,10 +20,11 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, 
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 
 from maestro import __version__, commands, recurrence
 from maestro.actions import apply
-from maestro.interpret import Context, interpret
+from maestro.interpret import Context, Interpreter, interpret
 from maestro.models import Item, Kind
 from maestro.notifier import Notifier
 from maestro.observability import METRICS, Labels
@@ -138,12 +139,14 @@ def create_app(store: Store, api_token: str | None = None, notifier: Notifier | 
                public_url: str | None = None, limits: RateLimits | None = None,
                voice: VoiceHandler | None = None, email: "EmailWorker | None" = None,
                escalation: "list[Stage] | None" = None, quiet: "QuietHours | None" = None,
-               requestable: frozenset[str] | None = None) -> FastAPI:
+               requestable: frozenset[str] | None = None,
+               interpreter: Interpreter | None = None) -> FastAPI:
     """Build the app. With a notifier, due reminders are also fired from a background task;
     with a bot (maestro.telegram.TelegramBot), chat messages are handled from another; with an
     SmsHandler (maestro.sms), the Twilio webhook is enabled. `public_url` is the externally visible
     base URL, needed to verify webhook signatures behind a reverse proxy. `limits` defaults to
-    RateLimits(): public endpoints and failed authentication are rate limited per client."""
+    RateLimits(): public endpoints and failed authentication are rate limited per client.
+    `interpreter` is how a capture is read; None means the rules (maestro.interpret)."""
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -299,12 +302,20 @@ def create_app(store: Store, api_token: str | None = None, notifier: Notifier | 
     @app.post("/items", status_code=201, dependencies=[Depends(require_token)])
     async def capture(body: CaptureIn) -> ItemOut:
         METRICS.inc("maestro_captures_total", source="api")
-        captured = interpret(body.text, Context(tz=store.tz))
-        (result,) = apply(store, captured, source="api", requestable=requestable)
-        if result.dropped:
-            log.warning("Capture asked for %s, which isn't configured; keeping %s",
-                        ", ".join(result.dropped), result.saved.channels or "the default channels")
-        return ItemOut.of(result.saved)
+        # Reading the text can mean waiting on a model (#115), so it happens in a worker thread:
+        # one slow capture must not stall the scheduler task or every other request. Applying stays
+        # on the event loop, where the store has always been used (ADR 0003).
+        captured = await run_in_threadpool(interpret, body.text, Context(tz=store.tz), interpreter)
+        results = apply(store, captured, source="api", requestable=requestable)
+        for result in results:
+            if result.dropped:
+                log.warning("Capture asked for %s, which isn't configured; keeping %s",
+                            ", ".join(result.dropped), result.saved.channels or "the default channels")
+        if len(results) > 1:
+            # The response is one item, as it has always been; the rest are saved and listed by
+            # GET /items. Reporting several from one capture is part of #117.
+            log.info("One capture saved %d items; the response names the first", len(results))
+        return ItemOut.of(results[0].saved)
 
     @app.get("/items", dependencies=[Depends(require_token)])
     async def list_items(include_done: bool = False, q: str | None = None,

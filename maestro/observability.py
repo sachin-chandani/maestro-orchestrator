@@ -100,6 +100,11 @@ def _escape(value: str) -> str:
 
 METRICS = Metrics()
 METRICS.describe("maestro_captures_total", "counter", "Items captured, by source.")
+METRICS.describe("maestro_interpret_total", "counter",
+                 "Captures read, by interpreter and outcome (#115). A capture the model failed on "
+                 "is counted once as a model fallback and once as a rules success: both happened.")
+METRICS.describe("maestro_interpret_seconds_total", "counter",
+                 "Total seconds spent reading captures, by interpreter.")
 METRICS.describe("maestro_deliveries_total", "counter",
                  "Delivery attempts, by channel and result (ok, error, gave_up).")
 METRICS.describe("maestro_reminders_fired_total", "counter", "Reminder occurrences fully delivered.")

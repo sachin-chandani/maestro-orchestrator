@@ -15,7 +15,7 @@ from xml.sax.saxutils import escape
 
 from maestro import commands
 from maestro.actions import apply
-from maestro.interpret import Context, interpret
+from maestro.interpret import Context, Interpreter, interpret
 from maestro.models import Item, Kind
 from maestro.observability import METRICS
 from maestro.storage import Store
@@ -55,9 +55,12 @@ class TwilioHandler:
     kind = "message"
 
     def __init__(self, store: Store, auth_token: str, owner_number: str,
-                 requestable: frozenset[str] | None = None):
+                 requestable: frozenset[str] | None = None,
+                 interpreter: "Interpreter | None" = None):
         self.store = store
         self.auth_token = auth_token
+        # How a capture is read; None means the rules (maestro.interpret). Injected, never global.
+        self.interpreter = interpreter
         self.owner = normalise_number(owner_number)
         # The per-item channels this deployment can honour; None skips the capture-time check (#20).
         self.requestable = requestable
@@ -68,16 +71,22 @@ class TwilioHandler:
     def save(self, text: str, external_id: str | None, source: str) -> tuple[Item, str]:
         """Read and save text from an inbound message, once per provider message/call id. Also
         returns a note for the sender when a chosen channel isn't configured (#20), else ""."""
-        captured = interpret(text, Context(tz=self.store.tz))
-        (result,) = apply(self.store, captured, source=f"twilio_{source}", dedupe_key=external_id or None,
-                          requestable=self.requestable)
+        captured = interpret(text, Context(tz=self.store.tz), self.interpreter)
+        results = apply(self.store, captured, source=f"twilio_{source}", dedupe_key=external_id or None,
+                        requestable=self.requestable)
+        # One message usually asks for one thing. A model interpreter (#115) can read several out
+        # of one, and they are all saved; the reply is about the first, and says how many there were.
+        result = results[0]
         item, created, note = result.saved, result.created, ""
-        if result.dropped:
+        if dropped := sorted({c for r in results for c in r.dropped}):
             kept = "the other requested channels" if item.channels else "the default channels"
-            note = f"{', '.join(result.dropped)} isn't configured; using {kept}."
+            note = f"{', '.join(dropped)} isn't configured; using {kept}."
             log.warning("%s capture: %s", source, note)
+        if len(results) > 1:
+            note = f"Saved {len(results)} things. {note}".strip()
         if created:
-            METRICS.inc("maestro_captures_total", source=source)
+            for _ in results:
+                METRICS.inc("maestro_captures_total", source=source)
         else:
             log.info("Twilio retried %s %s; returning the item already saved", source, external_id)
         return item, note

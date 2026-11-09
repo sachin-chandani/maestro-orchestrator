@@ -315,7 +315,11 @@ def from_json(data: Any) -> Action:
     if unknown := set(data) - known_fields - {"type"}:
         raise ValueError(f"{tag} has no field {', '.join(sorted(unknown))}")
     # The values are checked and read by __post_init__, so JSON and Python go through one gate.
-    return cls(**{name: value for name, value in data.items() if name != "type"})
+    try:
+        return cls(**{name: value for name, value in data.items() if name != "type"})
+    except TypeError:  # a field the action can't do without, e.g. a create with no text
+        missing = [f.name for f in fields(cls) if f.default is MISSING and f.name not in data]
+        raise ValueError(f"{tag} needs {', '.join(missing) or 'different fields'}") from None
 
 
 def actions_from_json(data: Any) -> list[Action]:
@@ -378,12 +382,25 @@ def apply(store: Store, actions: list[Action], source: str, *, dedupe_key: str |
     hash of itself), so a message with no id is simply captured each time it arrives, as it was
     before ADR 0015.
 
+    A message that asks for several things is saved as several items; each gets its own dedupe
+    key derived from the message's, so a retry of that message repeats none of them.
+
     `requestable` is the set of channels this deployment can honour; None skips that check.
     `channel` and `prefix` are the channel a done / snooze / stop came from and the prefix its help
     text uses.
     """
-    return [_apply_one(store, action, source, dedupe_key, requestable, channel, prefix)
-            for action in actions]
+    return [_apply_one(store, action, source, _key_for(dedupe_key, index), requestable, channel, prefix)
+            for index, action in enumerate(actions)]
+
+
+def _key_for(dedupe_key: str | None, index: int) -> str | None:
+    """The dedupe key for one action of a message. The first keeps the message's own key, so a
+    single-action capture is stored exactly as it was before several were possible; the rest add
+    their position, so a message asking for three things stores three items and a provider retry
+    of that same message still stores none of them twice."""
+    if dedupe_key is None or index == 0:
+        return dedupe_key
+    return f"{dedupe_key}#{index}"
 
 
 def _apply_one(store: Store, action: Action, source: str, dedupe_key: str | None,

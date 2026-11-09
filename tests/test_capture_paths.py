@@ -272,7 +272,8 @@ def test_only_apply_turns_a_capture_into_store_calls():
         source = path.read_text()
         name = path.relative_to(package.parent).as_posix()
         if "parse(" in source.replace("parse_command(", "").replace("parse_duration(", "") \
-                .replace("parse_url(", "").replace("parse_qs(", "").replace("def parse(", ""):
+                .replace("parse_url(", "").replace("parse_qs(", "").replace("def parse(", "") \
+                .replace("urlparse(", ""):  # urllib.parse.urlparse is not the capture parser
             parses.append(name)
         if ".add_once(" in source or "store.add(" in source:
             saves.append(name)

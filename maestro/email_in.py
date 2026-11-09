@@ -34,7 +34,7 @@ from typing import Protocol
 
 from maestro import commands
 from maestro.actions import apply
-from maestro.interpret import Context, interpret
+from maestro.interpret import Context, Interpreter, interpret
 from maestro.models import Item
 from maestro.notifier import REMINDER_MESSAGE_ID_RE
 from maestro.observability import METRICS
@@ -162,9 +162,12 @@ def dedupe_key(message: EmailMessage, raw: bytes) -> str:
 class EmailPoller:
     def __init__(self, store: Store, settings: EmailSettings,
                  connect: Callable[[EmailSettings], Mailbox] | None = None,
-                 requestable: frozenset[str] | None = None):
+                 requestable: frozenset[str] | None = None,
+                 interpreter: "Interpreter | None" = None):
         self.store = store
         self.settings = settings
+        # How a capture is read; None means the rules (maestro.interpret). Injected, never global.
+        self.interpreter = interpreter
         # The per-item channels this deployment can honour; None skips the capture-time check (#20).
         self.requestable = requestable
         self.connect = connect or _connect  # looked up at construction, so it can be swapped in tests
@@ -252,15 +255,19 @@ class EmailPoller:
             if not text:
                 log.info("Ignoring email %s: no subject or text", fetched.uid)
                 return Outcome(None, done=True)
-            captured = interpret(text, Context(tz=self.store.tz))
-            (result,) = apply(self.store, captured, source="email",
-                              dedupe_key=dedupe_key(message, fetched.raw), requestable=self.requestable)
-            if result.dropped:
-                log.warning("Email capture asked for %s, which isn't configured; keeping %s",
-                            ", ".join(result.dropped), result.saved.channels or "the default channels")
-            if result.created:
-                METRICS.inc("maestro_captures_total", source="email")
-            return Outcome(result.saved, done=True)
+            captured = interpret(text, Context(tz=self.store.tz), self.interpreter)
+            results = apply(self.store, captured, source="email",
+                            dedupe_key=dedupe_key(message, fetched.raw), requestable=self.requestable)
+            for result in results:
+                if result.dropped:
+                    log.warning("Email capture asked for %s, which isn't configured; keeping %s",
+                                ", ".join(result.dropped),
+                                result.saved.channels or "the default channels")
+                if result.created:
+                    METRICS.inc("maestro_captures_total", source="email")
+            # One email can ask for several things (#115); they are all saved. The outcome names
+            # the first, which is what the worker logs and what a caller reports.
+            return Outcome(results[0].saved, done=True)
         except Exception:
             key = hashlib.sha256(fetched.raw).hexdigest()
             self.failures[key] = self.failures.get(key, 0) + 1

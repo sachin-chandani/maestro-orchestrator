@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from maestro.email_in import EmailSettings
+    from maestro.model import ModelSettings
 
 DEFAULT_DB = Path.home() / ".maestro" / "maestro.db"
 
@@ -39,6 +40,17 @@ def _flag(env: Mapping[str, str], name: str) -> bool:
     return (env.get(name) or "").strip().lower() in ("1", "true", "yes", "on")
 
 
+_PROVIDER_KEY_VARS = {"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY"}
+
+
+def _model_key(env: Mapping[str, str]) -> str | None:
+    """The model API key: MAESTRO_MODEL_API_KEY, else the variable that provider usually uses."""
+    if key := (env.get("MAESTRO_MODEL_API_KEY") or "").strip():
+        return key
+    provider = (env.get("MAESTRO_MODEL_PROVIDER") or "").strip().lower()
+    return (env.get(_PROVIDER_KEY_VARS.get(provider, ""), "") or "").strip() or None
+
+
 def _csv(value: str) -> list[str]:
     return [v.strip() for v in value.split(",") if v.strip()]
 
@@ -59,6 +71,15 @@ class Config:
     trust_proxy_headers: bool = False
     log_format: str = "text"  # or "json"
     log_level: str = "INFO"
+
+    # The optional model interpreter (#115, ADR 0015). "rules" is the default and means no model is
+    # ever contacted; a key on its own never turns one on. See maestro.interpret.
+    interpreter: str = "rules"  # rules or model
+    model_provider: str = ""  # anthropic, openai or openai-compatible
+    model: str = ""  # the model name, e.g. claude-sonnet-5-5; no default on purpose
+    model_api_key: str | None = None  # MAESTRO_MODEL_API_KEY, else the provider's usual variable
+    model_base_url: str | None = None  # required for openai-compatible (Ollama, LM Studio, vLLM)
+    model_timeout_seconds: float = 8.0
 
     twilio_account_sid: str | None = None
     twilio_auth_token: str | None = None
@@ -111,6 +132,14 @@ class Config:
             trust_proxy_headers=_flag(env, "MAESTRO_TRUST_PROXY_HEADERS"),
             log_format=(env.get("MAESTRO_LOG_FORMAT") or "text").lower(),
             log_level=(env.get("MAESTRO_LOG_LEVEL") or "INFO").upper(),
+            interpreter=(env.get("MAESTRO_INTERPRETER") or "rules").strip().lower(),
+            model_provider=(env.get("MAESTRO_MODEL_PROVIDER") or "").strip().lower(),
+            model=(env.get("MAESTRO_MODEL") or "").strip(),
+            # MAESTRO_MODEL_API_KEY wins; otherwise the provider's usual variable, so a key already
+            # in the environment works without being copied. Never logged or printed anywhere.
+            model_api_key=_model_key(env),
+            model_base_url=(env.get("MAESTRO_MODEL_BASE_URL") or "").strip().rstrip("/") or None,
+            model_timeout_seconds=float(_count(env, "MAESTRO_MODEL_TIMEOUT_SECONDS", 8)),
             twilio_account_sid=env.get("TWILIO_ACCOUNT_SID") or None,
             twilio_auth_token=env.get("TWILIO_AUTH_TOKEN") or None,
             twilio_from=env.get("TWILIO_FROM_NUMBER") or None,
@@ -140,6 +169,34 @@ class Config:
             email_authserv_id=(env.get("MAESTRO_EMAIL_AUTHSERV_ID") or "").strip() or None,
             email_poll_seconds=_count(env, "MAESTRO_EMAIL_POLL_SECONDS", 60),
         )
+
+
+def model_settings(config: Config) -> "ModelSettings | None":
+    """The model settings when `MAESTRO_INTERPRETER=model`, else None (the default: rules only).
+
+    Raises ValueError, as one sentence an operator can act on, when the model is asked for but
+    isn't fully configured. A key on its own never turns the model on.
+    """
+    from maestro.model import PROVIDERS, ModelSettings
+
+    if config.interpreter == "rules":
+        return None
+    if config.interpreter != "model":
+        raise ValueError(f"MAESTRO_INTERPRETER must be rules or model, not {config.interpreter!r}")
+    if not config.model_provider:
+        raise ValueError("MAESTRO_INTERPRETER=model needs MAESTRO_MODEL_PROVIDER: "
+                         f"{', '.join(PROVIDERS)}. Maestro won't pick who sees your captures for you")
+    if config.model_provider not in PROVIDERS:
+        raise ValueError(f"Unknown MAESTRO_MODEL_PROVIDER {config.model_provider!r}; "
+                         f"expected one of {', '.join(PROVIDERS)}")
+    if not config.model:
+        raise ValueError("MAESTRO_INTERPRETER=model needs MAESTRO_MODEL: there is no default model "
+                         "name (e.g. MAESTRO_MODEL=claude-sonnet-5-5)")
+    if config.model_timeout_seconds < 1:
+        raise ValueError("MAESTRO_MODEL_TIMEOUT_SECONDS must be at least 1")
+    return ModelSettings(provider=config.model_provider, model=config.model,
+                         api_key=config.model_api_key, base_url=config.model_base_url,
+                         timeout=config.model_timeout_seconds)
 
 
 def email_settings(config: Config) -> "EmailSettings | None":

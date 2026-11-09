@@ -53,6 +53,14 @@ def line(item: Item) -> str:
     return f"{icon} #{item.id} {item.text} ({when(item)})"
 
 
+def saved_lines(items: list[Item]) -> str:
+    """How a chat channel reports what one capture saved. Usually one item; a model interpreter
+    (#115) can read several things out of one message, and every one of them is shown."""
+    if len(items) == 1:
+        return f"Saved {line(items[0])}"
+    return "\n".join([f"Saved {len(items)} things:", *(line(i) for i in items)])
+
+
 def help_text(prefix: str = "") -> str:
     return (
         "Send anything to remember, e.g.\n"

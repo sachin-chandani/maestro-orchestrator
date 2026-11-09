@@ -15,7 +15,7 @@ from collections.abc import Callable
 
 from maestro import commands
 from maestro.actions import apply
-from maestro.interpret import Context, interpret
+from maestro.interpret import Context, Interpreter, interpret
 from maestro.models import Item, Kind
 from maestro.observability import METRICS
 from maestro.storage import Store
@@ -93,9 +93,12 @@ class TelegramBot:
     (fetch / handle) so the server can fetch in a worker thread and handle on its event loop."""
 
     def __init__(self, client: TelegramClient, store: Store, chat_id: str | None,
-                 requestable: frozenset[str] | None = None):
+                 requestable: frozenset[str] | None = None,
+                 interpreter: "Interpreter | None" = None):
         self.client = client
         self.store = store
+        # How a capture is read; None means the rules (maestro.interpret). Injected, never global.
+        self.interpreter = interpreter
         self.chat_id = str(chat_id) if chat_id else None
         # The per-item channels this deployment can honour; None skips the capture-time check (#20).
         self.requestable = requestable
@@ -152,15 +155,20 @@ class TelegramBot:
             return
 
         if not text.startswith("/"):
-            METRICS.inc("maestro_captures_total", source="telegram")
-            captured = interpret(text, Context(tz=self.store.tz))
-            (result,) = apply(self.store, captured, source=CHANNEL, requestable=self.requestable)
-            item, note = result.saved, ""
-            if result.dropped:
-                kept = ", ".join(item.channels) if item.channels else "the default channels"
-                note = f"\n({', '.join(result.dropped)} isn't configured; using {kept})"
-            buttons = _action_buttons(item) if item.kind == Kind.REMINDER else None
-            self.client.send(chat_id, f"Saved {commands.line(item)}{note}", buttons)
+            captured = interpret(text, Context(tz=self.store.tz), self.interpreter)
+            results = apply(self.store, captured, source=CHANNEL, requestable=self.requestable)
+            for _ in results:
+                METRICS.inc("maestro_captures_total", source="telegram")
+            items = [r.saved for r in results]
+            note = ""
+            if dropped := sorted({c for r in results for c in r.dropped}):
+                chosen = {c for i in items for c in (i.channels or [])}
+                kept = ", ".join(sorted(chosen)) if chosen else "the default channels"
+                note = f"\n({', '.join(dropped)} isn't configured; using {kept})"
+            # Buttons act on one reminder, so they are offered when the capture saved exactly one.
+            buttons = _action_buttons(items[0]) if len(items) == 1 and items[0].kind == Kind.REMINDER \
+                else None
+            self.client.send(chat_id, f"{commands.saved_lines(items)}{note}", buttons)
             return
 
         # A slash command that didn't parse: explain its usage, or that it doesn't exist.

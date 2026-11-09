@@ -15,8 +15,10 @@ No API key is ever put in a URL, a log line or an error message. The providers p
 header and nowhere else; `ProviderError` messages are built from status codes and shapes.
 """
 
+import ipaddress
 import json
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -51,6 +53,38 @@ Rules:
 
 TOOL_DESCRIPTION = ("Propose the actions this message asks for. Each action is validated by the "
                     "assistant before anything is saved.")
+
+
+DEFAULT_TIMEOUT = 8.0
+# A cap on one reply. A message asking for more than this is almost certainly a model that has run
+# away with itself, and the rules will do better.
+MAX_ACTIONS = 10
+
+
+@dataclass(frozen=True)
+class ModelSettings:
+    """A checked model configuration. Built by `maestro.config.model_settings`, which is the only
+    place the environment is read; `api_key` is already resolved and is never logged or printed."""
+
+    provider: str
+    model: str
+    api_key: str | None = None
+    base_url: str | None = None
+    timeout: float = DEFAULT_TIMEOUT
+
+    @property
+    def sends_text_off_this_server(self) -> bool:
+        """Whether captures leave the machine. A compatible endpoint on loopback or a private
+        address stays in; anything else, including every hosted provider, goes out."""
+        if self.provider != "openai-compatible":
+            return True
+        host = (urllib.parse.urlparse(self.base_url or "").hostname or "").lower()
+        if host in ("localhost", "::1") or host.endswith(".local"):
+            return False
+        try:
+            return not ipaddress.ip_address(host).is_private
+        except ValueError:
+            return True
 
 
 class ProviderError(RuntimeError):

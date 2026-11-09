@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo
 from maestro import commands, recurrence
 from maestro.actions import apply
 from maestro.config import Config, load_dotenv
-from maestro.interpret import Context, interpret
+from maestro.interpret import Context, Interpreter, build_interpreter, interpret
 from maestro.models import Item, Kind, Status
 from maestro.notifier import (
     ConfigError,
@@ -139,6 +139,13 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Config error: {e}", file=sys.stderr)
         return 2
     try:
+        # Built once, from the configuration, and handed to whatever captures: the rules unless
+        # MAESTRO_INTERPRETER=model (#115). Half-configured is an error, never a silent fallback.
+        interpreter = build_interpreter(config)
+    except ValueError as e:
+        print(f"Config error: {e}", file=sys.stderr)
+        return 2
+    try:
         store = open_store(args.db, tz=tz)
     except StoreConfigError as e:
         print(f"Config error: {e}", file=sys.stderr)
@@ -150,21 +157,23 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     with store:
         try:
-            return _dispatch(args, config, store, tz)
+            return _dispatch(args, config, store, tz, interpreter)
         except unusable_database(store.backend) as e:
             print(f"Database error: {e}", file=sys.stderr)
             return 2
 
 
-def _dispatch(args: argparse.Namespace, config: Config, store: Store, tz: ZoneInfo) -> int:
+def _dispatch(args: argparse.Namespace, config: Config, store: Store, tz: ZoneInfo,
+              interpreter: "Interpreter | None" = None) -> int:
     if args.command == "add":
-        captured = interpret(" ".join(args.text), Context(tz=tz))
-        (result,) = apply(store, captured, source="cli", requestable=requestable_channels(config))
-        if result.dropped:
-            kept = "the other requested channels will be used" if result.saved.channels \
-                else "using the default channels"
-            print(f"Note: {', '.join(result.dropped)} isn't configured; {kept}.", file=sys.stderr)
-        print(f"Saved: {_format(result.saved).strip()}")
+        captured = interpret(" ".join(args.text), Context(tz=tz), interpreter)
+        results = apply(store, captured, source="cli", requestable=requestable_channels(config))
+        for result in results:
+            if result.dropped:
+                kept = "the other requested channels will be used" if result.saved.channels \
+                    else "using the default channels"
+                print(f"Note: {', '.join(result.dropped)} isn't configured; {kept}.", file=sys.stderr)
+            print(f"Saved: {_format(result.saved).strip()}")
     elif args.command == "list":
         items = store.list(include_done=args.all)
         print(_grouped(items) if items else "Nothing to remember yet.")
@@ -211,14 +220,14 @@ def _dispatch(args: argparse.Namespace, config: Config, store: Store, tz: ZoneIn
         except (ConfigError, ValueError) as e:
             print(f"Config error: {e}", file=sys.stderr)
             return 2
-        bot = _build_bot(config, store)
+        bot = _build_bot(config, store, interpreter)
         try:
-            email = _build_email(config, store)
+            email = _build_email(config, store, interpreter)
         except ValueError as e:
             print(f"Config error: {e}", file=sys.stderr)
             return 2
         if args.command == "serve":
-            return _serve(store, config, notifier, args, bot, email, escalation, quiet)
+            return _serve(store, config, notifier, args, bot, email, escalation, quiet, interpreter)
         if args.once:
             # Respect a running server's lease, and hand it straight back afterwards.
             lease = Lease()
@@ -250,7 +259,8 @@ def _exit_on_sigterm(signum: int, frame: object) -> None:
     raise SystemExit(0)
 
 
-def _build_bot(config: Config, store: Store) -> "TelegramBot | None":
+def _build_bot(config: Config, store: Store,
+               interpreter: "Interpreter | None" = None) -> "TelegramBot | None":
     if not config.telegram_bot_token:
         return None
     from maestro.telegram import TelegramBot, TelegramClient
@@ -258,17 +268,19 @@ def _build_bot(config: Config, store: Store) -> "TelegramBot | None":
     if not config.telegram_chat_id:
         logging.warning("TELEGRAM_CHAT_ID is not set: send /start to your bot to get it")
     return TelegramBot(TelegramClient.for_token(config.telegram_bot_token), store, config.telegram_chat_id,
-                       requestable=requestable_channels(config))
+                       requestable=requestable_channels(config), interpreter=interpreter)
 
 
-def _build_email(config: Config, store: Store) -> "EmailWorker | None":
+def _build_email(config: Config, store: Store,
+                 interpreter: "Interpreter | None" = None) -> "EmailWorker | None":
     from maestro.config import email_settings
     from maestro.email_in import EmailPoller, EmailWorker
 
     settings = email_settings(config)
     if not settings:
         return None
-    return EmailWorker(EmailPoller(store, settings, requestable=requestable_channels(config)))
+    return EmailWorker(EmailPoller(store, settings, requestable=requestable_channels(config),
+                                   interpreter=interpreter))
 
 
 def _wait_with(bot: "TelegramBot | None", email: "EmailWorker | None") -> Callable[[float], None]:
@@ -299,7 +311,8 @@ def _bot_wait(bot: "TelegramBot") -> Callable[[float], None]:
 
 def _serve(store: Store, config: Config, notifier: Notifier, args: argparse.Namespace,
            bot: "TelegramBot | None" = None, email: "EmailWorker | None" = None,
-           escalation: "list[Stage] | None" = None, quiet: "QuietHours | None" = None) -> int:
+           escalation: "list[Stage] | None" = None, quiet: "QuietHours | None" = None,
+           interpreter: "Interpreter | None" = None) -> int:
     try:
         import uvicorn
 
@@ -317,11 +330,14 @@ def _serve(store: Store, config: Config, notifier: Notifier, args: argparse.Name
         from maestro.voice import VoiceHandler
 
         requestable = requestable_channels(config)
-        sms = SmsHandler(store, config.twilio_auth_token, config.sms_to, requestable=requestable)
-        voice = VoiceHandler(store, config.twilio_auth_token, config.sms_to, requestable=requestable)
+        sms = SmsHandler(store, config.twilio_auth_token, config.sms_to, requestable=requestable,
+                         interpreter=interpreter)
+        voice = VoiceHandler(store, config.twilio_auth_token, config.sms_to, requestable=requestable,
+                             interpreter=interpreter)
     app = create_app(store, api_token=config.api_token, notifier=notifier, interval=args.interval, bot=bot,
                      sms=sms, voice=voice, email=email, escalation=escalation, quiet=quiet,
                      public_url=config.public_url, requestable=requestable_channels(config),
+                     interpreter=interpreter,
                      limits=RateLimits(config.rate_limit_webhook, config.rate_limit_auth_failures,
                                        config.trust_proxy_headers))
     # log_config=None keeps uvicorn on our root handler, so MAESTRO_LOG_FORMAT=json covers access logs too.
