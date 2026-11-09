@@ -14,10 +14,10 @@ import urllib.request
 from collections.abc import Callable
 
 from maestro import commands
+from maestro.actions import apply
+from maestro.interpret import Context, interpret
 from maestro.models import Item, Kind
-from maestro.notifier import apply_channel_choice
 from maestro.observability import METRICS
-from maestro.parser import parse
 from maestro.storage import Store
 
 log = logging.getLogger(__name__)
@@ -153,12 +153,12 @@ class TelegramBot:
 
         if not text.startswith("/"):
             METRICS.inc("maestro_captures_total", source="telegram")
-            parsed = parse(text, tz=self.store.tz)
-            note = ""
-            if self.requestable is not None and (dropped := apply_channel_choice(parsed, self.requestable)):
-                kept = ", ".join(parsed.channels) if parsed.channels else "the default channels"
-                note = f"\n({', '.join(dropped)} isn't configured; using {kept})"
-            item = self.store.add(parsed)
+            captured = interpret(text, Context(tz=self.store.tz))
+            (result,) = apply(self.store, captured, source=CHANNEL, requestable=self.requestable)
+            item, note = result.saved, ""
+            if result.dropped:
+                kept = ", ".join(item.channels) if item.channels else "the default channels"
+                note = f"\n({', '.join(result.dropped)} isn't configured; using {kept})"
             buttons = _action_buttons(item) if item.kind == Kind.REMINDER else None
             self.client.send(chat_id, f"Saved {commands.line(item)}{note}", buttons)
             return

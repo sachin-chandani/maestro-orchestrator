@@ -33,10 +33,11 @@ from email.utils import parseaddr
 from typing import Protocol
 
 from maestro import commands
+from maestro.actions import apply
+from maestro.interpret import Context, interpret
 from maestro.models import Item
-from maestro.notifier import REMINDER_MESSAGE_ID_RE, apply_channel_choice
+from maestro.notifier import REMINDER_MESSAGE_ID_RE
 from maestro.observability import METRICS
-from maestro.parser import parse
 from maestro.storage import Store
 
 log = logging.getLogger(__name__)
@@ -251,14 +252,15 @@ class EmailPoller:
             if not text:
                 log.info("Ignoring email %s: no subject or text", fetched.uid)
                 return Outcome(None, done=True)
-            parsed = parse(text, tz=self.store.tz)
-            if self.requestable is not None and (dropped := apply_channel_choice(parsed, self.requestable)):
+            captured = interpret(text, Context(tz=self.store.tz))
+            (result,) = apply(self.store, captured, source="email",
+                              dedupe_key=dedupe_key(message, fetched.raw), requestable=self.requestable)
+            if result.dropped:
                 log.warning("Email capture asked for %s, which isn't configured; keeping %s",
-                            ", ".join(dropped), parsed.channels or "the default channels")
-            item, created = self.store.add_once("email", dedupe_key(message, fetched.raw), parsed)
-            if created:
+                            ", ".join(result.dropped), result.saved.channels or "the default channels")
+            if result.created:
                 METRICS.inc("maestro_captures_total", source="email")
-            return Outcome(item, done=True)
+            return Outcome(result.saved, done=True)
         except Exception:
             key = hashlib.sha256(fetched.raw).hexdigest()
             self.failures[key] = self.failures.get(key, 0) + 1

@@ -12,6 +12,7 @@ All notable changes to this project are documented here. The format follows
 - An `urgent` flag, set at capture from a leading `!` (now dropped from the reminder text) or the word "urgent"; quiet hours read the flag. Items stored by an older Maestro keep being judged by their text. Shown in `maestro list`, the web UI and the API (`urgent`) (#20)
 
 ### Changed
+- Capture now has one shape everywhere: `maestro.interpret` reads text into typed actions (`maestro.actions`: `CreateReminder`, `CreateNote`, `Done`, `Snooze`, `Stop`, each with a validated JSON form) and `maestro.actions.apply` is the only code that turns them into store calls. CLI, API, SMS, voice, Telegram and email-in all go through it. `RulesInterpreter` is today's parser, so nothing changes for users: the same items are saved, each channel answers in the same words, provider retries still capture once, and the parser corpus is untouched. It is the step ADR 0015 needs before an optional model interpreter (#113)
 - Storage is now an interface (`maestro.storage.Store`) with SQLite as the only backend, in preparation for PostgreSQL (#34). What done and snooze mean for a repeating reminder moved to `maestro.storage.logic`, so every backend decides it the same way. Nothing changes for users: the database, the CLI and the API are untouched, and `from maestro.store import Store` still opens SQLite
 - `--db` and `maestro doctor` accept a database URL as well as a path, and `Store.acknowledgement(item_id, occurrence)` reads how an occurrence was acknowledged (#34)
 

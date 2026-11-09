@@ -14,10 +14,10 @@ import re
 from xml.sax.saxutils import escape
 
 from maestro import commands
+from maestro.actions import apply
+from maestro.interpret import Context, interpret
 from maestro.models import Item, Kind
-from maestro.notifier import apply_channel_choice
 from maestro.observability import METRICS
-from maestro.parser import parse
 from maestro.storage import Store
 
 log = logging.getLogger(__name__)
@@ -66,18 +66,16 @@ class TwilioHandler:
         return verify_signature(self.auth_token, url, params, signature)
 
     def save(self, text: str, external_id: str | None, source: str) -> tuple[Item, str]:
-        """Parse and save text from an inbound message, once per provider message/call id. Also
+        """Read and save text from an inbound message, once per provider message/call id. Also
         returns a note for the sender when a chosen channel isn't configured (#20), else ""."""
-        parsed = parse(text, tz=self.store.tz)
-        note = ""
-        if self.requestable is not None and (dropped := apply_channel_choice(parsed, self.requestable)):
-            kept = "the other requested channels" if parsed.channels else "the default channels"
-            note = f"{', '.join(dropped)} isn't configured; using {kept}."
+        captured = interpret(text, Context(tz=self.store.tz))
+        (result,) = apply(self.store, captured, source=f"twilio_{source}", dedupe_key=external_id or None,
+                          requestable=self.requestable)
+        item, created, note = result.saved, result.created, ""
+        if result.dropped:
+            kept = "the other requested channels" if item.channels else "the default channels"
+            note = f"{', '.join(result.dropped)} isn't configured; using {kept}."
             log.warning("%s capture: %s", source, note)
-        if not external_id:
-            item, created = self.store.add(parsed), True
-        else:
-            item, created = self.store.add_once(f"twilio_{source}", external_id, parsed)
         if created:
             METRICS.inc("maestro_captures_total", source=source)
         else:

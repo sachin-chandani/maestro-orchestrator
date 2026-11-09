@@ -12,18 +12,19 @@ from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
 from maestro import recurrence
+from maestro.actions import apply
 from maestro.config import Config, load_dotenv
+from maestro.interpret import Context, interpret
 from maestro.models import Item, Kind, Status
 from maestro.notifier import (
     ConfigError,
     Notifier,
-    apply_channel_choice,
     build_notifier,
     default_channels,
     requestable_channels,
 )
 from maestro.observability import configure_logging
-from maestro.parser import parse, parse_duration
+from maestro.parser import parse_duration
 from maestro.scheduler import Lease, fire_due, run_forever
 from maestro.storage import (
     SchemaTooNewError,
@@ -143,13 +144,13 @@ def main(argv: list[str] | None = None) -> int:
 
 def _dispatch(args: argparse.Namespace, config: Config, store: Store, tz: ZoneInfo) -> int:
     if args.command == "add":
-        item = parse(" ".join(args.text), tz=tz)
-        if dropped := apply_channel_choice(item, requestable_channels(config)):
-            kept = "the other requested channels will be used" if item.channels \
+        captured = interpret(" ".join(args.text), Context(tz=tz))
+        (result,) = apply(store, captured, source="cli", requestable=requestable_channels(config))
+        if result.dropped:
+            kept = "the other requested channels will be used" if result.saved.channels \
                 else "using the default channels"
-            print(f"Note: {', '.join(dropped)} isn't configured; {kept}.", file=sys.stderr)
-        item = store.add(item)
-        print(f"Saved: {_format(item).strip()}")
+            print(f"Note: {', '.join(result.dropped)} isn't configured; {kept}.", file=sys.stderr)
+        print(f"Saved: {_format(result.saved).strip()}")
     elif args.command == "list":
         items = store.list(include_done=args.all)
         print("\n".join(map(_format, items)) if items else "Nothing to remember yet.")

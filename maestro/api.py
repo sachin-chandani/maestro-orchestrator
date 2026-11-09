@@ -22,10 +22,12 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from maestro import __version__, commands, recurrence
+from maestro.actions import apply
+from maestro.interpret import Context, interpret
 from maestro.models import Item
-from maestro.notifier import Notifier, apply_channel_choice
+from maestro.notifier import Notifier
 from maestro.observability import METRICS, Labels
-from maestro.parser import parse, parse_duration
+from maestro.parser import parse_duration
 from maestro.ratelimit import RateLimits, TokenBucket
 from maestro.scheduler import Lease, tick
 from maestro.sms import WEBHOOK_PATH, SmsHandler, TwilioHandler
@@ -297,11 +299,12 @@ def create_app(store: Store, api_token: str | None = None, notifier: Notifier | 
     @app.post("/items", status_code=201, dependencies=[Depends(require_token)])
     async def capture(body: CaptureIn) -> ItemOut:
         METRICS.inc("maestro_captures_total", source="api")
-        item = parse(body.text, tz=store.tz)
-        if requestable is not None and (dropped := apply_channel_choice(item, requestable)):
+        captured = interpret(body.text, Context(tz=store.tz))
+        (result,) = apply(store, captured, source="api", requestable=requestable)
+        if result.dropped:
             log.warning("Capture asked for %s, which isn't configured; keeping %s",
-                        ", ".join(dropped), item.channels or "the default channels")
-        return ItemOut.of(store.add(item))
+                        ", ".join(result.dropped), result.saved.channels or "the default channels")
+        return ItemOut.of(result.saved)
 
     @app.get("/items", dependencies=[Depends(require_token)])
     async def list_items(include_done: bool = False, q: str | None = None,

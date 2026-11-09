@@ -263,6 +263,13 @@ class Applied:
     dropped: list[str] = field(default_factory=list)  # channels asked for that aren't configured
     message: str = ""  # for done / snooze / stop: the outcome, already worded
 
+    @property
+    def saved(self) -> Item:
+        """The item, for a capture. A create action always has one; done / snooze / stop don't."""
+        if self.item is None:
+            raise ValueError(f"{self.action.TYPE} saved no item")
+        return self.item
+
 
 def apply(store: Store, actions: list[Action], source: str, *, dedupe_key: str | None = None,
           requestable: frozenset[str] | None = None, channel: str | None = None,

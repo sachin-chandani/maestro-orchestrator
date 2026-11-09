@@ -227,6 +227,14 @@ def test_apply_snoozes_and_stops(store):
     assert stopped.message == "⏹ Stopped: Pay rent"
 
 
+def test_an_action_that_saves_nothing_has_no_item(store):
+    (saved,) = apply(store, actions_for("call mom tomorrow at 5pm"), source="cli")
+    (result,) = apply(store, [Done(item_id=saved.item.id)], source="cli")
+    assert result.item is None
+    with pytest.raises(ValueError, match="done saved no item"):
+        assert result.saved
+
+
 def test_apply_without_an_item_number_asks_which_one(store):
     (result,) = apply(store, [Done()], source="telegram", prefix="/")
     assert result.message == "Which one? Add its number, e.g. /done 3 (see /list)."

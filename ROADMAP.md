@@ -124,6 +124,7 @@ Exit criteria: escalation proven end to end with fakes, acknowledgements on ever
 Exit criteria: a new phone goes from scanning a pairing code to its first push notification in under 2 minutes; everything doable from the CLI is doable from the web UI on a phone; e2e tests and an accessibility check run in CI; installable as an app with push.
 
 ## v0.6: Second brain (target Jan 17, 2027)
+- [x] Capture produces actions: one interpret step and one apply step for every channel (#113, ADR 0015)
 - [ ] Full-text search with SQLite FTS5 (#28)
 - [ ] Tags, people and places (#29)
 - [ ] Daily and weekly digest (#30)
