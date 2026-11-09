@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
-from maestro import recurrence
+from maestro import commands, recurrence
 from maestro.actions import apply
 from maestro.config import Config, load_dotenv
 from maestro.interpret import Context, interpret
@@ -46,12 +46,26 @@ if TYPE_CHECKING:
 def _format(item: Item) -> str:
     next_time = item.snoozed_until or item.due_at  # a snoozed occurrence goes out before the series' next
     when = next_time.strftime("%a %d %b %H:%M") if next_time else "—"
-    tag = "⏰" if item.kind == Kind.REMINDER else "📝"
+    tag = commands.KIND_ICONS.get(item.kind, "📝")
     urgent = "❗ " if item.urgent else ""
     repeat = f" ({recurrence.describe(item.recurrence)})" if item.recurrence else ""
     via = f" [via {', '.join(item.channels)}]" if item.channels else ""
     status = "" if item.status == Status.PENDING else f" [{item.status}]"
     return f"{item.id:>4}  {tag} {when:<16}  {urgent}{item.text}{repeat}{via}{status}"
+
+
+# Reminders, then tasks, then notes: `store.list` already returns them in this order (#114).
+_GROUPS = ((Kind.REMINDER, "Reminders"), (Kind.TASK, "Tasks"), (Kind.NOTE, "Notes"))
+
+
+def _grouped(items: list[Item]) -> str:
+    """The list under one heading per kind, so tasks are their own section and not lost among
+    notes. A kind nobody has captured gets no heading."""
+    sections = []
+    for kind, title in _GROUPS:
+        if lines := [_format(i) for i in items if i.kind == kind]:
+            sections.append("\n".join([title, *lines]))
+    return "\n\n".join(sections)
 
 
 def _build_parser(config: Config) -> argparse.ArgumentParser:
@@ -153,7 +167,7 @@ def _dispatch(args: argparse.Namespace, config: Config, store: Store, tz: ZoneIn
         print(f"Saved: {_format(result.saved).strip()}")
     elif args.command == "list":
         items = store.list(include_done=args.all)
-        print("\n".join(map(_format, items)) if items else "Nothing to remember yet.")
+        print(_grouped(items) if items else "Nothing to remember yet.")
     elif args.command == "search":
         items = store.search(args.query)
         print("\n".join(map(_format, items)) if items else "No matches.")

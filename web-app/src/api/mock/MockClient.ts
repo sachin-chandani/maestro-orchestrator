@@ -471,7 +471,7 @@ export class MockClient implements MaestroClient {
 
   /** commands.when(): "Thu 05 Nov 17:45", "… (snoozed), then …", ", every Thursday", or "note". */
   private when(item: StoredItem): string {
-    if (!item.due_at) return 'note'
+    if (!item.due_at) return item.kind === 'task' ? 'task' : 'note'  // matches commands.when (#114)
     let label = shortLabel(new Date(item.due_at), this.tz)
     if (item.snoozed_until) {
       label = `${shortLabel(new Date(item.snoozed_until), this.tz)} (snoozed), then ${label}`

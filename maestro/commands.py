@@ -17,6 +17,9 @@ from maestro.tz import add_elapsed
 
 LIST_LIMIT = 20
 
+# One marker per kind, so a list says at a glance what each line is (#114).
+KIND_ICONS = {Kind.REMINDER: "⏰", Kind.TASK: "☑️", Kind.NOTE: "📝"}
+
 DEFAULT_SNOOZE = "10m"
 
 # Only exact command shapes count, so "done with taxes by friday" is still captured as a reminder.
@@ -38,7 +41,7 @@ class Command:
 
 def when(item: Item) -> str:
     if not item.due_at:
-        return "note"
+        return "task" if item.kind == Kind.TASK else "note"
     label = item.due_at.strftime("%a %d %b %H:%M")
     if item.snoozed_until:
         label = f"{item.snoozed_until:%a %d %b %H:%M} (snoozed), then {label}"
@@ -46,7 +49,7 @@ def when(item: Item) -> str:
 
 
 def line(item: Item) -> str:
-    icon = "⏰" if item.kind == Kind.REMINDER else "📝"
+    icon = KIND_ICONS.get(item.kind, "📝")
     return f"{icon} #{item.id} {item.text} ({when(item)})"
 
 

@@ -5,8 +5,8 @@ list of these; `apply` is the only code that turns them into store calls. Every 
 JSON form in both directions, so a model can later fill in exactly what the rules fill in today, and
 anything it sends that isn't valid is rejected before it reaches the store.
 
-Room is left for `CreateTask`, `AddToList` and `Ask`: add the dataclass, register its field types and
-handle it in `apply`.
+Room is left for `AddToList` and `Ask`: add the dataclass, register its field types and handle it
+in `apply`.
 """
 
 from collections.abc import Callable
@@ -170,6 +170,17 @@ class CreateReminder(_Create):
 
 
 @dataclass(frozen=True)
+class CreateTask(_Create):
+    """Save something to do that has no time (#114). A task is never delivered and never escalated;
+    done works on it, and giving it a time later makes it a reminder."""
+
+    TYPE: ClassVar[str] = "create_task"
+
+    def to_item(self, now: datetime | None = None) -> Item:
+        return self._item(Kind.TASK, now)
+
+
+@dataclass(frozen=True)
 class CreateNote(_Create):
     """Save something to remember. A note has no time and is never delivered."""
 
@@ -212,7 +223,7 @@ class Stop(Action):
     item_id: int | None = None
 
 
-ACTIONS: tuple[type[Action], ...] = (CreateReminder, CreateNote, Done, Snooze, Stop)
+ACTIONS: tuple[type[Action], ...] = (CreateReminder, CreateTask, CreateNote, Done, Snooze, Stop)
 BY_TYPE: dict[str, type[Action]] = {a.TYPE: a for a in ACTIONS}
 
 
@@ -243,7 +254,7 @@ def actions_from_json(data: Any) -> list[Action]:
     return [from_json(entry) for entry in data]
 
 
-def from_item(item: Item) -> CreateReminder | CreateNote:
+def from_item(item: Item) -> CreateReminder | CreateTask | CreateNote:
     """The action that would save this item: how the rule-based parser's result becomes an action."""
     common: dict[str, Any] = {
         "text": item.text,
@@ -254,6 +265,8 @@ def from_item(item: Item) -> CreateReminder | CreateNote:
     }
     if item.kind == Kind.REMINDER:
         return CreateReminder(due_at=item.due_at, recurrence=item.recurrence, **common)
+    if item.kind == Kind.TASK:
+        return CreateTask(**common)
     return CreateNote(**common)
 
 
@@ -304,7 +317,7 @@ def apply(store: Store, actions: list[Action], source: str, *, dedupe_key: str |
 
 def _apply_one(store: Store, action: Action, source: str, dedupe_key: str | None,
                requestable: frozenset[str] | None, channel: str | None, prefix: str) -> Applied:
-    if isinstance(action, CreateReminder | CreateNote):
+    if isinstance(action, CreateReminder | CreateTask | CreateNote):
         item = action.to_item(datetime.now(store.tz).replace(microsecond=0))
         dropped = apply_channel_choice(item, requestable) if requestable is not None else []
         if dedupe_key is None:

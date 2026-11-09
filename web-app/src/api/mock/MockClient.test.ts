@@ -151,6 +151,24 @@ describe('items', () => {
     })
   })
 
+  it('captures an untimed thing to do as a task', async () => {
+    const { client } = setup()
+    expect(await client.capture('renew the passport')).toMatchObject({
+      text: 'Renew the passport',
+      kind: 'task',
+      due_at: null,
+      when: 'task',
+    })
+    expect(await client.capture('todo: sort out the garage')).toMatchObject({
+      text: 'Sort out the garage',
+      kind: 'task',
+    })
+    // a statement that starts like a to-do is still a note
+    expect(await client.capture('call centre number is 0800 123 456')).toMatchObject({
+      kind: 'note',
+    })
+  })
+
   it('captures a recurring reminder', async () => {
     const { client } = setup()
     expect(await client.capture('water the ferns every monday at 8am')).toMatchObject({

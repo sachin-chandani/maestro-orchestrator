@@ -137,6 +137,13 @@ MIGRATIONS: list[Migration] = [
         "ALTER TABLE items ADD COLUMN channels TEXT",
         "ALTER TABLE items ADD COLUMN urgent INTEGER",
     ],
+    # 10: tasks, a third kind between reminders and notes (#114, ADR 0015). `kind` is free text, so
+    # nothing about the column changes; what is new is a third value and an index for listing one
+    # kind at a time. Existing rows are left exactly as they are: a note written before tasks
+    # existed stays a note, however much it reads like something to do.
+    [
+        "CREATE INDEX IF NOT EXISTS idx_items_kind ON items (kind, status)",
+    ],
 ]
 
 
@@ -341,10 +348,12 @@ class SQLiteStore(Store):
         sql = "SELECT * FROM items"
         if not include_done:
             sql += f" WHERE status != '{Status.DONE}'"
-        # Reminders by when they next go out first, then notes by creation time. The id
-        # breaks ties (times are stored to the second), so the order is the same on every
-        # backend and a list never reshuffles after an unrelated update.
-        sql += " ORDER BY due_at IS NULL, COALESCE(snoozed_until, due_at), created_at, id"
+        # Reminders by when they next go out first, then tasks, then notes, each by creation
+        # time (#114). The id breaks ties (times are stored to the second), so the order is the
+        # same on every backend and a list never reshuffles after an unrelated update.
+        # The kind term only separates the untimed items: everything with a due time is a reminder.
+        sql += (" ORDER BY due_at IS NULL, COALESCE(snoozed_until, due_at),"
+                f" CASE WHEN kind = '{Kind.TASK}' THEN 0 ELSE 1 END, created_at, id")
         return [self._item(r) for r in self.conn.execute(sql)]
 
     def counts(self) -> dict[tuple[str, str], int]:

@@ -103,6 +103,11 @@ MIGRATIONS: list[list[str]] = [
         "ALTER TABLE items ADD COLUMN channels TEXT",
         "ALTER TABLE items ADD COLUMN urgent BOOLEAN",
     ],
+    # 3: tasks (#114), matching SQLite's migration 10. `kind` is free text on both backends, so the
+    # only change is the index for listing one kind at a time; existing rows keep the kind they have.
+    [
+        "CREATE INDEX IF NOT EXISTS idx_items_kind ON items (kind, status)",
+    ],
 ]
 
 
@@ -320,10 +325,12 @@ class PostgresStore(Store):
         if not include_done:
             sql += " WHERE status != %s"
             params = (str(Status.DONE),)
-        # Reminders by when they next go out first, then notes by creation time. The id
-        # breaks ties (times are stored to the second), so the order is the same on every
-        # backend and a list never reshuffles after an unrelated update.
-        sql += " ORDER BY due_at IS NULL, COALESCE(snoozed_until, due_at), created_at, id"
+        # Reminders by when they next go out first, then tasks, then notes, each by creation
+        # time (#114). The id breaks ties (times are stored to the second), so the order is the
+        # same on every backend and a list never reshuffles after an unrelated update.
+        # The kind term only separates the untimed items: everything with a due time is a reminder.
+        sql += (" ORDER BY due_at IS NULL, COALESCE(snoozed_until, due_at),"
+                f" CASE WHEN kind = '{Kind.TASK}' THEN 0 ELSE 1 END, created_at, id")
         return [self._item(r) for r in self._execute(sql, params)]
 
     def counts(self) -> dict[tuple[str, str], int]:

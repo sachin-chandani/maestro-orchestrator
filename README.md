@@ -24,7 +24,8 @@ Saved: 3  📝 —                 My passport is in the blue drawer
 - **Plain language:** `tomorrow at 5pm`, `in 2 hours`, `next friday at 10am`, `on Nov 1`, `tonight`, `at noon`, `tomorrow morning`, `by end of day`, `eow`, `this weekend`, `on the 5th`, `around 5pm`, and hours without am/pm the way people say them (`at 6` is evening, `at 9` morning, `at 8 tonight` 20:00). `next friday` means the coming Friday. Measured against a 200+ phrase corpus (`tests/corpus/phrases.txt`)
 - **Recurring:** `every day at 8am`, `every weekday at 9:30am`, `every monday`, `every other friday`, `every 3 days`, `biweekly on tuesday`, `every night`, `on the 1st of every month`, `every 2 hours`
 - **Timezone-aware:** stored in UTC, shown in your timezone; "8am every day" stays 8am across DST changes
-- **Notes:** anything without a time is kept and searchable
+- **Tasks:** something to do with no time (`renew the passport`, `todo: sort out the garage`) is kept as a task: never delivered, never escalated, and `done` works on it. Give it a time later and it becomes a reminder
+- **Notes:** anything else without a time is kept and searchable — a statement stays a statement, so `call centre number is 0800 123 456` is a note, not a task
 - **Channels:** console, macOS notifications, [ntfy](https://ntfy.sh) push, Twilio SMS, Telegram (with Done/snooze buttons), email (reply to act), webhooks (Slack, Discord, Home Assistant, anything). Say `text me`, `call me`, `email me` or `on telegram` in a capture to pick where that one reminder goes
 - **Email-in:** forward or send an email to a dedicated inbox to capture it
 - **Voice:** call your Twilio number and say the reminder; it's read back to you. Or have Maestro call you: press 1 for done, 2 to snooze
@@ -143,7 +144,7 @@ maestro doctor --send-test  # also delivers a test message on each channel
 It exits non-zero if anything fails, so you can run it before a deploy (`docker compose run --rm maestro maestro doctor`).
 
 ### Monitoring
-`GET /metrics` serves Prometheus metrics (same bearer token as the API): captures by source, deliveries by channel and result, reminders fired, acknowledgements and reminders still awaiting one, scheduler ticks and lag, and item counts by kind and status. `GET /items?unacknowledged=true` lists reminders that were sent but not yet marked done or snoozed. Alert on `time() - maestro_scheduler_last_tick_timestamp_seconds > 120` to catch a stuck scheduler.
+`GET /metrics` serves Prometheus metrics (same bearer token as the API): captures by source, deliveries by channel and result, reminders fired, acknowledgements and reminders still awaiting one, scheduler ticks and lag, and item counts by kind and status. `GET /items?unacknowledged=true` lists reminders that were sent but not yet marked done or snoozed, and `GET /items?kind=task` (or `reminder`, `note`) lists one kind. Alert on `time() - maestro_scheduler_last_tick_timestamp_seconds > 120` to catch a stuck scheduler.
 
 ### Telegram
 1. Create a bot with [@BotFather](https://t.me/BotFather) and set `TELEGRAM_BOT_TOKEN`.
@@ -173,8 +174,8 @@ Create a dedicated inbox for Maestro, set `IMAP_HOST`, `IMAP_USER`, `IMAP_PASSWO
 
 ## CLI reference
 ```bash
-maestro add <text>            # capture a reminder or note
-maestro list [--all]          # pending reminders (soonest first), then notes
+maestro add <text>            # capture a reminder, task or note
+maestro list [--all]          # reminders (soonest first), then tasks, then notes, under a heading each
 maestro search <text>         # find by text
 maestro snooze <id> <10m|2h|1d>
 maestro done <id>             # for a repeating reminder: this time; the series goes on
@@ -198,7 +199,7 @@ print(item.due_at, item.recurrence)   # 2026-10-24 10:00:00 weekly:5
 ## Architecture
 | Module | Role |
 | --- | --- |
-| `maestro/parser.py` | Plain language → reminder or note |
+| `maestro/parser.py` | Plain language → reminder, task or note |
 | `maestro/recurrence.py` | Recurrence rules and next-occurrence math |
 | `maestro/store.py` | SQLite persistence with versioned migrations |
 | `maestro/scheduler.py` | Fires due reminders, reschedules recurring ones |

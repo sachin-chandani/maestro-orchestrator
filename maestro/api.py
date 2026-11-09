@@ -24,7 +24,7 @@ from pydantic import BaseModel, Field
 from maestro import __version__, commands, recurrence
 from maestro.actions import apply
 from maestro.interpret import Context, interpret
-from maestro.models import Item
+from maestro.models import Item, Kind
 from maestro.notifier import Notifier
 from maestro.observability import METRICS, Labels
 from maestro.parser import parse_duration
@@ -308,7 +308,7 @@ def create_app(store: Store, api_token: str | None = None, notifier: Notifier | 
 
     @app.get("/items", dependencies=[Depends(require_token)])
     async def list_items(include_done: bool = False, q: str | None = None,
-                         unacknowledged: bool = False) -> list[ItemOut]:
+                         unacknowledged: bool = False, kind: Kind | None = None) -> list[ItemOut]:
         awaiting = store.unacknowledged_ids()
         if unacknowledged:
             items = [item for item, _ in store.unacknowledged()]
@@ -316,6 +316,8 @@ def create_app(store: Store, api_token: str | None = None, notifier: Notifier | 
                 items = [item for item in items if q.lower() in item.text.lower()]
         else:
             items = store.search(q) if q else store.list(include_done=include_done)
+        if kind is not None:  # ?kind=task, ?kind=reminder, ?kind=note (#114); anything else is a 422
+            items = [item for item in items if item.kind == kind]
         return [ItemOut.of(i, awaiting) for i in items]
 
     @app.get("/items/{item_id}", dependencies=[Depends(require_token)])

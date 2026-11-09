@@ -10,7 +10,8 @@ export type IsoDateTime = string
 // ---------------------------------------------------------------------------------------------------
 // Items: served by the backend today (/items)
 
-export type ItemKind = 'reminder' | 'note'
+/** 'task' is something to do with no time: never delivered, done works on it (#114). */
+export type ItemKind = 'reminder' | 'task' | 'note'
 export type ItemStatus = 'pending' | 'fired' | 'done'
 
 /** A delivery channel name, as in MAESTRO_CHANNELS: "twilio_sms", "telegram", "email", "ntfy"… */
@@ -33,7 +34,7 @@ export interface Item {
   channels: ChannelName[] | null
   /** Urgent reminders ignore quiet hours. null on items stored before the flag existed. */
   urgent: boolean | null
-  /** Human-readable, in the server's timezone: "Wed 28 Oct 17:00, every Monday" or "note". */
+  /** Human-readable, in the server's timezone: "Wed 28 Oct 17:00, every Monday", "task" or "note". */
   when: string
   /** Delivered, and nobody has said done or snooze yet. */
   awaiting_acknowledgement: boolean

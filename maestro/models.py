@@ -5,6 +5,7 @@ from enum import StrEnum
 
 class Kind(StrEnum):
     REMINDER = "reminder"  # has a due time and fires a notification
+    TASK = "task"  # something to do, no due time, never notified (#114)
     NOTE = "note"  # a fact to remember, no due time
 
 

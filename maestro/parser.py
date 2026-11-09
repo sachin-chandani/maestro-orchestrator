@@ -279,6 +279,63 @@ def _find_calendar_date(parts: _Parts, masked: str, now: datetime) -> str | None
     return retry
 
 
+# --- tasks: untimed things to do (#114) --------------------------------------------------------
+# A capture with no time is a task when it asks for something to be done, and a note when it states
+# a fact. Only untimed captures are judged: any time phrase still makes a reminder.
+
+# "todo: ..." / "to do: ..." says it outright; the marker is dropped from the text.
+TODO_MARKER_RE = re.compile(r"^\s*to\s?do\s*:\s*", re.I)
+
+# Verbs that start an instruction. First word only, so "the best time to call dad is after dinner"
+# is still a note. Multi-word ones come first so "pick up" wins over "pick".
+TODO_VERBS = [
+    "pick up", "drop off", "fill in", "fill out", "follow up", "reply to", "sort out", "set up",
+    "apply for", "ring up", "back up", "chase up", "tidy up", "top up", "print out",
+    "buy", "call", "phone", "ring", "text", "email", "send", "mail", "post", "pay", "renew",
+    "book", "order", "cancel", "return", "fix", "clean", "wash", "collect", "print", "sign",
+    "submit", "finish", "write", "check", "ask", "get", "take", "bring", "schedule", "update",
+    "install", "register", "make", "arrange", "confirm", "download", "upload", "replace",
+    "repair", "refill", "rebook", "unsubscribe", "tidy", "water", "feed", "charge", "pack",
+]
+# "read" is deliberately absent: "read about the 1st world war" is as likely to be a note.
+TODO_VERB_RE = re.compile(rf"^\s*(?:{'|'.join(TODO_VERBS)})\b", re.I)
+
+# A label before a colon ("book recommendation:", "text from mom:") means the capture is filed
+# information, not an instruction — "todo:" has already been taken off by then.
+LABEL_RE = re.compile(r"^[^:]{1,40}:\s*\S")
+
+# Verbs that make the capture a statement about how things are, not a request. Anything after a
+# subordinating word is part of what is being asked for, so "check that the oven is off" and
+# "ask the vet whether the booster jab is needed" stay tasks, while "call centre number is
+# 0800 123 456" and "check engine light means low oil" stay notes.
+STATEMENT_RE = re.compile(
+    r"\b(?:is|are|was|were|isn'?t|aren'?t|means?|lives?|costs?|uses?|has|have|meets?|opens?|"
+    r"closes?|sells?|starts?|ends?|should\s+be|used\s+to\s+be)\b", re.I)
+SUBORDINATOR_RE = re.compile(r"\b(?:that|if|whether|when|why|how|where|what|who|which)\b", re.I)
+
+
+def _is_statement(text: str) -> bool:
+    """True when the text says how something is, rather than asking for it to be done."""
+    if not (said := STATEMENT_RE.search(text)):
+        return False
+    sub = SUBORDINATOR_RE.search(text)
+    return sub is None or sub.start() > said.start()
+
+
+def is_task(text: str, *, marked: bool = False, told_to: bool = False) -> bool:
+    """Whether an untimed capture is something to do (#114).
+
+    `text` is the message with any prefix and marker already removed. `marked` is set by a leading
+    "todo:" and `told_to` by a prefix that named an action ("remind me to…", "remember to…"); both
+    say so outright, so neither looks at the words that follow.
+    """
+    if marked or told_to:
+        return True
+    if LABEL_RE.match(text):
+        return False
+    return bool(TODO_VERB_RE.match(text)) and not _is_statement(text)
+
+
 def _clean(text: str) -> str:
     text = re.sub(r"\s+", " ", text).strip()
     text = re.sub(r"(?:\s+\b(?:on|at|by)\b)+$", "", text, flags=re.I)
@@ -312,10 +369,17 @@ def parse(source: str, now: datetime | None = None, tz: tzinfo | None = None) ->
         source_text, source = source, source.lstrip().lstrip("!").lstrip()
     else:
         source_text = source
+    # "todo: renew the passport" (#114): the marker says this is something to do and is dropped from
+    # the text, like "!". It stays in source_text, and a time in the rest still makes a reminder.
+    marked_todo = bool(TODO_MARKER_RE.match(source))
+    if marked_todo:
+        source = TODO_MARKER_RE.sub("", source, count=1)
     prefix = PREFIX_RE.match(source)
     # "remind me in 15 minutes to check the oven": the prefix had no connector, so once the time is
     # removed a leading "to" is left over. ("remind me about that email" keeps "that".)
     strip_connector = prefix is not None and not re.search(r"\b(?:to|that|about)\s*$", prefix[0], re.I)
+    # "remind me to …" and "remember to …" name an action; "remember that …" states a fact (#114).
+    told_to = prefix is not None and bool(re.search(r"\bto\s*$", prefix[0], re.I))
     # Dictation and careful typists write "5 p.m."; the rules below expect "5 pm".
     text = MERIDIEM_RE.sub(lambda m: f"{m[1]} {m[2]}m", source)
     parts = _Parts(text=PREFIX_RE.sub("", text, count=1))
@@ -358,9 +422,15 @@ def parse(source: str, now: datetime | None = None, tz: tzinfo | None = None) ->
     if not text and channels:
         text = _clean(without_channels)
     text = text or source.strip() or source_text.strip()  # "!" alone: the "!" is the whole capture
+    if due_at:
+        kind = Kind.REMINDER
+    elif is_task(text, marked=marked_todo, told_to=told_to):
+        kind = Kind.TASK
+    else:
+        kind = Kind.NOTE
     return Item(
         text=text[0].upper() + text[1:],
-        kind=Kind.REMINDER if due_at else Kind.NOTE,
+        kind=kind,
         created_at=now.replace(microsecond=0),
         due_at=due_at,
         source_text=source_text,

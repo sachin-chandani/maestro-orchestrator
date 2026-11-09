@@ -1,4 +1,7 @@
 # Parser accuracy corpus (#55). Each line: input | expected text | expected due (local, or -) | rule (or -)
+# Optional 5th column: flags joined by "+" — channel names, "urgent", and "task" (#114).
+# Kind is implied: a due time means a reminder, "task" means an untimed thing to do,
+# anything else untimed is a note.
 # Expectations are what a person means, written before checking the parser.
 # "Now" is Tuesday 2026-10-27 08:00 America/New_York (US DST ends Sun Nov 1). Default time is 09:00.
 # Made-up data only.
@@ -187,6 +190,45 @@ song stuck in my head: september | Song stuck in my head: september | - | -
 tyre pressure should be 35 psi | Tyre pressure should be 35 psi | - | -
 remember my blood type is o positive | My blood type is o positive | - | -
 the hotel confirmation number is ab12345 | The hotel confirmation number is ab12345 | - | -
+
+# --- statements that start like a to-do but must stay notes (#114)
+call centre number is 0800 123 456 | Call centre number is 0800 123 456 | - | - | -
+order number is 12345 | Order number is 12345 | - | - | -
+check engine light means low oil | Check engine light means low oil | - | - | -
+book club meets at the library | Book club meets at the library | - | - | -
+text from mom: the spare charger is in my bag | Text from mom: the spare charger is in my bag | - | - | -
+pay scale for band 6 is on the intranet | Pay scale for band 6 is on the intranet | - | - | -
+email signature template is in drafts | Email signature template is in drafts | - | - | -
+fix for the printer jam is to open tray 2 | Fix for the printer jam is to open tray 2 | - | - | -
+car park barrier code is 7788 | Car park barrier code is 7788 | - | - | -
+
+# --- tasks: untimed things to do (#114). No time, never delivered.
+todo: sort out the garage | Sort out the garage | - | - | task
+to do: ask jo about the invoice | Ask jo about the invoice | - | - | task
+TODO: renew the car tax | Renew the car tax | - | - | task
+remind me to renew the passport | Renew the passport | - | - | task
+remember to ask jo about the invoice | Ask jo about the invoice | - | - | task
+don't forget to book the mot | Book the mot | - | - | task
+renew the passport | Renew the passport | - | - | task
+buy milk | Buy milk | - | - | task
+call the plumber about the leak | Call the plumber about the leak | - | - | task
+pick up the dry cleaning | Pick up the dry cleaning | - | - | task
+pay the gas bill | Pay the gas bill | - | - | task
+email the landlord about the boiler | Email the landlord about the boiler | - | - | task
+book a table at luigi's | Book a table at luigi's | - | - | task
+send the signed lease back | Send the signed lease back | - | - | task
+fix the squeaky gate | Fix the squeaky gate | - | - | task
+cancel the gym membership | Cancel the gym membership | - | - | task
+order more coffee beans | Order more coffee beans | - | - | task
+drop off the recycling | Drop off the recycling | - | - | task
+fill in the school form | Fill in the school form | - | - | task
+reply to sarah about the quote | Reply to sarah about the quote | - | - | task
+follow up with the insurer | Follow up with the insurer | - | - | task
+sort out the loft insulation | Sort out the loft insulation | - | - | task
+check that the oven is off | Check that the oven is off | - | - | task
+ask the vet whether the booster jab is needed | Ask the vet whether the booster jab is needed | - | - | task
+!pay the parking fine | Pay the parking fine | - | - | task+urgent
+print the boarding passes | Print the boarding passes | - | - | task
 
 # --- prefixes and word order
 please remind me to call mom tomorrow at 5pm | Call mom | 2026-10-28T17:00 | -

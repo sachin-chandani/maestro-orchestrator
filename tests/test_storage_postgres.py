@@ -123,6 +123,41 @@ def test_a_database_from_a_newer_maestro_is_refused(store):
     store.conn.execute("UPDATE schema_version SET version = %s", (len(MIGRATIONS),))
 
 
+def test_migrating_from_the_schema_before_tasks_keeps_every_note_a_note(fresh):
+    """Schema 2 is 0.4, which has no idea tasks exist (#114). Its rows keep the kind they were
+    written with — nothing is reclassified behind the user's back — and the new kind works
+    afterwards. Mirrors the SQLite test in `test_tasks.py`."""
+    before = len(MIGRATIONS) - 1
+    with open_store(pgsupport.URL, tz=TZ) as store:  # migrate fully, then wind the schema back
+        store.conn.execute("DROP INDEX IF EXISTS idx_items_kind")
+        store.conn.execute("UPDATE schema_version SET version = %s", (before,))
+        store.add(Item(text="Renew the passport", kind=Kind.NOTE, created_at=NOW,
+                       source_text="renew the passport"))
+        store.add(Item(text="The gate code is 4321", kind=Kind.NOTE, created_at=NOW,
+                       source_text="the gate code is 4321"))
+        reminder(store, text="Call mom", due=LATER)
+
+    with open_store(pgsupport.URL, tz=TZ) as store:
+        assert store.schema_version == len(MIGRATIONS)
+        assert [(i.text, i.kind) for i in store.list()] == [
+            ("Call mom", Kind.REMINDER),
+            ("Renew the passport", Kind.NOTE),
+            ("The gate code is 4321", Kind.NOTE),
+        ]
+        task = store.add(Item(text="Buy milk", kind=Kind.TASK, created_at=NOW))
+        assert store.get(task.id).kind is Kind.TASK
+        assert store.counts()[(Kind.TASK, Status.PENDING)] == 1
+
+
+def test_tasks_are_listed_after_reminders_and_before_notes(store):
+    """The same order as SQLite (#114): the conformance suite checks behaviour, this checks that
+    PostgreSQL sorts the untimed kinds the same way."""
+    store.add(Item(text="The gate code is 4321", kind=Kind.NOTE, created_at=NOW))
+    store.add(Item(text="Renew the passport", kind=Kind.TASK, created_at=NOW))
+    reminder(store, text="Call mom", due=LATER)
+    assert [i.text for i in store.list()] == ["Call mom", "Renew the passport", "The gate code is 4321"]
+
+
 def test_both_backends_describe_the_same_schema(store):
     """A column added to one backend and forgotten in the other would pass every behaviour test
     until the feature using it shipped. Names only: the types are deliberately different."""

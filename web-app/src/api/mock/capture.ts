@@ -1,13 +1,14 @@
 // A small stand-in for the server's parser (maestro/parser.py), so MockClient.capture() can turn
-// text into a reminder or a note. It understands the phrases the design uses, not everything the
+// text into a reminder, a task or a note. It understands the phrases the design uses, not everything the
 // real parser does; the real one always runs on the server. It is not the parse preview (#94).
 
+import type { ItemKind } from '../types.ts'
 import { WEEKDAYS, addDays, fromWallTime, wallTime, weekdayOf, type Ymd } from './time.ts'
 import { textSaysUrgent } from './rules.ts'
 
 export interface Captured {
   text: string
-  kind: 'reminder' | 'note'
+  kind: ItemKind
   dueAt: Date | null
   recurrence: string | null
   channels: string[] | null
@@ -17,6 +18,25 @@ export interface Captured {
 
 /** Time used when a day is named without a time ("dentist tomorrow"). */
 const DEFAULT_HOUR = 9
+
+// Untimed things to do are tasks (#114). A rough stand-in for maestro/parser.py's rules: a leading
+// "todo:" or a to-do verb, unless the text states a fact ("call centre number is 0800…").
+const TODO_MARKER = /^\s*to\s?do\s*:\s*/i
+const TODO_VERB =
+  /^\s*(?:pick up|drop off|fill in|follow up|reply to|sort out|set up|buy|call|email|send|pay|renew|book|order|cancel|fix|collect|print|submit|finish|write|check|ask|get|take|schedule|update|arrange|confirm|replace)\b/i
+const STATEMENT = /\b(?:is|are|was|were|means?|lives?|costs?|has|have|meets?)\b/i
+const SUBORDINATOR = /\b(?:that|if|whether|when|why|how|where|what|who|which)\b/i
+const LABEL = /^[^:]{1,40}:\s*\S/
+
+function isTask(text: string, marked: boolean): boolean {
+  if (marked) return true
+  if (LABEL.test(text)) return false
+  if (!TODO_VERB.test(text)) return false
+  const said = STATEMENT.exec(text)
+  if (!said) return true
+  const sub = SUBORDINATOR.exec(text)
+  return sub !== null && sub.index < said.index
+}
 
 const CHANNELS: [RegExp, string][] = [
   [/\b(?:text|sms) me\b/i, 'twilio_sms'],
@@ -29,6 +49,8 @@ export function parseCapture(source: string, now: Date, tz: string): Captured {
   let text = source
   const bang = text.trimStart().startsWith('!')
   if (bang) text = text.trimStart().slice(1)
+  const marked = TODO_MARKER.test(text)
+  if (marked) text = text.replace(TODO_MARKER, '')
   const urgent = textSaysUrgent(source)
 
   const take = (re: RegExp): RegExpExecArray | null => {
@@ -106,7 +128,7 @@ export function parseCapture(source: string, now: Date, tz: string): Captured {
 
   return {
     text,
-    kind: dueAt ? 'reminder' : 'note',
+    kind: dueAt ? 'reminder' : isTask(text, marked) ? 'task' : 'note',
     dueAt,
     recurrence,
     channels: channels.length ? channels : null,

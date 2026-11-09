@@ -10,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from maestro.models import Kind
 from maestro.parser import parse
 
 TZ = ZoneInfo("America/New_York")
@@ -35,6 +36,7 @@ class Case:
     line: int
     channels: list[str] | None = None  # per-item channels (#20)
     urgent: bool = False
+    kind: Kind = Kind.NOTE  # implied by the row: a due time means a reminder, "task" means a task (#114)
 
 
 def load() -> list[Case]:
@@ -42,14 +44,16 @@ def load() -> list[Case]:
     for number, raw in enumerate(CORPUS.read_text().splitlines(), start=1):
         if not raw.strip() or raw.startswith("#"):
             continue
-        # The 5th column is optional: channel names and/or "urgent", joined by "+", e.g.
-        # "twilio_sms+urgent". Absent or "-" means default channels and not urgent.
+        # The 5th column is optional: channel names and/or "urgent" and/or "task", joined by "+",
+        # e.g. "twilio_sms+urgent". Absent or "-" means default channels, not urgent, and the kind
+        # the row implies. "task" is only meaningful on an untimed row (#114).
         source, text, due, rule, *extra = (part.strip() for part in raw.split("|"))
         flags = [f for f in (extra[0] if extra else "").split("+") if f and f != "-"]
         due_at = None if due == "-" else datetime.fromisoformat(due).replace(tzinfo=TZ)
+        kind = Kind.REMINDER if due_at else (Kind.TASK if "task" in flags else Kind.NOTE)
         cases.append(Case(source, text, due_at, None if rule == "-" else rule, number,
-                          channels=[f for f in flags if f != "urgent"] or None,
-                          urgent="urgent" in flags))
+                          channels=[f for f in flags if f not in ("urgent", "task")] or None,
+                          urgent="urgent" in flags, kind=kind))
     return cases
 
 
@@ -69,6 +73,8 @@ def check(case: Case) -> str | None:
         problems.append(f"channels {item.channels} != {case.channels}")
     if bool(item.urgent) != case.urgent:
         problems.append(f"urgent {item.urgent} != {case.urgent}")
+    if item.kind != case.kind:
+        problems.append(f"kind {item.kind} != {case.kind}")
     return "; ".join(problems) or None
 
 
@@ -77,6 +83,8 @@ def test_corpus_is_well_formed():
     assert len(cases) >= 200
     assert len({c.source for c in cases}) == len(cases), "duplicate inputs"
     assert set(KNOWN_GAPS) <= {c.source for c in cases}, "a known gap is not in the corpus"
+    assert any(c.kind is Kind.TASK for c in cases), "no task phrases in the corpus"
+    assert any(c.kind is Kind.NOTE for c in cases), "no note phrases in the corpus"
 
 
 def test_parser_accuracy():

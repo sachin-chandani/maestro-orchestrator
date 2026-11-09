@@ -35,6 +35,12 @@ async function fetchToday(client: MaestroClient): Promise<Load> {
   }
 }
 
+// What a capture is confirmed as. A reminder's message names its time, so it isn't in here (#114).
+const SAVED: Partial<Record<Item['kind'], string>> = {
+  note: 'Saved as a note.',
+  task: 'Saved as a task.',
+}
+
 /**
  * The app's one screen until #103–#107: reminders for today, tomorrow and later, with Done and
  * +1 hour, and the capture bar. Everything goes through the client from ClientProvider.
@@ -104,7 +110,7 @@ export default function App({ devTools }: AppProps) {
     try {
       const item = await client.capture(text)
       setDraft('')
-      setToast(item.kind === 'note' ? 'Saved as a note.' : `Reminder set for ${item.when}.`)
+      setToast(SAVED[item.kind] ?? `Reminder set for ${item.when}.`)
       await refresh()
     } catch (error) {
       setToast(`Couldn't save it: ${messageOf(error)}`) // the text stays in the box to try again
