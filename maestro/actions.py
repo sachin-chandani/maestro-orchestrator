@@ -106,9 +106,10 @@ class Action:
     TYPE: ClassVar[str] = ""
 
     def __post_init__(self) -> None:
-        # Validate the same way whether the action came from JSON or from Python.
+        # Validated the same way whether the action came from JSON or from Python, and read in the
+        # same way: an ISO timestamp becomes a datetime here, so no field ever holds its JSON shape.
         for f in fields(self):
-            FIELD_TYPES[f.name](f.name, getattr(self, f.name))
+            object.__setattr__(self, f.name, FIELD_TYPES[f.name](f.name, getattr(self, f.name)))
 
     def to_json(self) -> dict[str, Any]:
         """The action as JSON-ready data. Fields left at their default are omitted, so the form
@@ -225,8 +226,8 @@ def from_json(data: Any) -> Action:
     known_fields = {f.name for f in fields(cls)}
     if unknown := set(data) - known_fields - {"type"}:
         raise ValueError(f"{tag} has no field {', '.join(sorted(unknown))}")
-    kwargs = {name: FIELD_TYPES[name](name, value) for name, value in data.items() if name != "type"}
-    return cls(**kwargs)
+    # The values are checked and read by __post_init__, so JSON and Python go through one gate.
+    return cls(**{name: value for name, value in data.items() if name != "type"})
 
 
 def actions_from_json(data: Any) -> list[Action]:

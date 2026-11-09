@@ -246,3 +246,13 @@ def test_apply_rejects_an_action_it_cannot_carry_out(store):
 
     with pytest.raises(ValueError, match="No way to apply"):
         apply(store, [Unknown()], source="cli")
+
+
+def test_an_iso_string_is_read_into_a_datetime_whoever_passes_it():
+    """One gate: a JSON-shaped value handed straight to the dataclass is read, not stored as text."""
+    action = CreateReminder(text="Call mom", due_at="2026-10-24T17:00:00-04:00")  # type: ignore[arg-type]
+    assert action.due_at == dt(2026, 10, 24, 17, 0)
+    assert action == from_json({"type": "create_reminder", "text": "Call mom",
+                                "due_at": "2026-10-24T17:00:00-04:00"})
+    with pytest.raises(ValueError, match="which timezone"):
+        CreateNote(text="x", created_at="2026-10-24T17:00:00")  # type: ignore[arg-type]
