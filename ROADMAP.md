@@ -23,7 +23,10 @@ Dates are targets, not promises. Work is tracked in [GitHub issues](https://gith
             └────────────────┬──────────────────┘
                              ▼
                  maestro core (Python library)
-          parser → recurrence → store → scheduler
+   interpret ──► actions ──► apply ──► store ──► scheduler
+   (rules by default;        (reminder · task ·       (delivery, escalation,
+    optional model with       note · list · done ·     quiet hours: always
+    your own key, ADR 0015)   snooze · ask)            deterministic)
                              │
             ┌────────────────┴──────────────────┐
             ▼                                   ▼
@@ -33,6 +36,7 @@ Dates are targets, not promises. Work is tracked in [GitHub issues](https://gith
 ```
 
 - **Core library** (`maestro`): pure Python, no network, importable by other projects.
+- **Understanding** (ADR 0015): every capture becomes typed actions. The rule-based interpreter is the offline default; an optional language-model interpreter (your own key, or a local model) reads messy messages and forwarded emails, and only ever proposes actions that Maestro validates.
 - **Server** (`maestro serve`): FastAPI app plus an in-process scheduler; one container, one volume.
 - **Channels and capture sources** are plugins discovered through Python entry points, so third parties can ship `maestro-<channel>` packages.
 
@@ -124,16 +128,24 @@ Exit criteria: escalation proven end to end with fakes, acknowledgements on ever
 Exit criteria: a new phone goes from scanning a pairing code to its first push notification in under 2 minutes; everything doable from the CLI is doable from the web UI on a phone; e2e tests and an accessibility check run in CI; installable as an app with push.
 
 ## v0.6: Second brain (target Jan 17, 2027)
-- [x] Capture produces actions: one interpret step and one apply step for every channel (#113, ADR 0015)
+**Understands what you mean** (#120, ADR 0015):
+- [x] Capture produces actions: one interpret step and one apply step for every channel (#113)
+- [ ] Tasks: a third kind between reminders and notes (#114)
+- [ ] Optional language-model interpreter with your own key, off by default (#115)
+- [ ] Ask the model only when the rules are unsure (#116)
+- [ ] Confirm unsure interpretations, with undo (#117)
+- [ ] Propose reminders from forwarded emails (#118)
+- [ ] Tracks: organise information you want to keep (#119)
+
 - [ ] Full-text search with SQLite FTS5 (#28)
 - [ ] Tags, people and places (#29)
 - [ ] Daily and weekly digest (#30)
 - [ ] Import from Apple Reminders, Google Tasks, Todoist (#31); export to JSON and Markdown (#32)
-- [ ] Ask questions over your notes, offline-first (#33)
+- [ ] Ask questions over your notes: offline by default, the optional model when configured (#33)
 - [ ] Lists: "add milk to the shopping list" (#88)
 - [ ] Streaks and adherence for recurring reminders (#89)
 
-Exit criteria: search behaves the same on SQLite and Postgres; import → export → import round-trips without loss; one grouping model (lists vs tags) decided and documented.
+Exit criteria: search behaves the same on SQLite and Postgres; import → export → import round-trips without loss; one grouping model (lists, tags and tracks, #119) decided and documented; with the model interpreter off, behaviour is identical to the rules alone.
 
 ## v0.7: Production-grade self-hosting (target Feb 7, 2027)
 - [x] Storage interface and PostgreSQL backend (#34)
