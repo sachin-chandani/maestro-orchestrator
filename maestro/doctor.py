@@ -8,8 +8,11 @@ import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
+from typing import TYPE_CHECKING
 
+from maestro.actions import json_schema
 from maestro.config import Config
+from maestro.model import Prompt
 from maestro.models import Item, Kind
 from maestro.notifier import CHANNELS, ConfigError, Notifier
 from maestro.sms import WEBHOOK_PATH
@@ -17,6 +20,9 @@ from maestro.storage import StoreConfigError, driver_errors, open_store, parse_u
 from maestro.storage.sqlite import MIGRATIONS, SQLiteStore
 from maestro.tz import get_timezone
 from maestro.voice import VOICE_PATH
+
+if TYPE_CHECKING:
+    from maestro.interpret import ModelInterpreter
 
 OK, WARN, FAIL = "ok", "warn", "fail"
 SYMBOLS = {OK: "✓", WARN: "!", FAIL: "✗"}
@@ -134,6 +140,75 @@ def _email_in(config: Config, connect: bool) -> list[Check]:
     return [*checks, Check(OK, "email-in", f"connected to {settings.host}, {unread} unread")]
 
 
+# What `maestro doctor --check-model` sends. Fixed, boring, and obviously not private, because it
+# is the one phrase that really does go to the provider.
+TEST_PHRASE = "dentist tomorrow at 3pm"
+
+
+def _interpreter(config: Config, check_model: bool) -> list[Check]:
+    """How captures are read, and — the part that matters for a self-hosted install — whether
+    turning a model on means the text of every capture leaves this server."""
+    from maestro.config import model_settings
+    from maestro.interpret import model_interpreter
+
+    try:
+        settings = model_settings(config)
+    except ValueError as e:
+        return [Check(FAIL, "interpreter", str(e))]
+    if settings is None:
+        return [Check(OK, "interpreter", "rules (offline; no model is contacted). "
+                                         "Set MAESTRO_INTERPRETER=model to use a language model")]
+    try:
+        # Building it is what catches a missing key, so it happens here rather than at the first
+        # capture: `maestro doctor` is meant to find this before a deploy, not after one.
+        interpreter = model_interpreter(settings)
+    except ValueError as e:
+        return [Check(FAIL, "interpreter", str(e))]
+
+    where = settings.base_url or f"the {settings.provider} API"
+    checks = [Check(OK, "interpreter", f"model {settings.model} via {settings.provider} at {where}, "
+                                       f"timeout {settings.timeout:g}s; the rules answer if it fails")]
+    if settings.sends_text_off_this_server:
+        checks.append(Check(WARN, "model privacy", "the text of every capture is sent to "
+                                                   f"{settings.provider}. Nothing else leaves this "
+                                                   "server, and an OpenAI-compatible model on your "
+                                                   "own network keeps captures in"))
+    else:
+        checks.append(Check(OK, "model privacy", f"{where} is on your own network; captures stay in"))
+    # Twilio gives a webhook about 15 seconds; the model has to answer, and the rules then have to
+    # run, well inside that or the caller gets a provider error instead of a reply.
+    if settings.timeout > 10 and config.twilio_auth_token and config.sms_to:
+        checks.append(Check(WARN, "model timeout", f"{settings.timeout:g}s is long for inbound SMS "
+                                                   "and voice: Twilio gives a webhook about 15s"))
+    if check_model:
+        checks.append(_check_model(interpreter, config))
+    return checks
+
+
+def _check_model(interpreter: "ModelInterpreter", config: Config) -> Check:
+    """Send one fixed phrase to the configured provider and show what it proposed. The only live
+    model call Maestro makes, and only when a person asks for it."""
+    import json
+
+    try:
+        # Straight to the provider, so a failure is reported instead of quietly becoming the rules.
+        tz = get_timezone(config.timezone)
+        now = datetime.now(tz)
+        proposed = interpreter.provider.propose(
+            Prompt(text=TEST_PHRASE, now=now, timezone=tz.key,
+                   schema=json_schema(interpreter.offered)), interpreter.timeout)
+    except Exception as e:  # a provider error, or anything its transport let through
+        return Check(FAIL, "model test", f"{type(e).__name__}: {e}")
+    try:
+        read = interpreter.read(proposed, TEST_PHRASE, now)
+    except ValueError as e:
+        return Check(WARN, "model test", f"the model answered, but Maestro wouldn't use it ({e}). "
+                                         f"Captures would fall back to the rules. It proposed: "
+                                         f"{json.dumps(proposed)[:300]}")
+    summary = "; ".join(json.dumps(a.to_json()) for a in read)
+    return Check(OK, "model test", f'"{TEST_PHRASE}" became {summary}')
+
+
 def _escalation(config: Config) -> list[Check]:
     if not config.escalation:
         return []
@@ -196,10 +271,15 @@ def _send_tests(built: dict[str, Notifier]) -> list[Check]:
     return checks
 
 
-def run(config: Config, send_test: bool = False, out: Callable[[str], None] = print) -> bool:
-    """Run every check, print each result, and return True when nothing failed."""
+def run(config: Config, send_test: bool = False, out: Callable[[str], None] = print,
+        check_model: bool = False) -> bool:
+    """Run every check, print each result, and return True when nothing failed.
+
+    `send_test` delivers a real message on every channel; `check_model` sends one fixed phrase to
+    the configured model provider. Both cost real money or real messages, so both are opt-in.
+    """
     checks = [_timezone(config), _database(config), *_database_settings(), _api_token(config),
-              *_telegram_bot(config),
+              *_interpreter(config, check_model), *_telegram_bot(config),
               *_inbound_sms(config), *_email_in(config, connect=send_test), *_escalation(config),
               *_quiet_hours(config)]
     channel_checks, built = _channels(config)
@@ -221,7 +301,12 @@ def run(config: Config, send_test: bool = False, out: Callable[[str], None] = pr
         out(str(check))
     failed = sum(c.status == FAIL for c in checks)
     warned = sum(c.status == WARN for c in checks)
-    hint = "" if send_test else " Run with --send-test to deliver a test message on each channel."
+    hints = []
+    if not send_test:
+        hints.append("Run with --send-test to deliver a test message on each channel.")
+    if config.interpreter == "model" and not check_model:
+        hints.append("Run with --check-model to send one test phrase to the model provider.")
+    hint = "".join(f" {h}" for h in hints)
     out("")
     out(f"{failed} failed, {warned} warning{'' if warned == 1 else 's'}.{hint}")
     return failed == 0

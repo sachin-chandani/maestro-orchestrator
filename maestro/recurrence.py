@@ -79,8 +79,10 @@ def extract(text: str, today: date) -> tuple[str | None, list[re.Match]]:
             weekday, extra = _weekday_elsewhere(text, m, today)
         return (f"weekly:{weekday}" if n == 1 else f"weeks:{n}:{weekday}"), [m, *extra]
     if m := _INTERVAL_RE.search(text):
-        minutes = int(m[1]) * (60 if m[2].lower() in ("hour", "hr") else 1)
-        return f"interval:{minutes}", [m]
+        # Like the other counts here, zero isn't a repeat: "every 0 minutes" has no next occurrence,
+        # so it is left as ordinary text rather than becoming a reminder that never moves on.
+        if minutes := int(m[1]) * (60 if m[2].lower() in ("hour", "hr") else 1):
+            return f"interval:{minutes}", [m]
     if m := _WEEKDAYS_RE.search(text):
         return "weekdays", [m]
     if m := _WEEKLY_RE.search(text):

@@ -103,6 +103,8 @@ def _build_parser(config: Config) -> argparse.ArgumentParser:
 
     doctor = sub.add_parser("doctor", help="check configuration and channels before deploying")
     doctor.add_argument("--send-test", action="store_true", help="deliver a test message on every channel")
+    doctor.add_argument("--check-model", action="store_true",
+                        help="send one test phrase to the configured model provider (#115)")
     return p
 
 
@@ -132,7 +134,7 @@ def main(argv: list[str] | None = None) -> int:
         from maestro import doctor
 
         config.db_path = args.db
-        return 0 if doctor.run(config, send_test=args.send_test) else 1
+        return 0 if doctor.run(config, send_test=args.send_test, check_model=args.check_model) else 1
     try:
         tz = get_timezone(config.timezone)
     except ValueError as e:

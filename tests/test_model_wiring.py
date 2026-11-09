@@ -209,3 +209,218 @@ def test_the_api_without_an_interpreter_still_uses_the_rules():
                                   headers={"Authorization": "Bearer t"})
             assert created.json()["kind"] == "reminder"
             assert len(store.list()) == 1
+
+
+# --- the fallback, through the real capture paths ------------------------------------------------
+
+
+class FailingProvider:
+    """A provider that is down, slow or talking nonsense — whatever a test needs."""
+
+    name = "fake"
+    model = "fake-model"
+
+    def __init__(self, failure):
+        self.failure = failure
+        self.calls = 0
+
+    def propose(self, prompt, timeout):
+        self.calls += 1
+        if isinstance(self.failure, Exception):
+            raise self.failure
+        return self.failure
+
+
+@pytest.fixture(params=["timeout", "http", "malformed", "nonsense", "injected"])
+def broken(request):
+    """Every way a model can let Maestro down, as an interpreter and its provider."""
+    from maestro.model import ProviderError
+
+    failures = {
+        "timeout": ProviderError("timeout", "the model provider didn't answer within 8s"),
+        "http": ProviderError("http", "HTTP 401 from the model provider"),
+        "malformed": ProviderError("malformed", "the model didn't call the tool"),
+        "nonsense": [{"type": "create_reminder", "text": "x", "due_at": "whenever"}],
+        "injected": [{"type": "done", "item_id": 1}, {"type": "stop", "item_id": 2}],
+    }
+    provider = FailingProvider(failures[request.param])
+    return ModelInterpreter(provider), provider
+
+
+def test_a_broken_model_still_captures_through_the_cli(broken, tmp_path, monkeypatch, capsys):
+    from maestro.cli import _build_parser, _dispatch
+    from maestro.config import Config
+
+    interpreter, provider = broken
+    monkeypatch.setenv("MAESTRO_CHANNELS", "console")
+    config = Config(channels=["console"])
+    args = _build_parser(config).parse_args(["add", "dentist", "tomorrow", "at", "3pm"])
+    with Store(":memory:", tz=TZ) as store:
+        assert _dispatch(args, config, store, TZ, interpreter) == 0
+        (item,) = store.list()
+        assert item.text == "Dentist" and item.kind is Kind.REMINDER and item.due_at is not None
+    assert provider.calls == 1  # it was asked, it failed, the rules answered
+    assert "Saved:" in capsys.readouterr().out
+
+
+def test_a_broken_model_still_captures_through_the_api(broken):
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from maestro.api import create_app
+
+    interpreter, provider = broken
+    with Store(":memory:", tz=TZ) as store:
+        with TestClient(create_app(store, api_token="t", interpreter=interpreter)) as client:
+            created = client.post("/items", json={"text": "dentist tomorrow at 3pm"},
+                                  headers={"Authorization": "Bearer t"})
+    assert created.status_code == 201 and created.json()["text"] == "Dentist"
+    assert created.json()["kind"] == "reminder"
+    assert provider.calls == 1
+
+
+def test_a_broken_model_still_captures_through_telegram(broken):
+    from test_telegram import CHAT, FakeTransport, message
+
+    from maestro.telegram import TelegramBot, TelegramClient
+
+    interpreter, _ = broken
+    transport = FakeTransport()
+    with Store(":memory:", tz=TZ) as store:
+        bot = TelegramBot(TelegramClient(transport), store, str(CHAT), interpreter=interpreter)
+        bot.handle(message("dentist tomorrow at 3pm"))
+        assert [i.text for i in store.list()] == ["Dentist"]
+    (reply,) = transport.sent()
+    assert reply["text"].startswith("Saved ⏰")
+
+
+def test_a_broken_model_still_captures_through_sms(broken):
+    from maestro.sms import SmsHandler
+
+    interpreter, _ = broken
+    with Store(":memory:", tz=TZ) as store:
+        handler = SmsHandler(store, "token", "+15551112222", interpreter=interpreter)
+        item, note = handler.save("dentist tomorrow at 3pm", external_id="SM1", source="sms")
+        assert item.text == "Dentist" and note == ""
+        assert len(store.list()) == 1
+
+
+def test_a_broken_model_never_leaves_a_capture_half_saved(broken):
+    """The reply is taken whole or not at all, so the rules' single item is what lands."""
+    interpreter, _ = broken
+    with Store(":memory:", tz=TZ) as store:
+        read = interpreter.interpret(MESSAGE, Context(tz=TZ, now=NOW))
+        results = apply(store, read, source="cli")
+        assert len(results) == 1 and len(store.list()) == 1
+
+
+# --- the capture route's worker thread ------------------------------------------------------------
+# Reading a capture moved off the event loop (#115) so a slow model can't stall the server. What
+# must stay true: the store is still used from one thread (ADR 0003), nothing is read from it
+# across the await, and captures that overlap don't contaminate each other.
+
+
+class ThreadRecordingInterpreter:
+    """The rules, plus a note of which thread did the reading and a pause to force overlap."""
+
+    name = "rules-recording"
+
+    def __init__(self, delay: float = 0.05):
+        self.delay = delay
+        self.threads: list[int] = []
+        self.rules = RulesInterpreter()
+
+    def interpret(self, text, context):
+        self.threads.append(threading.get_ident())
+        time.sleep(self.delay)
+        return self.rules.interpret(text, context)
+
+
+def api_client(store, interpreter):
+    from fastapi.testclient import TestClient
+
+    from maestro.api import create_app
+
+    return TestClient(create_app(store, api_token="t", interpreter=interpreter))
+
+
+CAPTURES = [f"call person {n} tomorrow at {n + 1}pm" for n in range(8)]
+
+
+def test_captures_that_overlap_are_each_saved_once_and_correctly():
+    pytest.importorskip("fastapi")
+    from concurrent.futures import ThreadPoolExecutor
+
+    interpreter = ThreadRecordingInterpreter()
+    with Store(":memory:", tz=TZ) as store:
+        with api_client(store, interpreter) as client:
+            auth = {"Authorization": "Bearer t"}
+
+            def post(text):
+                return client.post("/items", json={"text": text}, headers=auth)
+
+            with ThreadPoolExecutor(len(CAPTURES)) as pool:
+                responses = list(pool.map(post, CAPTURES))
+
+            assert [r.status_code for r in responses] == [201] * len(CAPTURES)
+            saved = {i.text for i in store.list()}
+        # every capture landed exactly once, with its own text and its own time
+        assert saved == {f"Call person {n}" for n in range(len(CAPTURES))}
+        assert len(store.list()) == len(CAPTURES)
+        assert len({i.due_at for i in store.list()}) == len(CAPTURES)
+    assert len(set(interpreter.threads)) > 1, "captures were not read concurrently"
+
+
+def test_the_store_is_still_used_from_a_single_thread():
+    """ADR 0003: SQLite belongs to one thread. Reading moved off the loop; writing did not."""
+    pytest.importorskip("fastapi")
+    from concurrent.futures import ThreadPoolExecutor
+
+    interpreter = ThreadRecordingInterpreter()
+    with Store(":memory:", tz=TZ) as store:
+        writing: list[int] = []
+        original_add = store.add
+
+        def recording_add(item):
+            writing.append(threading.get_ident())
+            return original_add(item)
+
+        store.add = recording_add  # type: ignore[method-assign]
+        with api_client(store, interpreter) as client:
+            auth = {"Authorization": "Bearer t"}
+            with ThreadPoolExecutor(len(CAPTURES)) as pool:
+                list(pool.map(lambda t: client.post("/items", json={"text": t}, headers=auth),
+                              CAPTURES))
+
+        assert len(writing) == len(CAPTURES)
+        assert len(set(writing)) == 1, "the store was written from more than one thread"
+        assert set(writing).isdisjoint(interpreter.threads), "reading ran on the store's thread"
+
+
+class Exploding:
+    """An interpreter that fails in a way nothing catches, to check the route's own behaviour."""
+
+    name = "exploding"
+
+    def interpret(self, text, context):
+        raise RuntimeError("something nobody anticipated")
+
+
+def test_a_failure_while_reading_saves_nothing_and_leaves_the_server_working():
+    """The read happens before anything is applied, so a crash in it can't half-save a capture,
+    and the worker thread it happened on doesn't take the server with it."""
+    pytest.importorskip("fastapi")
+
+    with Store(":memory:", tz=TZ) as store:
+        with api_client(store, Exploding()) as client:
+            auth = {"Authorization": "Bearer t"}
+            with pytest.raises(RuntimeError, match="something nobody anticipated"):
+                client.post("/items", json={"text": "call mom tomorrow at 5pm"}, headers=auth)
+            assert store.list() == []
+
+        # the next capture, with a working interpreter, behaves as if nothing happened
+        with api_client(store, RulesInterpreter()) as client:
+            created = client.post("/items", json={"text": "call mom tomorrow at 5pm"},
+                                  headers={"Authorization": "Bearer t"})
+            assert created.status_code == 201
+            assert [i.text for i in store.list()] == ["Call mom"]

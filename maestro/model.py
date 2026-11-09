@@ -73,18 +73,24 @@ class ModelSettings:
     timeout: float = DEFAULT_TIMEOUT
 
     @property
+    def host(self) -> str:
+        return (urllib.parse.urlparse(self.base_url or "").hostname or "").lower()
+
+    @property
+    def on_own_network(self) -> bool:
+        """Whether `base_url` points somewhere on this machine or this network."""
+        if self.host in ("localhost", "::1") or self.host.endswith(".local"):
+            return True
+        try:
+            return ipaddress.ip_address(self.host).is_private or ipaddress.ip_address(self.host).is_loopback
+        except ValueError:
+            return False
+
+    @property
     def sends_text_off_this_server(self) -> bool:
         """Whether captures leave the machine. A compatible endpoint on loopback or a private
         address stays in; anything else, including every hosted provider, goes out."""
-        if self.provider != "openai-compatible":
-            return True
-        host = (urllib.parse.urlparse(self.base_url or "").hostname or "").lower()
-        if host in ("localhost", "::1") or host.endswith(".local"):
-            return False
-        try:
-            return not ipaddress.ip_address(host).is_private
-        except ValueError:
-            return True
+        return self.provider != "openai-compatible" or not self.on_own_network
 
 
 class ProviderError(RuntimeError):

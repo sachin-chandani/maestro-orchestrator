@@ -73,3 +73,45 @@ def test_parse_duration(text, minutes):
 def test_parse_duration_rejects_garbage():
     with pytest.raises(ValueError):
         parse_duration("soon")
+
+
+# --- the rule grammar is a contract between the parser, the store and the gate (#115) ------------
+
+RULE_PHRASES = [
+    "every day", "every night", "every weekday", "every monday", "every sunday", "every week",
+    "every month", "every other day", "every 3 days", "every other friday", "every 2 weeks",
+    "every 2 weeks on tuesday", "every 3 weeks on sunday", "biweekly on tuesday",
+    "every 1 minute", "every 5 mins", "every 90 minutes", "every hour", "every 2 hours",
+    "on the 1st of every month", "on the 15th of every month", "on the 31st of every month",
+    "every 1 day", "every 1 week", "weekly", "monthly", "daily",
+]
+
+
+@pytest.mark.parametrize("phrase", RULE_PHRASES)
+def test_every_rule_the_parser_produces_passes_the_gate(phrase):
+    """`recurrence.validate` guards what arrives as data (#115); it must never refuse a rule the
+    parser itself writes, or an ordinary capture would fail instead of being saved."""
+    from datetime import date
+
+    rule, _ = recurrence.extract(phrase, date(2026, 10, 27))
+    if rule is not None:
+        assert recurrence.validate(rule) == rule
+        recurrence.describe(rule)  # and it can be said back to the user
+
+
+@pytest.mark.parametrize("phrase", ["every 0 minutes", "every 0 hours", "every 0 min",
+                                    "every 0 days", "every 0 weeks"])
+def test_a_repeat_of_zero_is_not_a_repeat(phrase):
+    """"every 0 minutes" has no next occurrence: as a rule it would re-fire on the same moment for
+    ever. It is left as ordinary text, like the other counts of zero always have been."""
+    from datetime import date
+
+    assert recurrence.extract(phrase, date(2026, 10, 27))[0] is None
+    assert parse(f"ping me {phrase}").recurrence is None
+
+
+@pytest.mark.parametrize("rule", ["every monday", "weekly:7", "monthly:0", "monthly:32",
+                                  "interval:0", "days:0", "weeks:2", "hourly", "", "daily:1"])
+def test_validate_refuses_anything_the_scheduler_could_not_follow(rule):
+    with pytest.raises(ValueError, match="is not a recurrence rule"):
+        recurrence.validate(rule)

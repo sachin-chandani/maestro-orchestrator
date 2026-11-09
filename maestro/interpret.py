@@ -106,7 +106,7 @@ class ModelInterpreter:
                        schema=actions.json_schema(self.offered)),
                 self.timeout,
             )
-            read = self._read(proposed, text, now)
+            read = self.read(proposed, text, now)
         except ProviderError as e:
             return self._fall_back(f"fallback_{e.kind}", str(e), text, context, started)
         except ValueError as e:
@@ -125,8 +125,10 @@ class ModelInterpreter:
 
     # --- believing it ---------------------------------------------------------------------
 
-    def _read(self, proposed: Any, text: str, now: datetime) -> list[Action]:
-        """The proposal as actions, or ValueError. The model is data, so everything is checked."""
+    def read(self, proposed: Any, text: str, now: datetime) -> list[Action]:
+        """A proposal as actions, or ValueError saying why it wasn't usable. The model is data, so
+        everything is checked. Public because `maestro doctor --check-model` shows what a real
+        provider proposed and whether Maestro would have used it."""
         if not isinstance(proposed, Sequence) or isinstance(proposed, (str, bytes)):
             raise ValueError("the model's actions weren't a list")
         if not proposed:
@@ -183,11 +185,19 @@ def build_interpreter(config: "Any", transport: Any = None) -> Interpreter:
     so `maestro serve` can say so and stop instead of quietly captureing with the rules.
     """
     from maestro.config import model_settings
-    from maestro.model import http_transport, provider_for
 
     settings = model_settings(config)
     if settings is None:
         return RulesInterpreter()
+    return model_interpreter(settings, transport)
+
+
+def model_interpreter(settings: Any, transport: Any = None) -> ModelInterpreter:
+    """A model interpreter for already-checked settings (`maestro.model.ModelSettings`). Separate
+    from `build_interpreter` so a caller that knows a model is configured — `maestro doctor
+    --check-model` — gets one without having to narrow the type."""
+    from maestro.model import http_transport, provider_for
+
     provider = provider_for(settings.provider, settings.model, settings.api_key, settings.base_url,
                             transport or http_transport)
     return ModelInterpreter(provider, timeout=settings.timeout)

@@ -138,3 +138,143 @@ def test_database_not_in_wal_is_a_warning(tmp_path, monkeypatch):
     ok, lines = run(Config(db_path=str(tmp_path / "m.db"), channels=["console"], api_token="t"))
     assert ok  # a warning, not a failure
     assert lines[1].startswith("! database:") and "not in WAL mode" in lines[1]
+
+
+# --- the interpreter and the model (#115) -------------------------------------------------------
+
+
+def model_config(tmp_path, **extra):
+    settings = {"interpreter": "model", "model_provider": "anthropic",
+                "model": "claude-sonnet-5-5", "model_api_key": "sk-fake-key-for-tests-only"}
+    return Config(db_path=str(tmp_path / "m.db"), channels=["console"], api_token="t",
+                  **{**settings, **extra})
+
+
+def line_for(lines, name):
+    return next(line for line in lines if line.split(":")[0].endswith(name))
+
+
+def test_the_rules_are_reported_as_the_default_and_nothing_is_contacted(tmp_path):
+    ok, lines = run(Config(db_path=str(tmp_path / "m.db"), channels=["console"], api_token="t"))
+    assert ok
+    assert "rules (offline; no model is contacted)" in line_for(lines, "interpreter")
+    assert not any("model privacy" in line for line in lines)
+    assert "--check-model" not in "\n".join(lines)  # nothing to test
+
+
+def test_a_hosted_provider_is_reported_with_a_plain_privacy_warning(tmp_path):
+    ok, lines = run(model_config(tmp_path))
+    assert ok  # a warning, not a failure: it's a choice, not a mistake
+    interpreter = line_for(lines, "interpreter")
+    assert "claude-sonnet-5-5" in interpreter and "anthropic" in interpreter
+    assert "the rules answer if it fails" in interpreter
+    assert "the text of every capture is sent to anthropic" in line_for(lines, "model privacy")
+    assert "sk-fake-key-for-tests-only" not in "\n".join(lines)  # the key is never printed
+    assert "Run with --check-model" in lines[-1]
+
+
+def test_a_model_on_your_own_network_is_not_warned_about(tmp_path):
+    ok, lines = run(model_config(tmp_path, model_provider="openai-compatible", model="llama3.2",
+                                 model_api_key=None, model_base_url="http://localhost:11434/v1"))
+    assert ok
+    assert "captures stay in" in line_for(lines, "model privacy")
+    assert "http://localhost:11434/v1" in line_for(lines, "interpreter")
+
+
+def test_a_half_configured_model_fails_the_check(tmp_path):
+    ok, lines = run(Config(db_path=str(tmp_path / "m.db"), channels=["console"], api_token="t",
+                           interpreter="model", model_provider="anthropic"))
+    assert not ok
+    assert "needs MAESTRO_MODEL" in line_for(lines, "interpreter")
+
+
+def test_a_model_with_no_key_fails_the_check_before_a_deploy(tmp_path):
+    """Caught here rather than at the first capture, which is what doctor is for."""
+    ok, lines = run(model_config(tmp_path, model_api_key=None))
+    assert not ok
+    assert "needs MAESTRO_MODEL_API_KEY or ANTHROPIC_API_KEY" in line_for(lines, "interpreter")
+
+
+def test_a_long_timeout_is_flagged_when_twilio_can_call_in(tmp_path):
+    ok, lines = run(model_config(tmp_path, model_timeout_seconds=30.0,
+                                 twilio_auth_token="tok", sms_to="+15551112222"))
+    assert ok
+    assert "Twilio gives a webhook about 15s" in line_for(lines, "model timeout")
+    # without inbound Twilio the same timeout is nobody's problem
+    _, quiet = run(model_config(tmp_path, model_timeout_seconds=30.0))
+    assert not any("model timeout" in line for line in quiet)
+
+
+# --- --check-model: the one live call, faked here ------------------------------------------------
+
+
+def check_model(tmp_path, reply, monkeypatch, **extra):
+    """Run doctor --check-model with a provider transport that answers with `reply`."""
+    import json
+
+    from maestro import model as model_module
+
+    def transport(url, headers, body, timeout):
+        if isinstance(reply, Exception):
+            raise reply
+        return json.dumps(reply).encode()
+
+    monkeypatch.setattr(model_module, "http_transport", transport)
+    lines = []
+    ok = doctor.run(model_config(tmp_path, **extra), out=lines.append, check_model=True)
+    return ok, lines
+
+
+def anthropic_reply(actions):
+    return {"content": [{"type": "tool_use", "name": "propose_actions", "input": {"actions": actions}}]}
+
+
+def test_check_model_sends_the_test_phrase_and_shows_what_it_proposed(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta
+
+    from maestro.tz import get_timezone
+
+    due = (datetime.now(get_timezone()) + timedelta(days=1)).replace(hour=15, minute=0, second=0,
+                                                                     microsecond=0)
+    ok, lines = check_model(tmp_path, anthropic_reply(
+        [{"type": "create_reminder", "text": "Dentist", "due_at": due.isoformat()}]), monkeypatch)
+    assert ok
+    test = line_for(lines, "model test")
+    assert doctor.TEST_PHRASE in test and '"type": "create_reminder"' in test and "Dentist" in test
+
+
+def test_check_model_reports_a_provider_failure_as_a_failure(tmp_path, monkeypatch):
+    from maestro.model import ProviderError
+
+    ok, lines = check_model(tmp_path, ProviderError("http", "HTTP 401 from the model provider"),
+                            monkeypatch)
+    assert not ok
+    assert "HTTP 401" in line_for(lines, "model test")
+
+
+def test_check_model_warns_when_the_answer_would_not_be_used(tmp_path, monkeypatch):
+    """A model that answers but fails validation is a warning: captures still work, via the rules."""
+    ok, lines = check_model(tmp_path, anthropic_reply(
+        [{"type": "create_reminder", "text": "Dentist", "due_at": "tomorrow at 3"}]), monkeypatch)
+    assert ok  # captures are never lost, so this is not a failure
+    test = line_for(lines, "model test")
+    assert "wouldn't use it" in test and "fall back to the rules" in test
+
+
+def test_check_model_does_nothing_when_the_rules_are_in_use(tmp_path, monkeypatch):
+    lines = []
+    assert doctor.run(Config(db_path=str(tmp_path / "m.db"), channels=["console"], api_token="t"),
+                      out=lines.append, check_model=True)
+    assert not any("model test" in line for line in lines)
+
+
+def test_the_cli_passes_check_model_through(tmp_path, monkeypatch):
+    seen = {}
+
+    def fake_run(config, send_test=False, out=print, check_model=False):
+        seen.update(send_test=send_test, check_model=check_model)
+        return True
+
+    monkeypatch.setattr(doctor, "run", fake_run)
+    assert main(["--db", str(tmp_path / "m.db"), "doctor", "--check-model"]) == 0
+    assert seen == {"send_test": False, "check_model": True}

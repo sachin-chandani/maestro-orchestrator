@@ -4,6 +4,7 @@ Nothing here is required for local CLI use; channels that need keys stay off unt
 """
 
 import os
+import urllib.parse
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -192,11 +193,19 @@ def model_settings(config: Config) -> "ModelSettings | None":
     if not config.model:
         raise ValueError("MAESTRO_INTERPRETER=model needs MAESTRO_MODEL: there is no default model "
                          "name (e.g. MAESTRO_MODEL=claude-sonnet-5-5)")
-    if config.model_timeout_seconds < 1:
-        raise ValueError("MAESTRO_MODEL_TIMEOUT_SECONDS must be at least 1")
-    return ModelSettings(provider=config.model_provider, model=config.model,
-                         api_key=config.model_api_key, base_url=config.model_base_url,
-                         timeout=config.model_timeout_seconds)
+    if not 1 <= config.model_timeout_seconds <= 120:
+        raise ValueError("MAESTRO_MODEL_TIMEOUT_SECONDS must be between 1 and 120 "
+                         "(a capture waits for it, so keep it short)")
+    settings = ModelSettings(provider=config.model_provider, model=config.model,
+                             api_key=config.model_api_key, base_url=config.model_base_url,
+                             timeout=config.model_timeout_seconds)
+    # The capture text, and usually a key, go to this URL. Off your own network that means TLS,
+    # the same rule the webhook channel follows.
+    scheme = urllib.parse.urlparse(settings.base_url or "https://").scheme
+    if scheme != "https" and not settings.on_own_network:
+        raise ValueError(f"MAESTRO_MODEL_BASE_URL must use https outside your own network "
+                         f"(captures and your key would be sent in the clear to {settings.host})")
+    return settings
 
 
 def email_settings(config: Config) -> "EmailSettings | None":

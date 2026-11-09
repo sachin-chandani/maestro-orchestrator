@@ -211,7 +211,7 @@ def test_an_action_the_model_was_never_offered_is_refused_as_exactly_that():
     interpreter = model([{"type": "done", "item_id": 3}])
     with pytest.raises(ValueError, match="'done' isn't an action a model may propose; "
                                          "it was offered create_reminder, create_task, create_note"):
-        interpreter._read([{"type": "done", "item_id": 3}], "done 3", NOW)
+        interpreter.read([{"type": "done", "item_id": 3}], "done 3", NOW)
 
 
 def test_an_injected_prompt_in_a_forwarded_email_creates_nothing(store):
@@ -283,11 +283,26 @@ def test_the_explicit_key_wins_over_the_providers_variable():
      "Unknown MAESTRO_MODEL_PROVIDER"),
     ({"MAESTRO_INTERPRETER": "model", "MAESTRO_MODEL_PROVIDER": "openai"}, "needs MAESTRO_MODEL"),
     ({"MAESTRO_INTERPRETER": "model", "MAESTRO_MODEL_PROVIDER": "openai", "MAESTRO_MODEL": "m",
-      "MAESTRO_MODEL_TIMEOUT_SECONDS": "0"}, "at least 1"),
+      "MAESTRO_MODEL_TIMEOUT_SECONDS": "0"}, "between 1 and 120"),
+    ({"MAESTRO_INTERPRETER": "model", "MAESTRO_MODEL_PROVIDER": "openai", "MAESTRO_MODEL": "m",
+      "MAESTRO_MODEL_TIMEOUT_SECONDS": "600"}, "between 1 and 120"),
+    ({"MAESTRO_INTERPRETER": "model", "MAESTRO_MODEL_PROVIDER": "openai-compatible",
+      "MAESTRO_MODEL": "m", "MAESTRO_MODEL_BASE_URL": "http://api.example.com/v1"}, "must use https"),
 ])
 def test_a_half_configured_model_is_one_sentence_not_a_silent_fallback(env, message):
     with pytest.raises(ValueError, match=message):
         model_settings(Config.from_env(env))
+
+
+@pytest.mark.parametrize("base_url", ["http://localhost:11434/v1", "http://127.0.0.1:11434/v1",
+                                      "http://192.168.1.9:11434/v1", "http://ollama.local/v1",
+                                      "https://api.example.com/v1"])
+def test_plain_http_is_allowed_on_your_own_network(base_url):
+    """The webhook channel's rule: TLS outside your own network, nothing to set up inside it."""
+    config = Config.from_env({"MAESTRO_INTERPRETER": "model",
+                              "MAESTRO_MODEL_PROVIDER": "openai-compatible",
+                              "MAESTRO_MODEL": "m", "MAESTRO_MODEL_BASE_URL": base_url})
+    assert model_settings(config).base_url == base_url
 
 
 def test_build_interpreter_makes_a_model_interpreter_with_its_provider_and_timeout():
