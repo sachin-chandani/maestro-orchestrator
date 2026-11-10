@@ -1,6 +1,6 @@
 # 0016: Unsure captures are proposals the person confirms, with undo
 
-**Status:** Accepted (#117)
+**Status:** Accepted (#117). Its default changes in ADR 0017: captures split per reminder, and only unsure reminders wait (#126).
 
 ## Context
 ADR 0015 says unsure interpretations become proposals the user confirms in the channel they used,
