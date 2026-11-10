@@ -13,10 +13,11 @@ import urllib.error
 import urllib.request
 from collections.abc import Callable
 
+from maestro import captures as confirmations
 from maestro import commands
 from maestro.actions import apply
-from maestro.interpret import Context, Interpreter, interpret
-from maestro.models import Item, Kind
+from maestro.interpret import Context, Interpreter, interpret_assessed
+from maestro.models import Capture, Item, Kind
 from maestro.observability import METRICS
 from maestro.storage import Store
 
@@ -71,6 +72,16 @@ class TelegramClient:
         return self.call("sendMessage", {"chat_id": chat_id, "text": text, "reply_markup": markup})
 
 
+def _confirmation_buttons(capture_id: int | None) -> list[list[dict]]:
+    return [[{"text": "✅ Yes", "callback_data": f"cap:{capture_id}:yes"},
+             {"text": "✏️ Change", "callback_data": f"cap:{capture_id}:change"},
+             {"text": "✖ Cancel", "callback_data": f"cap:{capture_id}:no"}]]
+
+
+def _undo_button(capture_id: int | None) -> list[list[dict]]:
+    return [[{"text": "↩ Undo", "callback_data": f"cap:{capture_id}:undo"}]]
+
+
 def _action_buttons(item: Item) -> list[list[dict]]:
     row = [{"text": "✅ Done", "callback_data": f"done:{item.id}"}]
     row += [{"text": f"+{d}", "callback_data": f"snooze:{item.id}:{d}"} for d in SNOOZE_CHOICES]
@@ -94,11 +105,14 @@ class TelegramBot:
 
     def __init__(self, client: TelegramClient, store: Store, chat_id: str | None,
                  requestable: frozenset[str] | None = None,
-                 interpreter: "Interpreter | None" = None):
+                 interpreter: "Interpreter | None" = None,
+                 confirm: "confirmations.Confirmation | None" = None):
         self.client = client
         self.store = store
         # How a capture is read; None means the rules (maestro.interpret). Injected, never global.
         self.interpreter = interpreter
+        # Ask before acting on an unsure interpretation (#117); None means never, as before.
+        self.confirm = confirm
         self.chat_id = str(chat_id) if chat_id else None
         # The per-item channels this deployment can honour; None skips the capture-time check (#20).
         self.requestable = requestable
@@ -154,8 +168,22 @@ class TelegramBot:
             self.client.send(chat_id, commands.run(self.store, command, channel=CHANNEL, prefix="/"))
             return
 
+        # "yes", "no 12" or "undo" answers a confirmation — but only when this chat has a capture
+        # the word could answer; otherwise it is captured as any other text (ADR 0005, #117).
+        if (reply := confirmations.match_reply(text)) and (
+                target := confirmations.target(self.store, CHANNEL, str(chat_id), *reply)):
+            self._answer_confirmation(chat_id, target, reply[0])
+            return
+
         if not text.startswith("/"):
-            captured = interpret(text, Context(tz=self.store.tz), self.interpreter)
+            captured, confidence = interpret_assessed(text, Context(tz=self.store.tz), self.interpreter)
+            if self.confirm and confirmations.needs_confirmation(captured, confidence):
+                proposal, _ = confirmations.propose(
+                    self.store, captured, confidence, CHANNEL, str(chat_id), text,
+                    ttl=self.confirm.ttl)
+                self.client.send(chat_id, confirmations.question(proposal),
+                                 _confirmation_buttons(proposal.id))
+                return
             results = apply(self.store, captured, source=CHANNEL, requestable=self.requestable)
             for _ in results:
                 METRICS.inc("maestro_captures_total", source="telegram")
@@ -179,6 +207,18 @@ class TelegramBot:
         else:
             self.client.send(chat_id, f"Unknown command {word}. Try /help")
 
+    # --- confirmations (#117) ---------------------------------------------------------------
+
+    def _answer_confirmation(self, chat_id: int | str, target: Capture, verb: str) -> None:
+        outcome, items, removed = confirmations.answer(self.store, target, verb, via=CHANNEL,
+                                                       requestable=self.requestable)
+        if outcome == confirmations.Outcome.APPLIED:  # ALREADY echoes items someone else saved
+            for _ in items:
+                METRICS.inc("maestro_captures_total", source="telegram")
+        hint = "" if outcome != confirmations.Outcome.APPLIED else "\nWrong? Reply undo within 10 min."
+        buttons = (_undo_button(target.id) if outcome == confirmations.Outcome.APPLIED else None)
+        self.client.send(chat_id, confirmations.worded(outcome, target, items, removed, hint), buttons)
+
     # --- buttons ---------------------------------------------------------------------------
 
     def _handle_callback(self, query: dict) -> None:
@@ -189,9 +229,37 @@ class TelegramBot:
             return
         action, _, rest = query.get("data", "").partition(":")
         args = rest.split(":") if rest else []
-        result = commands.act(self.store, action, args, via=CHANNEL) if action in ("done", "snooze") \
-            else "Unknown action"
+        if action == "cap" and len(args) == 2 and args[0].isdigit():
+            result, buttons = self._confirmation_pressed(int(args[0]), args[1])
+        else:
+            result = commands.act(self.store, action, args, via=CHANNEL) if action in ("done", "snooze") \
+                else "Unknown action"
+            buttons = None
         self.client.call("answerCallbackQuery", {"callback_query_id": query["id"], "text": result[:200]})
         # Replace the buttons with the outcome so old reminders can't be acted on twice by accident.
         self.client.call("editMessageText", {"chat_id": chat_id, "message_id": message.get("message_id"),
-                                             "text": f"{message.get('text', '')}\n{result}"})
+                                             "text": f"{message.get('text', '')}\n{result}",
+                                             "reply_markup": {"inline_keyboard": buttons} if buttons
+                                             else None})
+
+    def _confirmation_pressed(self, capture_id: int, verb: str) -> tuple[str, list[list[dict]] | None]:
+        """A Yes / Change / Cancel / Undo button on a confirmation question (#117). The claim in
+        `captures.confirm` is what makes a double tap harmless, so no state is kept here."""
+        target = self.store.get_capture(capture_id)
+        if target is None or target.address != self.chat_id:
+            return "Unknown capture", None
+        if verb == "change":  # cancel, and invite the corrected wording
+            outcome = confirmations.cancel(self.store, capture_id, via=CHANNEL)
+            if outcome == confirmations.Outcome.CANCELLED:
+                return "Cancelled — send it again with the wording or time corrected.", None
+            return confirmations.worded(outcome, target, [], 0), None
+        if verb not in ("yes", "no", "undo"):
+            return "Unknown action", None
+        outcome, items, removed = confirmations.answer(self.store, target, verb, via=CHANNEL,
+                                                       requestable=self.requestable)
+        if outcome == confirmations.Outcome.APPLIED:  # ALREADY echoes items someone else saved
+            for _ in items:
+                METRICS.inc("maestro_captures_total", source="telegram")
+        hint = "" if outcome != confirmations.Outcome.APPLIED else "\nWrong? Undo within 10 min."
+        buttons = _undo_button(capture_id) if outcome == confirmations.Outcome.APPLIED else None
+        return confirmations.worded(outcome, target, items, removed, hint), buttons

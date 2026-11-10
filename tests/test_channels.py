@@ -218,6 +218,7 @@ def test_migrates_v8_database_and_old_rows_keep_text_based_urgency(tmp_path):
         store.conn.execute("ALTER TABLE items DROP COLUMN channels")
         store.conn.execute("ALTER TABLE items DROP COLUMN urgent")
         store.conn.execute("ALTER TABLE items DROP COLUMN interpreter")  # #116
+        store.conn.execute("ALTER TABLE items DROP COLUMN capture_id")  # #117
         store.conn.execute("PRAGMA user_version = 8")  # as a 0.3 database
         store.conn.commit()
     with Store(path) as store:

@@ -265,6 +265,11 @@ def tick(store: Store, notifier: Notifier, lease: Lease | None = None,
     """One scheduler pass for a long-running loop: errors are logged and counted, never raised."""
     try:
         fire_due(store, notifier, lease=lease, escalation=escalation, quiet=quiet)
+        # Mark overdue confirmation questions expired (#117): cheap, idempotent and safe from any
+        # process — confirming checks the clock itself, this only keeps lists and metrics honest.
+        from maestro import captures
+
+        captures.expire(store)
     except Exception:
         METRICS.inc("maestro_scheduler_errors_total")
         log.exception("Scheduler tick failed; retrying next tick")

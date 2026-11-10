@@ -14,7 +14,7 @@ import pgsupport
 import pytest
 from conftest import TZ, dt
 
-from maestro.models import Acknowledgement, Delivery, Item, Kind, Status
+from maestro.models import Acknowledgement, Capture, CaptureStatus, Delivery, Item, Kind, Status
 from maestro.storage import SQLiteStore, logic, open_store, parse_url
 
 NOW = dt(2026, 10, 26, 9, 0)  # a Monday
@@ -619,3 +619,106 @@ def test_an_explicitly_not_urgent_item_stays_false_not_none(store):
     item = store.add(Item(text="Call mom", kind=Kind.REMINDER, created_at=NOW, due_at=TOMORROW,
                           urgent=False))
     assert store.get(item.id).urgent is False
+
+
+# --- captures awaiting confirmation (#117) ----------------------------------------------------
+
+ACTIONS_JSON = ('[{"type": "create_reminder", "text": "Dentist", "source_text": "dentist", '
+                '"due_at": "2026-10-26T17:00:00+00:00", "created_at": "2026-10-26T09:00:00+00:00"}]')
+
+
+def proposal(store, source="telegram", address="42", expires=LATER, dedupe_key=None):
+    capture = Capture(status=CaptureStatus.PENDING, actions=ACTIONS_JSON, source=source,
+                      address=address, source_text="dentist", interpreter="rules",
+                      doubts="unread_time", created_at=NOW, expires_at=expires)
+    saved, created = store.add_capture(capture, dedupe_key)
+    return saved, created
+
+
+def test_an_added_capture_comes_back_whole(store):
+    saved, created = proposal(store)
+    assert created and saved.id is not None
+    assert store.get_capture(saved.id) == saved
+    assert saved.status == CaptureStatus.PENDING and saved.doubts == "unread_time"
+    assert store.get_capture(saved.id + 999) is None
+
+
+def test_a_retried_provider_message_gets_the_capture_already_proposed(store):
+    first, created_first = proposal(store, dedupe_key="SM-1")
+    again, created_again = proposal(store, dedupe_key="SM-1")
+    other, created_other = proposal(store, dedupe_key="SM-2")
+    assert created_first and not created_again and created_other
+    assert again.id == first.id and other.id != first.id
+    # The same key under another source is another message (the key is namespaced by source).
+    elsewhere, created_elsewhere = proposal(store, source="twilio_sms", dedupe_key="SM-1")
+    assert created_elsewhere and elsewhere.id != first.id
+
+
+def test_confirming_claims_a_pending_capture_exactly_once(store):
+    saved, _ = proposal(store)
+    assert store.confirm_capture(saved.id, "telegram", NOW, NOW + timedelta(minutes=10))
+    assert not store.confirm_capture(saved.id, "telegram", NOW, NOW + timedelta(minutes=10))
+    confirmed = store.get_capture(saved.id)
+    assert confirmed.status == CaptureStatus.APPLIED
+    assert (confirmed.decided_via, confirmed.decided_at) == ("telegram", NOW)
+    assert confirmed.undo_until == NOW + timedelta(minutes=10)
+
+
+def test_confirming_after_the_expiry_moment_is_refused(store):
+    saved, _ = proposal(store, expires=LATER)
+    assert not store.confirm_capture(saved.id, "cli", LATER, LATER + timedelta(minutes=10))
+    assert store.get_capture(saved.id).status == CaptureStatus.PENDING  # the sweep marks it, not this
+
+
+def test_cancelling_only_works_while_pending(store):
+    saved, _ = proposal(store)
+    assert store.cancel_capture(saved.id, "cli", NOW)
+    assert store.get_capture(saved.id).status == CaptureStatus.CANCELLED
+    assert not store.cancel_capture(saved.id, "cli", NOW)
+    assert not store.confirm_capture(saved.id, "cli", NOW, LATER)
+
+
+def test_undo_claims_an_applied_capture_only_inside_its_window(store):
+    saved, _ = proposal(store)
+    store.confirm_capture(saved.id, "cli", NOW, NOW + timedelta(minutes=10))
+    late = NOW + timedelta(minutes=10)
+    assert not store.undo_capture(saved.id, "cli", late)  # the window is over at exactly +10m
+    assert store.undo_capture(saved.id, "cli", NOW + timedelta(minutes=9))
+    assert store.get_capture(saved.id).status == CaptureStatus.UNDONE
+    assert not store.undo_capture(saved.id, "cli", NOW)  # and never twice
+
+
+def test_the_expiry_sweep_marks_only_overdue_pending_captures(store):
+    overdue, _ = proposal(store, expires=NOW + timedelta(hours=1))
+    fresh, _ = proposal(store, expires=NOW + timedelta(hours=5))
+    decided, _ = proposal(store, expires=NOW + timedelta(hours=1))
+    store.cancel_capture(decided.id, "cli", NOW)
+    assert store.expire_captures(NOW + timedelta(hours=2)) == 1
+    assert store.get_capture(overdue.id).status == CaptureStatus.EXPIRED
+    assert store.get_capture(fresh.id).status == CaptureStatus.PENDING
+    assert store.get_capture(decided.id).status == CaptureStatus.CANCELLED
+    assert store.expire_captures(NOW + timedelta(hours=2)) == 0  # idempotent
+
+
+def test_captures_lists_newest_first_and_filters_by_owner_and_status(store):
+    mine, _ = proposal(store, source="telegram", address="42")
+    other, _ = proposal(store, source="telegram", address="7")
+    sms, _ = proposal(store, source="twilio_sms", address="42")
+    store.cancel_capture(other.id, "cli", NOW)
+    assert [c.id for c in store.captures()] == [sms.id, other.id, mine.id]
+    assert [c.id for c in store.captures(source="telegram", address="42")] == [mine.id]
+    assert [c.id for c in store.captures(status=str(CaptureStatus.CANCELLED))] == [other.id]
+    assert [c.id for c in store.captures(status=str(CaptureStatus.PENDING), source="telegram",
+                                         address="42")] == [mine.id]
+
+
+def test_linked_items_belong_to_their_capture_until_deleted(store):
+    saved, _ = proposal(store)
+    store.confirm_capture(saved.id, "cli", NOW, NOW + timedelta(minutes=10))
+    first, second = reminder(store), note(store)
+    store.link_capture(saved.id, [first.id, second.id])
+    assert [i.id for i in store.items_for_capture(saved.id)] == [first.id, second.id]
+    assert store.get(first.id).capture_id == saved.id
+    store.delete(first.id)
+    assert [i.id for i in store.items_for_capture(saved.id)] == [second.id]
+    assert store.items_for_capture(saved.id + 999) == []

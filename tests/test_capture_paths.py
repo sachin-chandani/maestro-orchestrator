@@ -52,10 +52,19 @@ class StubInterpreter:
 
 @pytest.fixture
 def stub(monkeypatch):
-    """Replace `interpret` in whichever capture module the test names."""
+    """Replace `interpret_assessed` in whichever capture module the test names."""
+    from maestro.confidence import Confidence
+
     def install(module: str) -> StubInterpreter:
+        import importlib
+
         fake = StubInterpreter()
-        monkeypatch.setattr(f"maestro.{module}.interpret", fake)
+        if hasattr(importlib.import_module(f"maestro.{module}"), "interpret_assessed"):
+            monkeypatch.setattr(f"maestro.{module}.interpret_assessed",
+                                lambda text, context=None, interpreter=None: (fake(text, context),
+                                                                              Confidence()))
+        else:  # a module that never confirms (email_in) still calls plain interpret
+            monkeypatch.setattr(f"maestro.{module}.interpret", fake)
         return fake
 
     return install

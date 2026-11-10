@@ -209,6 +209,7 @@ def test_migrating_a_database_from_before_tasks_keeps_every_note_a_note(tmp_path
                        due_at=dt(2026, 10, 28, 17, 0), source_text="call mom tomorrow at 5pm"))
         store.conn.execute("DROP INDEX IF EXISTS idx_items_kind")
         store.conn.execute("ALTER TABLE items DROP COLUMN interpreter")  # added later, by #116
+        store.conn.execute("ALTER TABLE items DROP COLUMN capture_id")  # added later, by #117
         store.conn.execute("PRAGMA user_version = 9")  # as a 0.4 database
         store.conn.commit()
 

@@ -11,10 +11,11 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
+from maestro import captures as confirmations
 from maestro import commands, recurrence
 from maestro.actions import apply
 from maestro.config import Config, load_dotenv
-from maestro.interpret import Context, Interpreter, build_interpreter, interpret
+from maestro.interpret import Context, Interpreter, build_interpreter, interpret_assessed
 from maestro.models import Item, Kind, Status
 from maestro.notifier import (
     ConfigError,
@@ -37,6 +38,8 @@ from maestro.storage import (
 from maestro.tz import add_elapsed, get_timezone
 
 if TYPE_CHECKING:
+    from maestro.actions import Action
+    from maestro.confidence import Confidence
     from maestro.email_in import EmailWorker
     from maestro.escalation import Stage
     from maestro.quiet import QuietHours
@@ -71,6 +74,59 @@ def _grouped(items: list[Item], verbose: bool = False) -> str:
     return "\n\n".join(sections)
 
 
+def _confirmation(config: Config) -> "confirmations.Confirmation | None":
+    from maestro.config import confirmation
+
+    return confirmation(config)
+
+
+def _propose(store: Store, captured: "list[Action]", confidence: "Confidence", text: str,
+             confirm: "confirmations.Confirmation") -> int:
+    """Hold an unsure capture for confirmation (#117): ask right here when on a terminal,
+    otherwise print how to answer and leave it pending."""
+    proposal, _ = confirmations.propose(store, captured, confidence, "cli", "", text,
+                                        ttl=confirm.ttl)
+    print(confirmations.question(proposal))
+    if sys.stdin is not None and sys.stdin.isatty():
+        reply = input("Save it? [Y/n] ").strip().lower()
+        verb = "no" if reply in ("n", "no") else "yes"
+        outcome, items, removed = confirmations.answer(store, proposal, verb, via="cli")
+        hint = f" (undo with: maestro undo {proposal.id})" \
+            if outcome == confirmations.Outcome.APPLIED else ""
+        print(confirmations.worded(outcome, proposal, items, removed, hint))
+        return 0
+    print(f"Answer with: maestro confirm {proposal.id}  |  maestro cancel {proposal.id}")
+    return 0
+
+
+def _list_proposals(store: Store) -> int:
+    confirmations.expire(store)  # so what is listed as pending really still is
+    from maestro.models import CaptureStatus
+
+    rows = [*store.captures(status=str(CaptureStatus.PENDING)),
+            *store.captures(status=str(CaptureStatus.EXPIRED))]
+    if not rows:
+        print("No captures awaiting confirmation.")
+        return 0
+    for capture in rows:
+        print(confirmations.line(capture))
+    return 0
+
+
+def _decide(store: Store, command: str, capture_id: int) -> int:
+    proposal = store.get_capture(capture_id)
+    if proposal is None:
+        print(f"No capture #{capture_id}", file=sys.stderr)
+        return 1
+    verb = {"confirm": "yes", "cancel": "no", "undo": "undo"}[command]
+    outcome, items, removed = confirmations.answer(store, proposal, verb, via="cli")
+    hint = f" (undo with: maestro undo {capture_id})" \
+        if outcome == confirmations.Outcome.APPLIED else ""
+    print(confirmations.worded(outcome, proposal, items, removed, hint))
+    return 0 if outcome in (confirmations.Outcome.APPLIED, confirmations.Outcome.CANCELLED,
+                            confirmations.Outcome.UNDONE, confirmations.Outcome.ALREADY) else 1
+
+
 def _build_parser(config: Config) -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="maestro", description="Your second brain for things to remember.")
     p.add_argument("--db", default=config.db_path,
@@ -84,6 +140,14 @@ def _build_parser(config: Config) -> argparse.ArgumentParser:
     ls.add_argument("--all", action="store_true", help="include completed items")
     ls.add_argument("--verbose", "-v", action="store_true",
                     help="also show which interpreter read each item (rules or model)")
+    ls.add_argument("--proposals", action="store_true",
+                    help="show captures awaiting confirmation (and recently expired ones) instead")
+
+    for name, help_text in [("confirm", "save a capture that is awaiting confirmation"),
+                            ("cancel", "turn down a capture that is awaiting confirmation"),
+                            ("undo", "take back a capture confirmed in the last 10 minutes")]:
+        cmd = sub.add_parser(name, help=help_text)
+        cmd.add_argument("capture_id", type=int)
 
     search = sub.add_parser("search", help="find items by text")
     search.add_argument("query")
@@ -149,6 +213,7 @@ def main(argv: list[str] | None = None) -> int:
         # Built once, from the configuration, and handed to whatever captures: the rules unless
         # MAESTRO_INTERPRETER=model (#115). Half-configured is an error, never a silent fallback.
         interpreter = build_interpreter(config)
+        _confirmation(config)  # a bad MAESTRO_CONFIRM is a config error, found now (#117)
     except ValueError as e:
         print(f"Config error: {e}", file=sys.stderr)
         return 2
@@ -173,7 +238,11 @@ def main(argv: list[str] | None = None) -> int:
 def _dispatch(args: argparse.Namespace, config: Config, store: Store, tz: ZoneInfo,
               interpreter: "Interpreter | None" = None) -> int:
     if args.command == "add":
-        captured = interpret(" ".join(args.text), Context(tz=tz), interpreter)
+        text = " ".join(args.text)
+        captured, confidence = interpret_assessed(text, Context(tz=tz), interpreter)
+        confirm = _confirmation(config)
+        if confirm and confirmations.needs_confirmation(captured, confidence):
+            return _propose(store, captured, confidence, text, confirm)
         results = apply(store, captured, source="cli", requestable=requestable_channels(config))
         for result in results:
             if result.dropped:
@@ -182,11 +251,15 @@ def _dispatch(args: argparse.Namespace, config: Config, store: Store, tz: ZoneIn
                 print(f"Note: {', '.join(result.dropped)} isn't configured; {kept}.", file=sys.stderr)
             print(f"Saved: {_format(result.saved).strip()}")
     elif args.command == "list":
+        if args.proposals:
+            return _list_proposals(store)
         items = store.list(include_done=args.all)
         print(_grouped(items, args.verbose) if items else "Nothing to remember yet.")
     elif args.command == "search":
         items = store.search(args.query)
         print("\n".join(map(_format, items)) if items else "No matches.")
+    elif args.command in ("confirm", "cancel", "undo"):
+        return _decide(store, args.command, args.capture_id)
     elif args.command in ("done", "stop", "rm", "snooze"):
         if (target := store.get(args.id)) is None:
             print(f"No item #{args.id}", file=sys.stderr)
@@ -227,7 +300,7 @@ def _dispatch(args: argparse.Namespace, config: Config, store: Store, tz: ZoneIn
         except (ConfigError, ValueError) as e:
             print(f"Config error: {e}", file=sys.stderr)
             return 2
-        bot = _build_bot(config, store, interpreter)
+        bot = _build_bot(config, store, interpreter, _confirmation(config))
         try:
             email = _build_email(config, store, interpreter)
         except ValueError as e:
@@ -266,8 +339,8 @@ def _exit_on_sigterm(signum: int, frame: object) -> None:
     raise SystemExit(0)
 
 
-def _build_bot(config: Config, store: Store,
-               interpreter: "Interpreter | None" = None) -> "TelegramBot | None":
+def _build_bot(config: Config, store: Store, interpreter: "Interpreter | None" = None,
+               confirm: "confirmations.Confirmation | None" = None) -> "TelegramBot | None":
     if not config.telegram_bot_token:
         return None
     from maestro.telegram import TelegramBot, TelegramClient
@@ -275,7 +348,8 @@ def _build_bot(config: Config, store: Store,
     if not config.telegram_chat_id:
         logging.warning("TELEGRAM_CHAT_ID is not set: send /start to your bot to get it")
     return TelegramBot(TelegramClient.for_token(config.telegram_bot_token), store, config.telegram_chat_id,
-                       requestable=requestable_channels(config), interpreter=interpreter)
+                       requestable=requestable_channels(config), interpreter=interpreter,
+                       confirm=confirm)
 
 
 def _build_email(config: Config, store: Store,
@@ -338,13 +412,13 @@ def _serve(store: Store, config: Config, notifier: Notifier, args: argparse.Name
 
         requestable = requestable_channels(config)
         sms = SmsHandler(store, config.twilio_auth_token, config.sms_to, requestable=requestable,
-                         interpreter=interpreter)
+                         interpreter=interpreter, confirm=_confirmation(config))
         voice = VoiceHandler(store, config.twilio_auth_token, config.sms_to, requestable=requestable,
                              interpreter=interpreter)
     app = create_app(store, api_token=config.api_token, notifier=notifier, interval=args.interval, bot=bot,
                      sms=sms, voice=voice, email=email, escalation=escalation, quiet=quiet,
                      public_url=config.public_url, requestable=requestable_channels(config),
-                     interpreter=interpreter,
+                     interpreter=interpreter, confirm=_confirmation(config),
                      limits=RateLimits(config.rate_limit_webhook, config.rate_limit_auth_failures,
                                        config.trust_proxy_headers))
     # log_config=None keeps uvicorn on our root handler, so MAESTRO_LOG_FORMAT=json covers access logs too.

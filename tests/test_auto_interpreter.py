@@ -333,11 +333,12 @@ def test_migrating_from_the_schema_before_it_was_recorded(tmp_path):
         s.add(Item(text="Renew the passport", kind=Kind.TASK, created_at=NOW,
                    source_text="renew the passport"))
         s.conn.execute("ALTER TABLE items DROP COLUMN interpreter")
+        s.conn.execute("ALTER TABLE items DROP COLUMN capture_id")  # added later, by #117
         s.conn.execute("PRAGMA user_version = 10")
         s.conn.commit()
 
     with Store(path, tz=TZ) as s:
-        assert s.schema_version == len(MIGRATIONS) == 11
+        assert s.schema_version == len(MIGRATIONS) == 12
         reminder_, task = s.list()
         assert (reminder_.text, reminder_.channels, reminder_.urgent, reminder_.interpreter) == \
             ("Call mom", ["twilio_sms"], True, None)

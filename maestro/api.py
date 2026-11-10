@@ -16,16 +16,17 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import parse_qs
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response, status
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 from maestro import __version__, commands, recurrence
+from maestro import captures as confirmations
 from maestro.actions import apply
-from maestro.interpret import Context, Interpreter, interpret
-from maestro.models import Item, Kind
+from maestro.interpret import Context, Interpreter, interpret_assessed
+from maestro.models import Capture, CaptureStatus, Item, Kind
 from maestro.notifier import Notifier
 from maestro.observability import METRICS, Labels
 from maestro.parser import parse_duration
@@ -98,6 +99,34 @@ class CaptureIn(BaseModel):
     text: str = Field(min_length=1, max_length=2000, examples=["call mom tomorrow at 5pm"])
 
 
+class ProposalOut(BaseModel):
+    """A capture awaiting confirmation (#117): what would be saved, not yet an item."""
+
+    id: int
+    status: str  # pending, applied, cancelled, expired or undone
+    lines: list[str]  # what confirming would save, one line per item
+    source: str
+    source_text: str
+    interpreter: str | None  # who read it (#116)
+    doubts: list[str]  # why it was unsure (maestro.confidence)
+    created_at: datetime
+    expires_at: datetime
+    undo_until: datetime | None  # while applied: undo is allowed until then
+    item_ids: list[int]  # the items it created, once applied
+
+    @classmethod
+    def of(cls, capture: Capture, item_ids: list[int] | None = None) -> "ProposalOut":
+        if capture.id is None:
+            raise ValueError("Only stored captures can be returned from the API")
+        return cls(id=capture.id, status=str(capture.status),
+                   lines=confirmations.proposed_lines(capture),
+                   source=capture.source, source_text=capture.source_text,
+                   interpreter=capture.interpreter,
+                   doubts=[d for d in capture.doubts.split(",") if d],
+                   created_at=capture.created_at, expires_at=capture.expires_at,
+                   undo_until=capture.undo_until, item_ids=item_ids or [])
+
+
 class SnoozeIn(BaseModel):
     duration: str = Field(examples=["10m", "2h", "1d"])
 
@@ -144,13 +173,15 @@ def create_app(store: Store, api_token: str | None = None, notifier: Notifier | 
                voice: VoiceHandler | None = None, email: "EmailWorker | None" = None,
                escalation: "list[Stage] | None" = None, quiet: "QuietHours | None" = None,
                requestable: frozenset[str] | None = None,
-               interpreter: Interpreter | None = None) -> FastAPI:
+               interpreter: Interpreter | None = None,
+               confirm: "confirmations.Confirmation | None" = None) -> FastAPI:
     """Build the app. With a notifier, due reminders are also fired from a background task;
     with a bot (maestro.telegram.TelegramBot), chat messages are handled from another; with an
     SmsHandler (maestro.sms), the Twilio webhook is enabled. `public_url` is the externally visible
     base URL, needed to verify webhook signatures behind a reverse proxy. `limits` defaults to
     RateLimits(): public endpoints and failed authentication are rate limited per client.
-    `interpreter` is how a capture is read; None means the rules (maestro.interpret)."""
+    `interpreter` is how a capture is read; None means the rules (maestro.interpret). With
+    `confirm` (#117), an unsure interpretation is answered 202 as a proposal to confirm."""
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -304,12 +335,18 @@ def create_app(store: Store, api_token: str | None = None, notifier: Notifier | 
                                  media_type="text/plain; version=0.0.4")
 
     @app.post("/items", status_code=201, dependencies=[Depends(require_token)])
-    async def capture(body: CaptureIn) -> ItemOut:
-        METRICS.inc("maestro_captures_total", source="api")
+    async def capture(body: CaptureIn, response: Response) -> ItemOut | ProposalOut:
         # Reading the text can mean waiting on a model (#115), so it happens in a worker thread:
         # one slow capture must not stall the scheduler task or every other request. Applying stays
         # on the event loop, where the store has always been used (ADR 0003).
-        captured = await run_in_threadpool(interpret, body.text, Context(tz=store.tz), interpreter)
+        captured, confidence = await run_in_threadpool(
+            interpret_assessed, body.text, Context(tz=store.tz), interpreter)
+        if confirm and confirmations.needs_confirmation(captured, confidence):
+            proposal, _ = confirmations.propose(store, captured, confidence, "api", "", body.text,
+                                                ttl=confirm.ttl)
+            response.status_code = status.HTTP_202_ACCEPTED  # asked, not saved (#117)
+            return ProposalOut.of(proposal)
+        METRICS.inc("maestro_captures_total", source="api")
         results = apply(store, captured, source="api", requestable=requestable)
         for result in results:
             if result.dropped:
@@ -320,6 +357,61 @@ def create_app(store: Store, api_token: str | None = None, notifier: Notifier | 
             # GET /items. Reporting several from one capture is part of #117.
             log.info("One capture saved %d items; the response names the first", len(results))
         return ItemOut.of(results[0].saved)
+
+    @app.get("/captures", dependencies=[Depends(require_token)])
+    async def list_captures(status_filter: str | None = Query(default=None, alias="status")) -> \
+            list[ProposalOut]:
+        """Captures awaiting confirmation (#117): pending and expired unless ?status= names one."""
+        if status_filter is None:
+            wanted = [str(CaptureStatus.PENDING), str(CaptureStatus.EXPIRED)]
+        elif status_filter in list(CaptureStatus):
+            wanted = [status_filter]
+        else:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT,
+                                f"status must be one of {', '.join(CaptureStatus)}")
+        confirmations.expire(store)  # so what is listed as pending really still is
+        return [ProposalOut.of(c) for w in wanted for c in store.captures(status=w)]
+
+    def capture_or_404(capture_id: int) -> Capture:
+        if (capture := store.get_capture(capture_id)) is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, f"No capture #{capture_id}")
+        return capture
+
+    def decided(capture_id: int, wanted: CaptureStatus) -> ProposalOut:
+        """The capture after a decision: 200 only when it ended in the state this endpoint asks
+        for (so a double tap is idempotent), 409 otherwise (confirming something undone,
+        cancelling something applied, an expired capture)."""
+        capture = capture_or_404(capture_id)
+        if capture.status != wanted:
+            raise HTTPException(status.HTTP_409_CONFLICT,
+                                f"Capture #{capture_id} is {capture.status}; nothing was changed")
+        return ProposalOut.of(capture, [i.id for i in store.items_for_capture(capture_id)
+                                        if i.id is not None])
+
+    @app.post("/captures/{capture_id}/confirm", dependencies=[Depends(require_token)])
+    async def confirm_capture(capture_id: int, request: Request) -> ProposalOut:
+        capture_or_404(capture_id)
+        outcome, items = confirmations.confirm(store, capture_id, via=client_name(request),
+                                               requestable=requestable)
+        if outcome == confirmations.Outcome.APPLIED:
+            for _ in items:
+                METRICS.inc("maestro_captures_total", source="api")
+        return decided(capture_id, CaptureStatus.APPLIED)
+
+    @app.post("/captures/{capture_id}/cancel", dependencies=[Depends(require_token)])
+    async def cancel_capture(capture_id: int, request: Request) -> ProposalOut:
+        capture_or_404(capture_id)
+        confirmations.cancel(store, capture_id, via=client_name(request))
+        return decided(capture_id, CaptureStatus.CANCELLED)
+
+    @app.post("/captures/{capture_id}/undo", dependencies=[Depends(require_token)])
+    async def undo_capture(capture_id: int, request: Request) -> ProposalOut:
+        capture_or_404(capture_id)
+        outcome, _ = confirmations.undo(store, capture_id, via=client_name(request))
+        if outcome == confirmations.Outcome.TOO_LATE:
+            raise HTTPException(status.HTTP_409_CONFLICT,
+                                f"The undo window for capture #{capture_id} has passed")
+        return decided(capture_id, CaptureStatus.UNDONE)
 
     @app.get("/items", dependencies=[Depends(require_token)])
     async def list_items(include_done: bool = False, q: str | None = None,

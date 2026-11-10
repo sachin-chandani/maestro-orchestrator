@@ -118,6 +118,9 @@ def _escape(value: str) -> str:
 
 METRICS = Metrics()
 METRICS.describe("maestro_captures_total", "counter", "Items captured, by source.")
+METRICS.describe("maestro_captures_confirmation_total", "counter",
+                 "Captures held for confirmation (#117), by outcome: proposed, confirmed, "
+                 "cancelled, expired, undone.")
 METRICS.describe("maestro_interpret_total", "counter",
                  "Captures read, by interpreter and outcome (#115). A capture the model failed on "
                  "is counted once as a model fallback and once as a rules success: both happened.")

@@ -24,7 +24,7 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from maestro.models import Acknowledgement, Delivery, Item, Kind, Status
+from maestro.models import Acknowledgement, Capture, CaptureStatus, Delivery, Item, Kind, Status
 from maestro.observability import METRICS
 from maestro.storage import logic, migrations
 from maestro.storage.base import Store
@@ -148,6 +148,34 @@ MIGRATIONS: list[Migration] = [
     # existing rows weren't recorded, and NULL says "not known" rather than guessing "rules".
     [
         "ALTER TABLE items ADD COLUMN interpreter TEXT",
+    ],
+    # 12: captures awaiting confirmation, and undo (#117). A capture holds its proposed actions as
+    # JSON; nothing reaches `items` until it is confirmed, and `items.capture_id` records where a
+    # confirmed item came from so it can be undone. Old items keep NULL: they can't be undone.
+    [
+        """CREATE TABLE IF NOT EXISTS captures (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            status      TEXT NOT NULL,
+            actions     TEXT NOT NULL,
+            source      TEXT NOT NULL,
+            address     TEXT NOT NULL DEFAULT '',
+            source_text TEXT NOT NULL,
+            interpreter TEXT,
+            doubts      TEXT NOT NULL DEFAULT '',
+            dedupe_key  TEXT,
+            created_at  TEXT NOT NULL,
+            expires_at  TEXT NOT NULL,
+            undo_until  TEXT,
+            decided_at  TEXT,
+            decided_via TEXT
+        )""",
+        # The expiry sweep reads (status, expires_at); reply matching reads an owner's latest.
+        "CREATE INDEX IF NOT EXISTS idx_captures_status ON captures (status, expires_at)",
+        "CREATE INDEX IF NOT EXISTS idx_captures_owner ON captures (source, address, status)",
+        # One proposal per provider message, however often the webhook retries.
+        """CREATE UNIQUE INDEX IF NOT EXISTS idx_captures_dedupe ON captures (source, dedupe_key)
+           WHERE dedupe_key IS NOT NULL""",
+        "ALTER TABLE items ADD COLUMN capture_id INTEGER",
     ],
 ]
 
@@ -278,6 +306,7 @@ class SQLiteStore(Store):
             channels=row["channels"].split(",") if row["channels"] else None,
             urgent=None if row["urgent"] is None else bool(row["urgent"]),
             interpreter=row["interpreter"],
+            capture_id=row["capture_id"],
         )
 
     @property
@@ -545,6 +574,106 @@ class SQLiteStore(Store):
             self.conn.execute("DELETE FROM inbound_messages WHERE item_id = ?", (item_id,))
             cur = self.conn.execute("DELETE FROM items WHERE id = ?", (item_id,))
         return cur.rowcount > 0
+
+    # --- captures awaiting confirmation (#117) ----------------------------------------------
+
+    def _capture(self, row: sqlite3.Row) -> Capture:
+        return Capture(
+            id=row["id"],
+            status=CaptureStatus(row["status"]),
+            actions=row["actions"],
+            source=row["source"],
+            address=row["address"],
+            source_text=row["source_text"],
+            interpreter=row["interpreter"],
+            doubts=row["doubts"],
+            created_at=self._required_from_db(row["created_at"]),
+            expires_at=self._required_from_db(row["expires_at"]),
+            undo_until=self._from_db(row["undo_until"]),
+            decided_at=self._from_db(row["decided_at"]),
+            decided_via=row["decided_via"],
+        )
+
+    def add_capture(self, capture: Capture, dedupe_key: str | None = None) -> tuple[Capture, bool]:
+        with self._transaction(immediate=True):
+            if dedupe_key is not None:
+                row = self.conn.execute(
+                    "SELECT * FROM captures WHERE source = ? AND dedupe_key = ?",
+                    (capture.source, dedupe_key),
+                ).fetchone()
+                if row is not None:
+                    return self._capture(row), False
+            cur = self.conn.execute(
+                "INSERT INTO captures (status, actions, source, address, source_text, interpreter,"
+                " doubts, dedupe_key, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (capture.status, capture.actions, capture.source, capture.address,
+                 capture.source_text, capture.interpreter, capture.doubts, dedupe_key,
+                 self._to_db(capture.created_at), self._to_db(capture.expires_at)),
+            )
+        capture.id = cur.lastrowid
+        return capture, True
+
+    def get_capture(self, capture_id: int) -> Capture | None:
+        row = self.conn.execute("SELECT * FROM captures WHERE id = ?", (capture_id,)).fetchone()
+        return self._capture(row) if row else None
+
+    def confirm_capture(self, capture_id: int, via: str, now: datetime, undo_until: datetime) -> bool:
+        with self._transaction():
+            cur = self.conn.execute(
+                "UPDATE captures SET status = ?, decided_at = ?, decided_via = ?, undo_until = ?"
+                " WHERE id = ? AND status = ? AND expires_at > ?",
+                (CaptureStatus.APPLIED, self._to_db(now), via, self._to_db(undo_until),
+                 capture_id, CaptureStatus.PENDING, self._to_db(now)),
+            )
+        return cur.rowcount > 0
+
+    def cancel_capture(self, capture_id: int, via: str, now: datetime) -> bool:
+        with self._transaction():
+            cur = self.conn.execute(
+                "UPDATE captures SET status = ?, decided_at = ?, decided_via = ?"
+                " WHERE id = ? AND status = ?",
+                (CaptureStatus.CANCELLED, self._to_db(now), via, capture_id, CaptureStatus.PENDING),
+            )
+        return cur.rowcount > 0
+
+    def undo_capture(self, capture_id: int, via: str, now: datetime) -> bool:
+        with self._transaction():
+            cur = self.conn.execute(
+                "UPDATE captures SET status = ?, decided_at = ?, decided_via = ?"
+                " WHERE id = ? AND status = ? AND undo_until > ?",
+                (CaptureStatus.UNDONE, self._to_db(now), via, capture_id, CaptureStatus.APPLIED,
+                 self._to_db(now)),
+            )
+        return cur.rowcount > 0
+
+    def expire_captures(self, now: datetime) -> int:
+        with self._transaction():
+            cur = self.conn.execute(
+                "UPDATE captures SET status = ?, decided_at = ? WHERE status = ? AND expires_at <= ?",
+                (CaptureStatus.EXPIRED, self._to_db(now), CaptureStatus.PENDING, self._to_db(now)),
+            )
+        return cur.rowcount
+
+    def captures(self, status: str | None = None, source: str | None = None,
+                 address: str | None = None) -> builtins.list[Capture]:
+        sql, params = "SELECT * FROM captures", []
+        clauses = [("status = ?", status), ("source = ?", source), ("address = ?", address)]
+        where = [(c, v) for c, v in clauses if v is not None]
+        if where:
+            sql += " WHERE " + " AND ".join(c for c, _ in where)
+            params = [v for _, v in where]
+        sql += " ORDER BY created_at DESC, id DESC"
+        return [self._capture(r) for r in self.conn.execute(sql, params)]
+
+    def link_capture(self, capture_id: int, item_ids: builtins.list[int]) -> None:
+        with self._transaction():
+            self.conn.executemany("UPDATE items SET capture_id = ? WHERE id = ?",
+                                  [(capture_id, item_id) for item_id in item_ids])
+
+    def items_for_capture(self, capture_id: int) -> builtins.list[Item]:
+        rows = self.conn.execute(
+            "SELECT * FROM items WHERE capture_id = ? ORDER BY id", (capture_id,))
+        return [self._item(r) for r in rows]
 
     def last_delivered(self, channel: str) -> int | None:
         row = self.conn.execute(

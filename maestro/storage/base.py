@@ -18,7 +18,7 @@ from types import TracebackType
 from typing import Self
 from zoneinfo import ZoneInfo
 
-from maestro.models import Acknowledgement, Delivery, Item, Status
+from maestro.models import Acknowledgement, Capture, Delivery, Item, Status
 from maestro.storage.logic import ACK_WINDOW
 
 __all__ = ["ACK_WINDOW", "SchemaTooNewError", "Store"]
@@ -85,6 +85,55 @@ class Store(ABC):
     def claim_inbound(self, source: str, external_id: str, item_id: int) -> bool:
         """Record an inbound message that acted on an existing item (e.g. an email reply 'done'),
         once the action succeeded. False if it was already recorded."""
+
+    # --- captures awaiting confirmation (#117) ----------------------------------------------
+
+    @abstractmethod
+    def add_capture(self, capture: Capture, dedupe_key: str | None = None) -> tuple[Capture, bool]:
+        """Save a capture awaiting confirmation and return it with its `id` set.
+
+        Returns (capture, created). With a `dedupe_key` (the provider's message id), a retried
+        webhook gets back the capture from the first delivery instead of being asked twice.
+        """
+
+    @abstractmethod
+    def get_capture(self, capture_id: int) -> Capture | None:
+        """The capture with this id, or None."""
+
+    @abstractmethod
+    def confirm_capture(self, capture_id: int, via: str, now: datetime,
+                        undo_until: datetime) -> bool:
+        """Claim a pending, unexpired capture as applied: the one atomic check-and-set that
+        decides which of two simultaneous confirmations acts (#117). False when it was already
+        decided, expired, or never existed; the caller applies the actions only on True."""
+
+    @abstractmethod
+    def cancel_capture(self, capture_id: int, via: str, now: datetime) -> bool:
+        """Mark a pending capture cancelled. False when it wasn't pending."""
+
+    @abstractmethod
+    def undo_capture(self, capture_id: int, via: str, now: datetime) -> bool:
+        """Claim an applied capture as undone, inside its undo window; same check-and-set rules
+        as confirm_capture. The caller deletes the items only on True."""
+
+    @abstractmethod
+    def expire_captures(self, now: datetime) -> int:
+        """Mark pending captures whose expires_at has passed as expired; returns how many.
+        They stay listed (visible, never applied); confirm_capture checks the time itself, so a
+        late sweep can't let a stale confirmation through."""
+
+    @abstractmethod
+    def captures(self, status: str | None = None, source: str | None = None,
+                 address: str | None = None) -> builtins.list[Capture]:
+        """Captures, newest first, optionally filtered by status and by owner (source, address)."""
+
+    @abstractmethod
+    def link_capture(self, capture_id: int, item_ids: builtins.list[int]) -> None:
+        """Record which items a confirmed capture created, so undo knows what to remove."""
+
+    @abstractmethod
+    def items_for_capture(self, capture_id: int) -> builtins.list[Item]:
+        """The items a confirmed capture created (empty once undone)."""
 
     # --- reading ---------------------------------------------------------------------------
 

@@ -15,6 +15,16 @@ class Status(StrEnum):
     DONE = "done"
 
 
+class CaptureStatus(StrEnum):
+    """The life of a captured message that needed confirmation (#117)."""
+
+    PENDING = "pending"  # asked, not yet answered
+    APPLIED = "applied"  # confirmed; its items exist (unless undone)
+    CANCELLED = "cancelled"  # the person said no
+    EXPIRED = "expired"  # nobody answered in time; still listed, never applied
+    UNDONE = "undone"  # confirmed, then taken back inside the undo window
+
+
 @dataclass
 class Item:
     text: str
@@ -35,6 +45,9 @@ class Item:
     # Which interpreter read this from the capture: "rules" or "model" (#116). None means the item
     # predates the column, or was saved directly rather than from a capture.
     interpreter: str | None = None
+    # The confirmed capture this item came from (#117), so it can be undone. None for items saved
+    # directly, or from before confirmations existed; those can't be undone.
+    capture_id: int | None = None
     id: int | None = None
 
 
@@ -55,3 +68,27 @@ class Delivery:
     delivered_at: datetime | None = None
     next_attempt_at: datetime | None = None
     last_error: str | None = None
+
+
+@dataclass
+class Capture:
+    """A captured message that needs (or needed) confirmation before acting (#117).
+
+    It holds the interpretation as validated actions in their JSON form, not as items: nothing
+    about it exists in `items` until it is confirmed, so the scheduler, lists and counts cannot
+    act on something nobody agreed to.
+    """
+
+    status: CaptureStatus
+    actions: str  # the proposed actions as a JSON list (maestro.actions.to_json of each)
+    source: str  # the channel it arrived on ("telegram", "twilio_sms", "api", "cli")
+    source_text: str  # the message as it arrived
+    created_at: datetime
+    expires_at: datetime  # unanswered past this moment means expired, never applied
+    address: str = ""  # who sent it on that channel (chat id, phone number); "" for cli/api
+    interpreter: str | None = None  # who read it ("rules" or "model", #116)
+    doubts: str = ""  # why the reading was unsure, comma-joined (maestro.confidence)
+    undo_until: datetime | None = None  # set when applied: take-backs are allowed until then
+    decided_at: datetime | None = None  # when it was applied, cancelled or undone
+    decided_via: str | None = None  # the interface that decided it
+    id: int | None = None

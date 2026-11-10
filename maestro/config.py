@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from maestro import captures
     from maestro.email_in import EmailSettings
     from maestro.model import ModelSettings
 
@@ -76,6 +77,10 @@ class Config:
     # The optional model interpreter (#115, ADR 0015). "rules" is the default and means no model is
     # ever contacted; a key on its own never turns one on. See maestro.interpret.
     interpreter: str = "rules"  # rules, auto (model only when the rules are unsure, #116) or model
+    # Confirm before acting on an unsure interpretation (#117). "never" is the default: captures
+    # are applied at once, exactly as before. "unsure" asks first in the channel used.
+    confirm: str = "never"  # never or unsure
+    confirm_hours: float = 24.0  # how long an unanswered confirmation waits before expiring
     model_provider: str = ""  # anthropic, openai or openai-compatible
     model: str = ""  # the model name, e.g. claude-sonnet-5-5; no default on purpose
     # MAESTRO_MODEL_API_KEY, else the provider's usual variable; never in a repr (#123)
@@ -135,6 +140,8 @@ class Config:
             log_format=(env.get("MAESTRO_LOG_FORMAT") or "text").lower(),
             log_level=(env.get("MAESTRO_LOG_LEVEL") or "INFO").upper(),
             interpreter=(env.get("MAESTRO_INTERPRETER") or "rules").strip().lower(),
+            confirm=(env.get("MAESTRO_CONFIRM") or "never").strip().lower(),
+            confirm_hours=float(_count(env, "MAESTRO_CONFIRM_HOURS", 24)),
             model_provider=(env.get("MAESTRO_MODEL_PROVIDER") or "").strip().lower(),
             model=(env.get("MAESTRO_MODEL") or "").strip(),
             # MAESTRO_MODEL_API_KEY wins; otherwise the provider's usual variable, so a key already
@@ -233,3 +240,20 @@ def email_settings(config: Config) -> "EmailSettings | None":
                          allowed_senders=frozenset(senders), folder=config.imap_folder,
                          require_dmarc=config.email_require_dmarc, authserv_id=config.email_authserv_id,
                          poll_seconds=config.email_poll_seconds)
+
+
+def confirmation(config: Config) -> "captures.Confirmation | None":
+    """The confirmation settings when `MAESTRO_CONFIRM=unsure`, else None (the default: apply at
+    once, as Maestro always has). Raises ValueError, as one sentence, on a bad setting (#117)."""
+    from maestro.captures import Confirmation
+
+    if config.confirm == "never":
+        return None
+    if config.confirm != "unsure":
+        raise ValueError(f"MAESTRO_CONFIRM must be never or unsure, not {config.confirm!r}")
+    if not 0 < config.confirm_hours <= 24 * 7:
+        raise ValueError("MAESTRO_CONFIRM_HOURS must be between 0 and 168 (a week): an unanswered "
+                         "question should expire, not queue up forever")
+    from datetime import timedelta
+
+    return Confirmation(ttl=timedelta(hours=config.confirm_hours))

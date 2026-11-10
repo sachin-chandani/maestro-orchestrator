@@ -82,6 +82,10 @@ class RulesInterpreter:
         _record(self.name, "ok", time.monotonic() - started)
         return read
 
+    def assessed(self, text: str, context: Context) -> tuple[list[Action], Confidence]:
+        """The actions with the confidence, for a channel that confirms unsure captures (#117)."""
+        return self.read(text, context)
+
     def read(self, text: str, context: Context) -> tuple[list[Action], Confidence]:
         """The actions, and how sure the rules are of them (`maestro.confidence`, #116)."""
         zone, now = context.moment()
@@ -145,6 +149,21 @@ class ModelInterpreter:
                                    started, fallback)
         _record(self.name, "ok", time.monotonic() - started)
         return read
+
+    def assessed(self, text: str, context: Context) -> tuple[list[Action], Confidence]:
+        """The model's actions with the rules' confidence about the text (#117). The confidence
+        always comes from the rules: a model grading itself could wave its own reading through,
+        and a forwarded email could talk it into doing so."""
+        reader = getattr(self.rules, "read", None)
+        if reader is None:  # an injected rules stand-in without confidence: never ask
+            return self.interpret(text, context), Confidence()
+        read, confidence = reader(text, context)
+
+        def fallback() -> list[Action]:
+            _record(getattr(self.rules, "name", "rules"), "ok", 0.0)
+            return read
+
+        return self.interpret(text, context, fallback=fallback), confidence
 
     def _fall_back(self, result: str, why: str, text: str, context: Context, started: float,
                    fallback: Callable[[], list[Action]] | None = None) -> list[Action]:
@@ -219,13 +238,17 @@ class AutoInterpreter:
     name = "auto"
 
     def interpret(self, text: str, context: Context) -> list[Action]:
+        return self.assessed(text, context)[0]
+
+    def assessed(self, text: str, context: Context) -> tuple[list[Action], Confidence]:
+        """The actions with the rules' confidence, for a channel that confirms (#117)."""
         started = time.monotonic()
         read, confidence = self.rules.read(text, context)
         rules_seconds = time.monotonic() - started
         if confidence.sure:
             _record(self.rules.name, "ok", rules_seconds)
             METRICS.inc("maestro_interpret_routed_total", route="rules")
-            return read
+            return read, confidence
 
         def fallback() -> list[Action]:
             # The rules' answer is used after all, so their work is counted exactly as a fallback
@@ -237,7 +260,7 @@ class AutoInterpreter:
         METRICS.inc("maestro_interpret_routed_total", route="model")
         # Why, never what: the doubts are fixed names, and the text stays out of the log.
         log.debug("Rules unsure (%s); asking the model", ", ".join(confidence.doubts))
-        return self.model.interpret(text, context, fallback=fallback)
+        return self.model.interpret(text, context, fallback=fallback), confidence
 
 
 DEFAULT = RulesInterpreter()
@@ -247,6 +270,20 @@ def interpret(text: str, context: Context | None = None,
               interpreter: Interpreter | None = None) -> list[Action]:
     """The actions a captured message asks for. Uses the rules unless given another interpreter."""
     return (interpreter or DEFAULT).interpret(text, context or Context())
+
+
+def interpret_assessed(text: str, context: Context | None = None,
+                       interpreter: Interpreter | None = None) -> tuple[list[Action], Confidence]:
+    """The actions plus the rules' confidence, for a channel that confirms unsure captures (#117).
+
+    An interpreter that doesn't report confidence (anything injected that only satisfies the
+    protocol) is taken at its word: its captures are never held for confirmation.
+    """
+    chosen = interpreter or DEFAULT
+    assessed = getattr(chosen, "assessed", None)
+    if assessed is None:
+        return chosen.interpret(text, context or Context()), Confidence()
+    return assessed(text, context or Context())
 
 
 def build_interpreter(config: "Any", transport: Any = None) -> Interpreter:

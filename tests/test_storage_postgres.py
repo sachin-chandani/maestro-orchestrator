@@ -131,6 +131,7 @@ def test_migrating_from_the_schema_before_tasks_keeps_every_note_a_note(fresh):
     with open_store(pgsupport.URL, tz=TZ) as store:  # migrate fully, then wind the schema back
         store.conn.execute("DROP INDEX IF EXISTS idx_items_kind")
         store.conn.execute("ALTER TABLE items DROP COLUMN interpreter")  # added later, by #116
+        store.conn.execute("ALTER TABLE items DROP COLUMN capture_id")  # added later, by #117
         store.conn.execute("UPDATE schema_version SET version = %s", (before,))
         # Rows as a schema-2 Maestro wrote them, so in the columns it had.
         for text, kind, due in [("Renew the passport", "note", None),
@@ -159,6 +160,7 @@ def test_migrating_from_the_schema_before_the_interpreter_was_recorded(fresh):
     `test_auto_interpreter.py`."""
     with open_store(pgsupport.URL, tz=TZ) as store:  # migrate fully, then wind the schema back
         store.conn.execute("ALTER TABLE items DROP COLUMN interpreter")
+        store.conn.execute("ALTER TABLE items DROP COLUMN capture_id")  # added later, by #117
         store.conn.execute("UPDATE schema_version SET version = 3")
         # Rows as a schema-3 Maestro wrote them, so in the columns it had.
         store.conn.execute(
@@ -168,13 +170,43 @@ def test_migrating_from_the_schema_before_the_interpreter_was_recorded(fresh):
             " 'renew the passport', NULL, false)", (LATER, NOW, NOW))
 
     with open_store(pgsupport.URL, tz=TZ) as store:
-        assert store.schema_version == len(MIGRATIONS) == 4
+        assert store.schema_version == len(MIGRATIONS) == 5
         old_reminder, old_task = store.list()
         assert (old_reminder.text, old_reminder.channels, old_reminder.urgent, old_reminder.interpreter) \
             == ("Call mom", ["twilio_sms"], True, None)
         assert (old_task.kind, old_task.interpreter) == (Kind.TASK, None)
         added = store.add(Item(text="Milk", kind=Kind.NOTE, created_at=NOW, interpreter="model"))
         assert store.get(added.id).interpreter == "model"
+
+
+def test_migrating_from_the_schema_before_confirmations(fresh):
+    """Schema 4 is the release before #117. Its items come through with no capture to undo, and
+    the new table works afterwards. Mirrors the SQLite test in `test_confirmation.py`."""
+    from datetime import timedelta
+
+    from maestro.models import Capture, CaptureStatus
+
+    with open_store(pgsupport.URL, tz=TZ) as store:  # migrate fully, then wind the schema back
+        store.conn.execute("DROP TABLE captures")
+        store.conn.execute("ALTER TABLE items DROP COLUMN capture_id")
+        store.conn.execute("UPDATE schema_version SET version = 4")
+        # A row as a schema-4 Maestro wrote it, so in the columns it had.
+        store.conn.execute(
+            "INSERT INTO items (text, kind, status, due_at, created_at, source_text, channels,"
+            " urgent, interpreter) VALUES ('Call mom', 'reminder', 'pending', %s, %s,"
+            " 'call mom tomorrow at 5pm', NULL, false, 'rules')", (LATER, NOW))
+
+    with open_store(pgsupport.URL, tz=TZ) as store:
+        assert store.schema_version == len(MIGRATIONS) == 5
+        (item,) = store.list()
+        assert (item.text, item.interpreter, item.capture_id) == ("Call mom", "rules", None)
+        proposal, created = store.add_capture(Capture(
+            status=CaptureStatus.PENDING, actions="[]", source="cli", source_text="x",
+            created_at=NOW, expires_at=NOW + timedelta(hours=24)))
+        assert created and store.confirm_capture(proposal.id, "cli", NOW,
+                                                 NOW + timedelta(minutes=10))
+        store.link_capture(proposal.id, [item.id])
+        assert store.get(item.id).capture_id == proposal.id
 
 
 def test_tasks_are_listed_after_reminders_and_before_notes(store):
@@ -481,6 +513,7 @@ def test_migrates_a_version_1_database_with_real_rows(store):
     store.conn.execute("ALTER TABLE items DROP COLUMN channels")
     store.conn.execute("ALTER TABLE items DROP COLUMN urgent")
     store.conn.execute("ALTER TABLE items DROP COLUMN IF EXISTS interpreter")  # #116
+    store.conn.execute("ALTER TABLE items DROP COLUMN IF EXISTS capture_id")  # #117
     store.conn.execute(
         "INSERT INTO items (text, kind, status, due_at, created_at, source_text)"
         " VALUES ('!take insulin', 'reminder', 'pending', %s, %s, '!take insulin at 11pm')",
