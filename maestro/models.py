@@ -32,6 +32,9 @@ class Item:
     # Urgent reminders ignore quiet hours. None means the item predates the flag (schema 9 / ADR 0011):
     # urgency is then read from the text, as it was before. New items always carry an explicit value.
     urgent: bool | None = None
+    # Which interpreter read this from the capture: "rules" or "model" (#116). None means the item
+    # predates the column, or was saved directly rather than from a capture.
+    interpreter: str | None = None
     id: int | None = None
 
 

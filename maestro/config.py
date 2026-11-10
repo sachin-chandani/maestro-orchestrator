@@ -75,10 +75,11 @@ class Config:
 
     # The optional model interpreter (#115, ADR 0015). "rules" is the default and means no model is
     # ever contacted; a key on its own never turns one on. See maestro.interpret.
-    interpreter: str = "rules"  # rules or model
+    interpreter: str = "rules"  # rules, auto (model only when the rules are unsure, #116) or model
     model_provider: str = ""  # anthropic, openai or openai-compatible
     model: str = ""  # the model name, e.g. claude-sonnet-5-5; no default on purpose
-    model_api_key: str | None = None  # MAESTRO_MODEL_API_KEY, else the provider's usual variable
+    # MAESTRO_MODEL_API_KEY, else the provider's usual variable; never in a repr (#123)
+    model_api_key: str | None = field(default=None, repr=False)
     model_base_url: str | None = None  # required for openai-compatible (Ollama, LM Studio, vLLM)
     model_timeout_seconds: float = 8.0
 
@@ -173,7 +174,8 @@ class Config:
 
 
 def model_settings(config: Config) -> "ModelSettings | None":
-    """The model settings when `MAESTRO_INTERPRETER=model`, else None (the default: rules only).
+    """The model settings when `MAESTRO_INTERPRETER` is model or auto, else None (the default:
+    rules only).
 
     Raises ValueError, as one sentence an operator can act on, when the model is asked for but
     isn't fully configured. A key on its own never turns the model on.
@@ -182,16 +184,17 @@ def model_settings(config: Config) -> "ModelSettings | None":
 
     if config.interpreter == "rules":
         return None
-    if config.interpreter != "model":
-        raise ValueError(f"MAESTRO_INTERPRETER must be rules or model, not {config.interpreter!r}")
+    if config.interpreter not in ("model", "auto"):
+        raise ValueError(f"MAESTRO_INTERPRETER must be rules, auto or model, not {config.interpreter!r}")
     if not config.model_provider:
-        raise ValueError("MAESTRO_INTERPRETER=model needs MAESTRO_MODEL_PROVIDER: "
+        raise ValueError(f"MAESTRO_INTERPRETER={config.interpreter} needs MAESTRO_MODEL_PROVIDER: "
                          f"{', '.join(PROVIDERS)}. Maestro won't pick who sees your captures for you")
     if config.model_provider not in PROVIDERS:
         raise ValueError(f"Unknown MAESTRO_MODEL_PROVIDER {config.model_provider!r}; "
                          f"expected one of {', '.join(PROVIDERS)}")
     if not config.model:
-        raise ValueError("MAESTRO_INTERPRETER=model needs MAESTRO_MODEL: there is no default model "
+        raise ValueError(f"MAESTRO_INTERPRETER={config.interpreter} needs MAESTRO_MODEL: there is no "
+                         "default model "
                          "name (e.g. MAESTRO_MODEL=claude-sonnet-5-5)")
     if not 1 <= config.model_timeout_seconds <= 120:
         raise ValueError("MAESTRO_MODEL_TIMEOUT_SECONDS must be between 1 and 120 "

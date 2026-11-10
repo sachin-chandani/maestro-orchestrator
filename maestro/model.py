@@ -21,7 +21,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Protocol
 
@@ -68,7 +68,7 @@ class ModelSettings:
 
     provider: str
     model: str
-    api_key: str | None = None
+    api_key: str | None = field(default=None, repr=False)  # never in a repr (#123)
     base_url: str | None = None
     timeout: float = DEFAULT_TIMEOUT
 

@@ -117,6 +117,9 @@ class ItemOut(BaseModel):
     when: str  # human-readable, in the server's timezone: "Wed 28 Oct 17:00, every Monday" or "note"
     awaiting_acknowledgement: bool  # delivered, and nobody has said done or snooze yet
     source_text: str
+    # Which interpreter read the capture: "rules" or "model" (#116); null on items from before it
+    # was recorded, or saved without a capture.
+    interpreter: str | None = None
 
     @classmethod
     def of(cls, item: Item, awaiting: frozenset[int] = frozenset()) -> "ItemOut":
@@ -131,6 +134,7 @@ class ItemOut(BaseModel):
             when=commands.when(item),
             awaiting_acknowledgement=item.id in awaiting,
             source_text=item.source_text,
+            interpreter=item.interpreter,
         )
 
 

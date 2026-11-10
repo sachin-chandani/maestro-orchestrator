@@ -127,15 +127,19 @@ def test_migrating_from_the_schema_before_tasks_keeps_every_note_a_note(fresh):
     """Schema 2 is 0.4, which has no idea tasks exist (#114). Its rows keep the kind they were
     written with — nothing is reclassified behind the user's back — and the new kind works
     afterwards. Mirrors the SQLite test in `test_tasks.py`."""
-    before = len(MIGRATIONS) - 1
+    before = 2
     with open_store(pgsupport.URL, tz=TZ) as store:  # migrate fully, then wind the schema back
         store.conn.execute("DROP INDEX IF EXISTS idx_items_kind")
+        store.conn.execute("ALTER TABLE items DROP COLUMN interpreter")  # added later, by #116
         store.conn.execute("UPDATE schema_version SET version = %s", (before,))
-        store.add(Item(text="Renew the passport", kind=Kind.NOTE, created_at=NOW,
-                       source_text="renew the passport"))
-        store.add(Item(text="The gate code is 4321", kind=Kind.NOTE, created_at=NOW,
-                       source_text="the gate code is 4321"))
-        reminder(store, text="Call mom", due=LATER)
+        # Rows as a schema-2 Maestro wrote them, so in the columns it had.
+        for text, kind, due in [("Renew the passport", "note", None),
+                                ("The gate code is 4321", "note", None),
+                                ("Call mom", "reminder", LATER)]:
+            store.conn.execute(
+                "INSERT INTO items (text, kind, status, due_at, created_at, source_text, channels,"
+                " urgent) VALUES (%s, %s, 'pending', %s, %s, %s, NULL, false)",
+                (text, kind, due, NOW, text.lower()))
 
     with open_store(pgsupport.URL, tz=TZ) as store:
         assert store.schema_version == len(MIGRATIONS)
@@ -147,6 +151,30 @@ def test_migrating_from_the_schema_before_tasks_keeps_every_note_a_note(fresh):
         task = store.add(Item(text="Buy milk", kind=Kind.TASK, created_at=NOW))
         assert store.get(task.id).kind is Kind.TASK
         assert store.counts()[(Kind.TASK, Status.PENDING)] == 1
+
+
+def test_migrating_from_the_schema_before_the_interpreter_was_recorded(fresh):
+    """Schema 3 is the release before #116. Its rows come through untouched with no interpreter —
+    not guessed as "rules" — and rows saved afterwards record theirs. Mirrors the SQLite test in
+    `test_auto_interpreter.py`."""
+    with open_store(pgsupport.URL, tz=TZ) as store:  # migrate fully, then wind the schema back
+        store.conn.execute("ALTER TABLE items DROP COLUMN interpreter")
+        store.conn.execute("UPDATE schema_version SET version = 3")
+        # Rows as a schema-3 Maestro wrote them, so in the columns it had.
+        store.conn.execute(
+            "INSERT INTO items (text, kind, status, due_at, created_at, source_text, channels, urgent)"
+            " VALUES ('Call mom', 'reminder', 'pending', %s, %s, 'call mom tomorrow at 5pm',"
+            " 'twilio_sms', true), ('Renew the passport', 'task', 'pending', NULL, %s,"
+            " 'renew the passport', NULL, false)", (LATER, NOW, NOW))
+
+    with open_store(pgsupport.URL, tz=TZ) as store:
+        assert store.schema_version == len(MIGRATIONS) == 4
+        old_reminder, old_task = store.list()
+        assert (old_reminder.text, old_reminder.channels, old_reminder.urgent, old_reminder.interpreter) \
+            == ("Call mom", ["twilio_sms"], True, None)
+        assert (old_task.kind, old_task.interpreter) == (Kind.TASK, None)
+        added = store.add(Item(text="Milk", kind=Kind.NOTE, created_at=NOW, interpreter="model"))
+        assert store.get(added.id).interpreter == "model"
 
 
 def test_tasks_are_listed_after_reminders_and_before_notes(store):
@@ -452,6 +480,7 @@ def test_migrates_a_version_1_database_with_real_rows(store):
     before it, with rows in place; see ADR 0011 for the NULL semantics."""
     store.conn.execute("ALTER TABLE items DROP COLUMN channels")
     store.conn.execute("ALTER TABLE items DROP COLUMN urgent")
+    store.conn.execute("ALTER TABLE items DROP COLUMN IF EXISTS interpreter")  # #116
     store.conn.execute(
         "INSERT INTO items (text, kind, status, due_at, created_at, source_text)"
         " VALUES ('!take insulin', 'reminder', 'pending', %s, %s, '!take insulin at 11pm')",

@@ -157,7 +157,7 @@ def _interpreter(config: Config, check_model: bool) -> list[Check]:
         return [Check(FAIL, "interpreter", str(e))]
     if settings is None:
         return [Check(OK, "interpreter", "rules (offline; no model is contacted). "
-                                         "Set MAESTRO_INTERPRETER=model to use a language model")]
+                                         "Set MAESTRO_INTERPRETER=auto or model to use a language model")]
     try:
         # Building it is what catches a missing key, so it happens here rather than at the first
         # capture: `maestro doctor` is meant to find this before a deploy, not after one.
@@ -166,10 +166,14 @@ def _interpreter(config: Config, check_model: bool) -> list[Check]:
         return [Check(FAIL, "interpreter", str(e))]
 
     where = settings.base_url or f"the {settings.provider} API"
-    checks = [Check(OK, "interpreter", f"model {settings.model} via {settings.provider} at {where}, "
-                                       f"timeout {settings.timeout:g}s; the rules answer if it fails")]
+    auto = config.interpreter == "auto"
+    when = "the rules, and when they are unsure " if auto else ""
+    checks = [Check(OK, "interpreter", f"{config.interpreter}: {when}model {settings.model} via "
+                                       f"{settings.provider} at {where}, timeout {settings.timeout:g}s; "
+                                       "the rules answer if it fails")]
+    which = "every capture the rules are unsure of" if auto else "every capture"
     if settings.sends_text_off_this_server:
-        checks.append(Check(WARN, "model privacy", "the text of every capture is sent to "
+        checks.append(Check(WARN, "model privacy", f"the text of {which} is sent to "
                                                    f"{settings.provider}. Nothing else leaves this "
                                                    "server, and an OpenAI-compatible model on your "
                                                    "own network keeps captures in"))
@@ -304,7 +308,7 @@ def run(config: Config, send_test: bool = False, out: Callable[[str], None] = pr
     hints = []
     if not send_test:
         hints.append("Run with --send-test to deliver a test message on each channel.")
-    if config.interpreter == "model" and not check_model:
+    if config.interpreter in ("model", "auto") and not check_model:
         hints.append("Run with --check-model to send one test phrase to the model provider.")
     hint = "".join(f" {h}" for h in hints)
     out("")

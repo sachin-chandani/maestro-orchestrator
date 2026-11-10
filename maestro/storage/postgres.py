@@ -108,6 +108,11 @@ MIGRATIONS: list[list[str]] = [
     [
         "CREATE INDEX IF NOT EXISTS idx_items_kind ON items (kind, status)",
     ],
+    # 4: which interpreter read each capture (#116), matching SQLite's migration 11. Nullable:
+    # existing rows weren't recorded, and NULL says "not known" rather than guessing "rules".
+    [
+        "ALTER TABLE items ADD COLUMN interpreter TEXT",
+    ],
 ]
 
 
@@ -255,11 +260,12 @@ class PostgresStore(Store):
             snoozed_until=self._from_db(row["snoozed_until"]),
             channels=row["channels"].split(",") if row["channels"] else None,
             urgent=row["urgent"],
+            interpreter=row["interpreter"],
         )
 
     _INSERT_ITEM = (
         "INSERT INTO items (text, kind, status, due_at, created_at, source_text, recurrence,"
-        " channels, urgent) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id"
+        " channels, urgent, interpreter) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id"
     )
 
     def _insert(self, item: Item) -> int:
@@ -267,7 +273,7 @@ class PostgresStore(Store):
             self._INSERT_ITEM,
             (item.text, str(item.kind), str(item.status), self._to_db(item.due_at),
              self._to_db(item.created_at), item.source_text, item.recurrence,
-             ",".join(item.channels) if item.channels else None, item.urgent),
+             ",".join(item.channels) if item.channels else None, item.urgent, item.interpreter),
         ).fetchone()
         assert row is not None  # RETURNING always yields a row
         return int(row["id"])

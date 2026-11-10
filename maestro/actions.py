@@ -17,6 +17,7 @@ from typing import Any, ClassVar
 from maestro import commands, recurrence
 from maestro.models import Item, Kind
 from maestro.notifier import apply_channel_choice
+from maestro.observability import shown
 from maestro.parser import DURATION_UNITS, parse_duration
 from maestro.storage import Store
 from maestro.tz import get_timezone
@@ -69,7 +70,7 @@ def _as_moment(name: str, value: Any) -> datetime | None:
         try:
             moment = datetime.fromisoformat(value)
         except ValueError:
-            raise ValueError(f"{name} must be an ISO 8601 timestamp, not {value!r}") from None
+            raise ValueError(f"{name} must be an ISO 8601 timestamp, not {shown(value)}") from None
     if moment.tzinfo is None:
         raise ValueError(f"{name} must say which timezone it is in")
     return moment
@@ -91,6 +92,22 @@ def _as_channels(name: str, value: Any) -> list[str] | None:
     return list(value) or None
 
 
+# Which interpreter read a capture (#116). Recorded by the interpreter itself, never taken from JSON.
+INTERPRETERS = ("rules", "model")
+
+
+def _as_interpreter(name: str, value: Any) -> str | None:
+    if value is not None and value not in INTERPRETERS:
+        raise ValueError(f"{name} must be one of {', '.join(INTERPRETERS)}")
+    return value
+
+
+# Fields an interpreter fills in about itself. They aren't part of an action's JSON form: they are
+# left out of the schema a model is shown, refused by `from_json`, and omitted by `to_json`, so
+# nothing outside Maestro — a model, an API body — can claim to be the rules.
+INTERNAL_FIELDS = frozenset({"interpreter"})
+
+
 FIELD_TYPES: dict[str, Callable[[str, Any], Any]] = {
     "text": _as_text,
     "source_text": _as_raw_text,
@@ -101,6 +118,7 @@ FIELD_TYPES: dict[str, Callable[[str, Any], Any]] = {
     "urgent": _as_bool,
     "item_id": _as_item_id,
     "duration": _as_optional_text,
+    "interpreter": _as_interpreter,
 }
 
 
@@ -159,7 +177,7 @@ class Action:
         data: dict[str, Any] = {"type": self.TYPE}
         for f in fields(self):
             value = getattr(self, f.name)
-            if value == f.default:
+            if value == f.default or f.name in INTERNAL_FIELDS:
                 continue
             if isinstance(value, datetime):
                 value = value.isoformat()
@@ -178,6 +196,7 @@ class _Create(Action):
     channels: list[str] | None = None  # None means the configured default channels
     urgent: bool = False
     created_at: datetime | None = None  # when the capture happened; apply fills it in when absent
+    interpreter: str | None = None  # "rules" or "model", set by the interpreter that read it (#116)
 
     def _item(self, kind: Kind, now: datetime | None, **extra: Any) -> Item:
         return Item(
@@ -187,6 +206,7 @@ class _Create(Action):
             source_text=self.source_text,
             channels=list(self.channels) if self.channels else None,
             urgent=self.urgent,
+            interpreter=self.interpreter,
             **extra,
         )
 
@@ -278,6 +298,8 @@ def action_schema(cls: type[Action]) -> dict[str, Any]:
     properties: dict[str, Any] = {"type": {"const": cls.TYPE}}
     required = ["type"]
     for f in fields(cls):
+        if f.name in INTERNAL_FIELDS:
+            continue
         properties[f.name] = dict(FIELD_SCHEMAS[f.name])
         if f.default is MISSING or f.name in cls.REQUIRED:
             required.append(f.name)
@@ -309,11 +331,12 @@ def from_json(data: Any) -> Action:
     tag = data.get("type")
     if tag not in BY_TYPE:
         known = ", ".join(sorted(BY_TYPE))
-        raise ValueError(f"Unknown action type {tag!r}; expected one of {known}")
+        raise ValueError(f"Unknown action type {shown(tag)}; expected one of {known}")
     cls = BY_TYPE[tag]
-    known_fields = {f.name for f in fields(cls)}
+    known_fields = {f.name for f in fields(cls)} - INTERNAL_FIELDS
     if unknown := set(data) - known_fields - {"type"}:
-        raise ValueError(f"{tag} has no field {', '.join(sorted(unknown))}")
+        names = ", ".join(shown(name, quoted=False) for name in sorted(unknown)[:5])
+        raise ValueError(f"{tag} has no field {names}")
     # The values are checked and read by __post_init__, so JSON and Python go through one gate.
     try:
         return cls(**{name: value for name, value in data.items() if name != "type"})

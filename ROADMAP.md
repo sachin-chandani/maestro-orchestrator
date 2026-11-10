@@ -132,7 +132,7 @@ Exit criteria: a new phone goes from scanning a pairing code to its first push n
 - [x] Capture produces actions: one interpret step and one apply step for every channel (#113)
 - [x] Tasks: a third kind between reminders and notes (#114)
 - [x] Optional language-model interpreter with your own key, off by default (#115)
-- [ ] Ask the model only when the rules are unsure (#116)
+- [x] Ask the model only when the rules are unsure (#116)
 - [ ] Confirm unsure interpretations, with undo (#117)
 - [ ] Propose reminders from forwarded emails (#118)
 - [ ] Tracks: organise information you want to keep (#119)

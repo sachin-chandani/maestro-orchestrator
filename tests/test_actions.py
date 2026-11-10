@@ -128,7 +128,9 @@ def actions_for(text):
 ])
 def test_interpreting_keeps_exactly_what_the_parser_found(text):
     (action,) = actions_for(text)
-    assert action.to_item() == parse(text, now=NOW, tz=TZ)
+    expected = parse(text, now=NOW, tz=TZ)
+    expected.interpreter = "rules"  # the one thing the interpreter adds: who read it (#116)
+    assert action.to_item() == expected
 
 
 def test_the_whole_corpus_survives_the_round_trip():
@@ -325,7 +327,7 @@ def test_the_dedupe_namespace_is_the_source_it_was_given(store):
 
 def test_every_json_type_has_a_schema_and_every_schema_a_type():
     """The two tables describe the same fields: what a model is told and what is enforced."""
-    assert set(actions.FIELD_SCHEMAS) == set(actions.FIELD_TYPES)
+    assert set(actions.FIELD_SCHEMAS) == set(actions.FIELD_TYPES) - actions.INTERNAL_FIELDS
 
 
 def test_the_schema_is_derived_from_the_actions():
@@ -336,7 +338,8 @@ def test_the_schema_is_derived_from_the_actions():
     assert set(by_type) == set(actions.BY_TYPE)
     for cls in actions.ACTIONS:
         entry = by_type[cls.TYPE]
-        assert set(entry["properties"]) == {"type", *(f.name for f in fields(cls))}
+        assert set(entry["properties"]) == {"type", *(f.name for f in fields(cls)
+                                                      if f.name not in actions.INTERNAL_FIELDS)}
         assert entry["additionalProperties"] is False
         assert entry["description"]  # the docstring's first line
 

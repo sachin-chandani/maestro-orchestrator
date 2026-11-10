@@ -43,7 +43,7 @@ if TYPE_CHECKING:
     from maestro.telegram import TelegramBot
 
 
-def _format(item: Item) -> str:
+def _format(item: Item, verbose: bool = False) -> str:
     next_time = item.snoozed_until or item.due_at  # a snoozed occurrence goes out before the series' next
     when = next_time.strftime("%a %d %b %H:%M") if next_time else "—"
     tag = commands.KIND_ICONS.get(item.kind, "📝")
@@ -51,19 +51,22 @@ def _format(item: Item) -> str:
     repeat = f" ({recurrence.describe(item.recurrence)})" if item.recurrence else ""
     via = f" [via {', '.join(item.channels)}]" if item.channels else ""
     status = "" if item.status == Status.PENDING else f" [{item.status}]"
-    return f"{item.id:>4}  {tag} {when:<16}  {urgent}{item.text}{repeat}{via}{status}"
+    line = f"{item.id:>4}  {tag} {when:<16}  {urgent}{item.text}{repeat}{via}{status}"
+    if verbose:  # which interpreter read it (#116); items from before it was recorded say so
+        line += f"\n{'':>6}read by {item.interpreter or 'unknown (saved before this was recorded)'}"
+    return line
 
 
 # Reminders, then tasks, then notes: `store.list` already returns them in this order (#114).
 _GROUPS = ((Kind.REMINDER, "Reminders"), (Kind.TASK, "Tasks"), (Kind.NOTE, "Notes"))
 
 
-def _grouped(items: list[Item]) -> str:
+def _grouped(items: list[Item], verbose: bool = False) -> str:
     """The list under one heading per kind, so tasks are their own section and not lost among
     notes. A kind nobody has captured gets no heading."""
     sections = []
     for kind, title in _GROUPS:
-        if lines := [_format(i) for i in items if i.kind == kind]:
+        if lines := [_format(i, verbose) for i in items if i.kind == kind]:
             sections.append("\n".join([title, *lines]))
     return "\n\n".join(sections)
 
@@ -79,6 +82,8 @@ def _build_parser(config: Config) -> argparse.ArgumentParser:
 
     ls = sub.add_parser("list", help="show reminders and notes")
     ls.add_argument("--all", action="store_true", help="include completed items")
+    ls.add_argument("--verbose", "-v", action="store_true",
+                    help="also show which interpreter read each item (rules or model)")
 
     search = sub.add_parser("search", help="find items by text")
     search.add_argument("query")
@@ -178,7 +183,7 @@ def _dispatch(args: argparse.Namespace, config: Config, store: Store, tz: ZoneIn
             print(f"Saved: {_format(result.saved).strip()}")
     elif args.command == "list":
         items = store.list(include_done=args.all)
-        print(_grouped(items) if items else "Nothing to remember yet.")
+        print(_grouped(items, args.verbose) if items else "Nothing to remember yet.")
     elif args.command == "search":
         items = store.search(args.query)
         print("\n".join(map(_format, items)) if items else "No matches.")

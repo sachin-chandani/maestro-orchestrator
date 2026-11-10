@@ -18,6 +18,7 @@ import calendar
 import re
 from datetime import date, datetime, time, timedelta
 
+from maestro.observability import shown
 from maestro.tz import add_elapsed
 
 WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
@@ -166,7 +167,7 @@ def validate(rule: str) -> str:
     """Return `rule` if it is a rule the scheduler can follow, else raise ValueError. The forms are
     daily, weekdays, weekly:<0-6>, interval:<minutes>, days:<n>, weeks:<n>:<0-6> and monthly:<1-31>."""
     if not _RULE_RE.match(rule):
-        raise ValueError(f"{rule!r} is not a recurrence rule; expected a form such as daily, weekly:0, "
+        raise ValueError(f"{shown(rule)} is not a recurrence rule; expected a form such as daily, weekly:0, "
                          "interval:120, days:3, weeks:2:4 or monthly:1")
     return rule
 

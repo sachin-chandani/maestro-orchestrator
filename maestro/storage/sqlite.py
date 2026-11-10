@@ -144,6 +144,11 @@ MIGRATIONS: list[Migration] = [
     [
         "CREATE INDEX IF NOT EXISTS idx_items_kind ON items (kind, status)",
     ],
+    # 11: which interpreter read each capture, "rules" or "model" (#116). Nullable on purpose:
+    # existing rows weren't recorded, and NULL says "not known" rather than guessing "rules".
+    [
+        "ALTER TABLE items ADD COLUMN interpreter TEXT",
+    ],
 ]
 
 
@@ -272,6 +277,7 @@ class SQLiteStore(Store):
             snoozed_until=self._from_db(row["snoozed_until"]),
             channels=row["channels"].split(",") if row["channels"] else None,
             urgent=None if row["urgent"] is None else bool(row["urgent"]),
+            interpreter=row["interpreter"],
         )
 
     @property
@@ -286,11 +292,11 @@ class SQLiteStore(Store):
         with self._transaction():
             cur = self.conn.execute(
                 "INSERT INTO items (text, kind, status, due_at, created_at, source_text, recurrence,"
-                " channels, urgent) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " channels, urgent, interpreter) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (item.text, item.kind, item.status, self._to_db(item.due_at),
                  self._to_db(item.created_at), item.source_text, item.recurrence,
                  ",".join(item.channels) if item.channels else None,
-                 None if item.urgent is None else int(item.urgent)),
+                 None if item.urgent is None else int(item.urgent), item.interpreter),
             )
         item.id = cur.lastrowid
         return item
@@ -307,11 +313,11 @@ class SQLiteStore(Store):
                     return self._item(existing), False
             cur = self.conn.execute(
                 "INSERT INTO items (text, kind, status, due_at, created_at, source_text, recurrence,"
-                " channels, urgent) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " channels, urgent, interpreter) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (item.text, item.kind, item.status, self._to_db(item.due_at),
                  self._to_db(item.created_at), item.source_text, item.recurrence,
                  ",".join(item.channels) if item.channels else None,
-                 None if item.urgent is None else int(item.urgent)),
+                 None if item.urgent is None else int(item.urgent), item.interpreter),
             )
             item.id = cur.lastrowid
             self.conn.execute(

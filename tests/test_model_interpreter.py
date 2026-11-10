@@ -255,6 +255,48 @@ def test_a_fallback_never_logs_the_message_or_the_key(caplog):
     assert "36 characters" in logged and "HTTP 401" in logged  # the shape and the reason, not the text
 
 
+
+# --- #123: what a model chose never reaches the log at length -------------------------------------
+
+LONG = "secret-" + "x" * 10_000
+
+
+@pytest.mark.parametrize("reply", [
+    [{"type": LONG}],                                               # the action type
+    [reminder(channels=["sms\nWARNING forged log line " + LONG])],  # a channel
+    [reminder(due=LONG)],                                           # an unreadable timestamp
+    [reminder(recurrence=LONG)],                                    # a recurrence rule
+    [{"type": "create_note", "text": "x", LONG: 1}],                # a field name
+], ids=["type", "channel", "due_at", "recurrence", "field"])
+def test_a_long_model_chosen_value_is_cut_short_in_the_fallback_log(caplog, reply):
+    with caplog.at_level(logging.DEBUG):
+        read = model(reply).interpret("dentist tomorrow at 3pm", CONTEXT)
+    assert read == RulesInterpreter().interpret("dentist tomorrow at 3pm", CONTEXT)  # still answered
+    (record,) = [r for r in caplog.records if "fell back" in r.getMessage()]
+    logged = record.getMessage()
+    assert "secret-xxx" in logged or "sms" in logged  # still says what was wrong
+    assert "x" * 50 not in logged
+    assert "\n" not in logged and "\\n" not in logged
+    assert len(logged) < 400
+
+
+def test_a_long_reason_of_any_kind_is_capped_as_a_backstop(caplog):
+    with caplog.at_level(logging.DEBUG):
+        model(ProviderError("http", "line one\nline two " + "y" * 10_000)).interpret("x", CONTEXT)
+    (logged,) = [r.getMessage() for r in caplog.records if "fell back" in r.getMessage()]
+    assert "line one line two" in logged and "y" * 400 not in logged and "\n" not in logged
+
+
+def test_the_model_key_is_not_in_the_config_or_settings_repr():
+    config = Config.from_env({"MAESTRO_INTERPRETER": "model", "MAESTRO_MODEL_PROVIDER": "openai",
+                              "MAESTRO_MODEL": "m", "MAESTRO_MODEL_API_KEY": KEY})
+    assert config.model_api_key == KEY  # still there to use
+    assert KEY not in repr(config) and KEY not in str(config)
+    settings = model_settings(config)
+    assert settings is not None and settings.api_key == KEY
+    assert KEY not in repr(settings)
+
+
 # --- configuration -----------------------------------------------------------------------------
 
 
@@ -277,7 +319,7 @@ def test_the_explicit_key_wins_over_the_providers_variable():
 
 
 @pytest.mark.parametrize("env, message", [
-    ({"MAESTRO_INTERPRETER": "maybe"}, "must be rules or model"),
+    ({"MAESTRO_INTERPRETER": "maybe"}, "must be rules, auto or model"),
     ({"MAESTRO_INTERPRETER": "model"}, "needs MAESTRO_MODEL_PROVIDER"),
     ({"MAESTRO_INTERPRETER": "model", "MAESTRO_MODEL_PROVIDER": "gemini"},
      "Unknown MAESTRO_MODEL_PROVIDER"),

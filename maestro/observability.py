@@ -12,6 +12,24 @@ from collections import defaultdict
 from datetime import UTC, datetime
 
 LOG_FORMATS = ("text", "json")
+# How much of an untrusted value an error or log line may quote (#123).
+SHOWN_LENGTH = 40
+
+
+def shown(value: object, limit: int = SHOWN_LENGTH, quoted: bool = True) -> str:
+    """`value` as a short, single-line repr, safe to put in an error that may be logged (#123).
+
+    A model, or an email steering one, chooses some of the values Maestro quotes back in errors.
+    Cutting them to `limit` characters and dropping line breaks keeps a whole message, or a forged
+    log line, out of the log while still saying what was wrong. `quoted=False` shows a string as
+    itself, for messages that never quoted it.
+    """
+    if quoted or not isinstance(value, str):
+        text = repr(value).replace("\\n", " ").replace("\\r", " ")
+    else:
+        text = value
+    text = " ".join(text.split())
+    return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
 class JsonFormatter(logging.Formatter):

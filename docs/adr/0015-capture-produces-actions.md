@@ -21,3 +21,8 @@ Every capture path calls the rule-based `parse()` and saves one item. That is fa
 - Self-hosting stays the default and the selling point. Using a hosted provider is an explicit choice, and `maestro doctor` tells the user plainly what leaves the server.
 - Tests never call a model. Provider responses are recorded fakes behind an injectable transport (ADR 0002).
 - The parser corpus remains the measure of the rules. Model behaviour is covered by schema validation and fallback tests, not by grading models.
+
+## Addendum: when to ask the model (#116)
+- **`auto` asks the model only when the rules show evidence of a misreading.** `maestro.confidence` names fixed doubts (a time left in the saved text, a time word without its time, a time the rules can't read, a second request, several sentences, a forwarded message, dictation filler). There is no length limit or score. The measure is correctness: on the parser corpus, no phrase the rules misread may be marked sure (`tests/test_auto_interpreter.py`). A new doubt has to keep that true and not send ordinary captures away.
+- **A failed model costs nothing.** In `auto`, the rules' answer, computed before the model was asked, is the fallback for any failure, including an unexpected exception.
+- **Each item records who read it**, `rules` or `model`, as the interpreter that actually produced it. A model call that fell back is recorded as `rules`. Items from before the column have NULL, meaning unknown, never guessed. Only an interpreter sets it: the field isn't in an action's JSON form, so a model or an API body can't claim it.
