@@ -105,27 +105,23 @@ Exit criteria: capture from every source above, parser corpus >= 95%, exactly-on
 
 Exit criteria: escalation proven end to end with fakes, acknowledgements on every channel, backups restorable, a third-party channel installable without core changes.
 
-## v0.5: Web UI and companion apps (target Dec 13, 2026)
+## v0.5: The phone app (target Dec 13, 2026)
+Say it once and it's on your list. Design: `docs/design/mobile/README.md`; decision: ADR 0017 (save first, ask later); tracking: #109.
+
 - [x] Minimal web UI at `/`: capture, reminders and notes, search, done/snooze/delete, auto-refresh
-- [ ] Edit items (#21) and a timeline view with keyboard shortcuts (#22)
-- [ ] End-to-end tests for the web UI (#23)
-- [ ] Installable PWA with web push (#24)
-- [ ] iCalendar (`.ics`) feed (#25) and two-way CalDAV sync (#26)
-- [ ] Companion mobile app spike (#27)
-- [ ] Edit a reminder by replying: "make it 4pm" (#85)
-- [ ] Matrix channel, built as the first entry-point plugin (#86)
-- [ ] Mobile layout, keyboard and screen-reader accessibility (#87)
+- [ ] The React app connected to the server and shipped in the release (#108, #111, #112)
+- [ ] Capture splits per reminder: sure ones save at once, unsure ones wait with a gap, one undo per sentence (#126)
+- [ ] One list: Needs a look, Next up, Today, Tomorrow, This week, Anytime (#22)
+- [ ] Say or type, reminders land in place, with a 10-second Undo (#104)
+- [ ] Hold-to-talk mic with live words (#127)
+- [ ] Needs a look: fill a gap in one tap, and an evening wrap-up (#128)
+- [ ] Reminder screen: what you said, what will happen, and edit (#21)
+- [ ] Search across reminders, tasks and notes (#105)
+- [ ] Reach your server from your phone over HTTPS (#96), install to the home screen with web push (#24)
+- [ ] Pair a phone with a QR code (#95, #106), Settings (#107), share into Maestro (#97)
+- [ ] Mobile layout, keyboard and screen-reader accessibility (#87), end-to-end tests (#23)
 
-**Phone-first experience.** Most capture and nearly every reminder happens on a phone, so the web UI becomes an installable app reached securely from anywhere:
-- [ ] Reach your server from your phone over HTTPS: Tailscale, Cloudflare Tunnel or Caddy, with doctor checks (#96)
-- [ ] Pair a phone with a QR code, with a key per device (#95)
-- [ ] App shell: Today, Lists and Notes tabs with an always-on capture bar (#93)
-- [ ] Show what Maestro understood while you type (#94)
-- [ ] Settings for channels, quiet hours and escalation without a restart (#98)
-- [ ] Share to Maestro from any app, plus home-screen shortcuts (#97)
-- [ ] The web UI as a React app, built on mock data first, then connected to the backend (#109, ADR 0014)
-
-Exit criteria: a new phone goes from scanning a pairing code to its first push notification in under 2 minutes; everything doable from the CLI is doable from the web UI on a phone; e2e tests and an accessibility check run in CI; installable as an app with push.
+Exit criteria: one spoken sentence with three requests puts the sure ones in the list within a second and the unsure one in Needs a look; a new phone goes from scanning a pairing code to its first push notification in under 2 minutes; everything doable from the CLI is doable from the app on a phone; e2e tests and an accessibility check run in CI.
 
 ## v0.6: Second brain (target Jan 17, 2027)
 **Understands what you mean** (#120, ADR 0015):
@@ -144,6 +140,7 @@ Exit criteria: a new phone goes from scanning a pairing code to its first push n
 - [ ] Ask questions over your notes: offline by default, the optional model when configured (#33)
 - [ ] Lists: "add milk to the shopping list" (#88)
 - [ ] Streaks and adherence for recurring reminders (#89)
+- [ ] Edit a reminder by replying: "make it 4pm" (#85)
 
 Exit criteria: search behaves the same on SQLite and Postgres; import → export → import round-trips without loss; one grouping model (lists, tags and tracks, #119) decided and documented; with the model interpreter off, behaviour is identical to the rules alone.
 
@@ -155,6 +152,8 @@ Exit criteria: search behaves the same on SQLite and Postgres; import → export
 - [ ] Per-token API rate limits and audit log (#40)
 - [ ] Move existing data between SQLite and PostgreSQL (#90)
 - [ ] Guided first-run setup: `maestro init` (#91)
+- [ ] iCalendar (`.ics`) feed (#25) and two-way CalDAV sync (#26)
+- [ ] Matrix channel, built as the first entry-point plugin (#86)
 
 Exit criteria: a new user reaches the first test message in under 15 minutes with `maestro init`; an existing SQLite install moves to Postgres with one documented command; restores tested on both backends.
 
@@ -163,6 +162,7 @@ Exit criteria: a new user reaches the first test message in under 15 minutes wit
 - [ ] API stability and deprecation policy (#42)
 - [ ] Security review and threat model (#43)
 - [ ] Performance at 10k items (#44)
+- [ ] Companion mobile app spike: is a native shell worth it after the web app? (#27)
 
 Exit criteria: public API, CLI, settings and plugin API frozen with a deprecation policy; threat model published; documented performance targets met in CI.
 
