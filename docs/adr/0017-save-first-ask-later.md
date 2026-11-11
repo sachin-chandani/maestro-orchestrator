@@ -11,6 +11,7 @@ ADR 0016 lets Maestro hold an unsure capture as a proposal until the person conf
 - **Ask later, in place.** An unsure reminder is saved as "needs a look", with its gap named (`when`, `what` or `which channel`). It is visible at the top of the list, never fires and never disappears on its own. One tap fills the gap (#128).
 - **One list of reminders.** The app has no tabs. A task is a reminder with no time, shown under Anytime. Notes are found through search (#105). Lists wait for #88 and #119.
 - **The same on every channel.** SMS and Telegram answer "Added 2. 'Call the plumber' needs a time: reply with one."
+- **Where it lives (#126).** A needs-a-look entry is an item with `items.gap` set, not a `captures` row, because captures expire and a question must not. `Store.due` skips gapped items. An unconfigured channel is not a gap: the item is saved and goes out on the default channels (ADR 0011). Details: `docs/design/split-captures-implementation.md`.
 - **Settings.** `MAESTRO_CONFIRM=split` (this behaviour) becomes the default. `unsure` keeps ADR 0016's hold-the-whole-message; `never` treats everything as sure.
 
 ## Consequences
