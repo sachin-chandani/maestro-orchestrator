@@ -207,15 +207,37 @@ $ maestro doctor --check-model
 
 `maestro list --verbose` and the API's `interpreter` field show which one read each item (`rules` or `model`; empty for items saved before this was recorded). An item the model was asked about but that the rules answered — because it failed — says `rules`.
 
-### Confirm before acting, and undo (optional)
-With `MAESTRO_CONFIRM=unsure` (off by default — `never`), a capture the rules are unsure of, or one message asking for several things, is held as a **proposal** instead of being saved. Maestro asks in the channel you used and acts only on your answer:
+### Save what's clear, ask about the rest (the default)
+One message can hold several things, and Maestro may be sure about some and not others. With `MAESTRO_CONFIRM=split` (the default) it **saves the parts it can act on straight away** and keeps only the rest as **needs a look** — saved and visible, but never scheduled and never expiring:
+
+```
+> remind me to call mom tomorrow at 5pm and pick up the kids before
+Added 1. 'Pick up the kids before' needs a time: reply with one (#7).
+> 3pm
+Scheduled ⏰ #7 Pick up the kids before (Thu 12 Nov 15:00).
+```
+
+**A reading that already has a usable time is never held back**, whatever Maestro doubted about the message: "work from 9am to 5pm" still saves and still fires at 9am, exactly as before. Only something to do with *no* time, in a message that named one the rules can't read ("before", "sometime", "after work"), becomes a question — so nothing that used to go out stops going out, and things that never fired are now visible instead of quietly mis-saved. Notes are left alone ("the best time to call dad is after dinner" is a note, not a question), and a channel you haven't configured is still just a note at capture time, as it always was.
+
+Answering:
+- **A bare time** ("5pm", "tomorrow 9am") answers the one question asked in the last 30 minutes (`MAESTRO_GAP_REPLY_MINUTES`). If two are open, Maestro asks which and saves nothing.
+- **Naming it** (`#12 5pm`) works at any time, however old the question — only the shortcut expires, never the item.
+- **Anything else is captured as usual**: "call dad at 5pm" says what to do, so it's a new reminder, not an answer. A reply can only ever complete a question — it can never change a reminder that's already scheduled.
+- `dismiss` (or `maestro dismiss <id>`, `DELETE /needs-look/{id}`) drops a question instead of answering it.
+
+Every capture can be undone for 10 minutes, on any channel, removing exactly what that capture added: `UNDO` by SMS or Telegram, `maestro undo <id>`, or `POST /captures/{id}/undo`. `maestro list` shows open questions under **Needs a look**, `maestro list --needs-look` shows only those, and the API has `GET /needs-look`, `POST /needs-look/{id}` and `POST /capture` (which answers `{added, needs_look, undo}`; `POST /items` keeps its old shape). See ADR 0017, #126.
+
+Set `MAESTRO_CONFIRM=never` to apply everything at once, as Maestro did before any of this.
+
+### Confirm the whole message before acting (optional)
+With `MAESTRO_CONFIRM=unsure`, a capture the rules are unsure of, or one message asking for several things, is held whole as a **proposal** instead of being saved. Maestro asks in the channel you used and acts only on your answer:
 
 - **Telegram:** the question comes with ✅ Yes / ✏️ Change / ✖ Cancel buttons (or reply `yes` / `no` in words); after saving, an ↩ Undo button.
 - **SMS:** "Did you mean: … ? Reply YES or NO (#12)." After YES, reply `UNDO` within 10 minutes to take it back.
 - **CLI:** `maestro add` asks right there on a terminal; otherwise it prints the id to answer with `maestro confirm <id>` / `maestro cancel <id>`. `maestro undo <id>` takes back a confirmation.
 - **API:** `POST /items` answers `202` with the proposal instead of `201`; decide with `POST /captures/{id}/confirm`, `/cancel` or `/undo`, and list with `GET /captures`.
 
-A confirmation acts exactly once — buttons double-tapped, webhooks retried and simultaneous replies all save one set of items — and undo removes exactly what that capture created. Unanswered proposals expire (default 24 h, `MAESTRO_CONFIRM_HOURS`, or at the proposed time if sooner) and stay visible in `maestro list --proposals` without ever being applied. A bare `yes` answers only your own most recent question on that channel; anything else is captured as usual. Voice and email-in captures still save directly for now. Sure captures are saved at once either way, so with the default settings nothing changes at all (ADR 0016, #117).
+A confirmation acts exactly once — buttons double-tapped, webhooks retried and simultaneous replies all save one set of items — and undo removes exactly what that capture created. Unanswered proposals expire (default 24 h, `MAESTRO_CONFIRM_HOURS`, or at the proposed time if sooner) and stay visible in `maestro list --proposals` without ever being applied. A bare `yes` answers only your own most recent question on that channel; anything else is captured as usual. Voice and email-in captures still save directly for now. Sure captures are saved at once either way (ADR 0016, #117).
 
 What the model can and can't do:
 - **It proposes; Maestro decides.** Everything it returns is checked against the same rules a hand-written action faces: known kinds only, times in a sane range, real channel names, at most ten things from one message. Anything that doesn't check out is dropped whole and the rules answer instead, so **a capture is never lost because the model failed** — the same goes for a timeout, a bad key or an unreachable provider.

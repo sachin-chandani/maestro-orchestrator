@@ -438,3 +438,21 @@ def parse(source: str, now: datetime | None = None, tz: tzinfo | None = None) ->
         channels=channels or None,
         urgent=bang or text_says_urgent(text),
     )
+
+
+def time_phrase_only(source: str, now: datetime | None = None,
+                     tz: tzinfo | None = None) -> Item | None:
+    """The reading of a message that is *nothing but* a time — "5pm", "tomorrow 9am", "every monday".
+
+    None when the message has no time, or when it also says what to do: "call dad at 5pm" is a
+    capture in its own right, not an answer to a question (#126, ADR 0017). Only `due_at` and
+    `recurrence` of the returned item mean anything; the text is the time phrase itself.
+
+    A time phrase that fills the whole message leaves `parse` with nothing for the text, and it
+    falls back to the message itself (see the end of `parse`). An unchanged text is therefore
+    exactly the signal that nothing but the time was said.
+    """
+    item = parse(source, now=now, tz=tz)
+    if item.due_at is None:
+        return None
+    return item if _clean(item.text).casefold() == _clean(source).casefold() else None

@@ -139,6 +139,12 @@ MIGRATIONS: list[list[str]] = [
            WHERE dedupe_key IS NOT NULL""",
         "ALTER TABLE items ADD COLUMN capture_id BIGINT",
     ],
+    # 6: readings that need a look (#126, ADR 0017), matching SQLite's migration 13. `gap` names
+    # what an item is still missing; NULL, which every existing row keeps, means nothing is. No
+    # index, for the reasons given there.
+    [
+        "ALTER TABLE items ADD COLUMN gap TEXT",
+    ],
 ]
 
 
@@ -288,11 +294,13 @@ class PostgresStore(Store):
             urgent=row["urgent"],
             interpreter=row["interpreter"],
             capture_id=row["capture_id"],
+            gap=row["gap"],
         )
 
     _INSERT_ITEM = (
         "INSERT INTO items (text, kind, status, due_at, created_at, source_text, recurrence,"
-        " channels, urgent, interpreter) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id"
+        " channels, urgent, interpreter, gap)"
+        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id"
     )
 
     def _insert(self, item: Item) -> int:
@@ -300,7 +308,8 @@ class PostgresStore(Store):
             self._INSERT_ITEM,
             (item.text, str(item.kind), str(item.status), self._to_db(item.due_at),
              self._to_db(item.created_at), item.source_text, item.recurrence,
-             ",".join(item.channels) if item.channels else None, item.urgent, item.interpreter),
+             ",".join(item.channels) if item.channels else None, item.urgent, item.interpreter,
+             item.gap),
         ).fetchone()
         assert row is not None  # RETURNING always yields a row
         return int(row["id"])
@@ -378,8 +387,10 @@ class PostgresStore(Store):
         return [self._item(r) for r in rows]
 
     def due(self, now: datetime) -> builtins.list[Item]:
+        # `gap IS NULL`: an item nobody has confirmed the meaning of is never delivered (#126).
         rows = self._execute(
-            "SELECT * FROM items WHERE status = %s AND (due_at <= %s OR snoozed_until <= %s)"
+            "SELECT * FROM items WHERE status = %s AND gap IS NULL"
+            " AND (due_at <= %s OR snoozed_until <= %s)"
             " ORDER BY COALESCE(snoozed_until, due_at), id",
             (str(Status.PENDING), self._to_db(now), self._to_db(now)),
         )
@@ -562,13 +573,17 @@ class PostgresStore(Store):
         with self._transaction():
             row = self._execute(
                 "INSERT INTO captures (status, actions, source, address, source_text, interpreter,"
-                " doubts, dedupe_key, created_at, expires_at)"
-                " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+                " doubts, dedupe_key, created_at, expires_at, undo_until, decided_at, decided_via)"
+                " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
                 " ON CONFLICT (source, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING"
                 " RETURNING id",
                 (str(capture.status), capture.actions, capture.source, capture.address,
                  capture.source_text, capture.interpreter, capture.doubts, dedupe_key,
-                 self._to_db(capture.created_at), self._to_db(capture.expires_at)),
+                 self._to_db(capture.created_at), self._to_db(capture.expires_at),
+                 # A split capture arrives already applied, with its undo window running (#126);
+                 # a capture awaiting confirmation leaves all three NULL, as it always has.
+                 self._to_db(capture.undo_until), self._to_db(capture.decided_at),
+                 capture.decided_via),
             ).fetchone()
             if row is None:  # the conflict path: this provider message was already proposed
                 existing = self._execute(
@@ -643,6 +658,47 @@ class PostgresStore(Store):
     def items_for_capture(self, capture_id: int) -> builtins.list[Item]:
         rows = self._execute("SELECT * FROM items WHERE capture_id = %s ORDER BY id", (capture_id,))
         return [self._item(r) for r in rows]
+
+    # --- readings that need a look (#126) ---------------------------------------------------
+
+    def needs_look(self, source: str | None = None, address: str | None = None,
+                   since: datetime | None = None) -> builtins.list[Item]:
+        # LEFT JOIN, so a gapped item whose capture row is gone is still listed rather than hidden.
+        sql = ("SELECT i.* FROM items i LEFT JOIN captures c ON c.id = i.capture_id"
+               " WHERE i.gap IS NOT NULL AND i.status != %s")
+        params: builtins.list[object] = [str(Status.DONE)]
+        for clause, value in (("c.source = %s", source), ("c.address = %s", address),
+                              ("i.created_at >= %s", self._to_db(since) if since else None)):
+            if value is not None:
+                sql += f" AND {clause}"
+                params.append(value)
+        sql += " ORDER BY i.created_at DESC, i.id DESC"
+        return [self._item(r) for r in self._execute(sql, tuple(params))]
+
+    def fill_gap(self, item_id: int, due_at: datetime | None = None, recurrence: str | None = None,
+                 channels: builtins.list[str] | None = None, text: str | None = None,
+                 kind: Kind | None = None) -> bool:
+        # A dict, so `kind` given alongside a `due_at` replaces what the time implied: PostgreSQL
+        # refuses two assignments to the same column in one UPDATE.
+        sets: dict[str, object] = {"gap": None}
+        if due_at is not None:
+            sets |= {"due_at": self._to_db(due_at), "status": str(Status.PENDING),
+                     "kind": str(Kind.REMINDER), "recurrence": recurrence}
+        if kind is not None:
+            sets["kind"] = str(kind)
+        if channels is not None:
+            sets["channels"] = ",".join(channels) or None
+        if text is not None:
+            sets["text"] = text
+        # The column names are this method's own literals; every value is bound.
+        assignments = ", ".join(f"{name} = %s" for name in sets)
+        with self._transaction():
+            # `gap IS NOT NULL` is the check-and-set: two answers racing, one fills it.
+            cur = self._execute(
+                f"UPDATE items SET {assignments} WHERE id = %s AND gap IS NOT NULL",
+                (*sets.values(), item_id),
+            )
+        return cur.rowcount > 0
 
     def last_delivered(self, channel: str) -> int | None:
         row = self._execute(

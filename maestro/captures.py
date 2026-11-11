@@ -50,11 +50,34 @@ REPLY_RE = re.compile(r"^(?P<verb>yes|no|confirm|cancel|undo)\s*#?(?P<id>\d+)?$"
 _VERBS = {"yes": "yes", "confirm": "yes", "no": "no", "cancel": "no", "undo": "undo"}
 
 
+class ConfirmMode(StrEnum):
+    """What a deployment does with a capture it isn't sure about (`MAESTRO_CONFIRM`)."""
+
+    SPLIT = "split"  # save the sure parts, keep the rest as needing a look (#126, ADR 0017)
+    UNSURE = "unsure"  # hold the whole message for confirmation (#117, this module)
+
+
 @dataclass(frozen=True)
 class Confirmation:
     """A deployment's confirmation settings: present means on (`maestro.config.confirmation`)."""
 
     ttl: timedelta = DEFAULT_TTL
+    mode: ConfirmMode = ConfirmMode.SPLIT
+    # How long a bare time can answer the last question asked (#126). Only the shortcut expires;
+    # the item it would answer stays until someone fills or dismisses it.
+    gap_reply_window: timedelta | None = None
+
+    @property
+    def splits(self) -> bool:
+        """Whether a capture is split per reading (#126) rather than held whole (#117)."""
+        return self.mode is ConfirmMode.SPLIT
+
+    @property
+    def window(self) -> timedelta:
+        """The bare-reply window, or the default when this deployment hasn't set one."""
+        from maestro.gaps import GAP_REPLY_WINDOW
+
+        return self.gap_reply_window if self.gap_reply_window is not None else GAP_REPLY_WINDOW
 
 
 class Outcome(StrEnum):

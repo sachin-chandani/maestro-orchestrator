@@ -18,7 +18,7 @@ from types import TracebackType
 from typing import Self
 from zoneinfo import ZoneInfo
 
-from maestro.models import Acknowledgement, Capture, Delivery, Item, Status
+from maestro.models import Acknowledgement, Capture, Delivery, Item, Kind, Status
 from maestro.storage.logic import ACK_WINDOW
 
 __all__ = ["ACK_WINDOW", "SchemaTooNewError", "Store"]
@@ -94,6 +94,10 @@ class Store(ABC):
 
         Returns (capture, created). With a `dedupe_key` (the provider's message id), a retried
         webhook gets back the capture from the first delivery instead of being asked twice.
+
+        Whatever the capture's `status`, `undo_until`, `decided_at` and `decided_via` say is stored
+        as given: a split capture (#126) is recorded as already applied, so its undo window starts
+        the moment it is saved rather than when someone answers a question.
         """
 
     @abstractmethod
@@ -135,6 +139,32 @@ class Store(ABC):
     def items_for_capture(self, capture_id: int) -> builtins.list[Item]:
         """The items a confirmed capture created (empty once undone)."""
 
+    # --- readings that need a look (#126, ADR 0017) -----------------------------------------
+
+    @abstractmethod
+    def needs_look(self, source: str | None = None, address: str | None = None,
+                   since: datetime | None = None) -> builtins.list[Item]:
+        """Items saved with a gap, newest first: visible, never scheduled, never expiring.
+
+        `source` and `address` restrict them to the owner of the capture they came from, so one
+        sender's reply can only ever reach their own; `since` restricts them to recent ones, for
+        the bare-reply shortcut. Items that are done are left out.
+        """
+
+    @abstractmethod
+    def fill_gap(self, item_id: int, due_at: datetime | None = None, recurrence: str | None = None,
+                 channels: builtins.list[str] | None = None, text: str | None = None,
+                 kind: Kind | None = None) -> bool:
+        """Fill an item's gap and clear it, so it can be acted on at last.
+
+        A `due_at` makes it a pending reminder (with `recurrence`, which is set whenever `due_at`
+        is, so filling a one-off time over a repeat really does clear the repeat); `channels` sets
+        where it goes; `text` replaces words the capture never had, and `kind` the kind those words
+        turn out to mean, overriding what `due_at` implies. False when the item is gone or had no
+        gap, which is the check-and-set that makes two simultaneous answers safe: exactly one of
+        them fills it.
+        """
+
     # --- reading ---------------------------------------------------------------------------
 
     @abstractmethod
@@ -155,7 +185,11 @@ class Store(ABC):
 
     @abstractmethod
     def due(self, now: datetime) -> builtins.list[Item]:
-        """Pending items whose due time or snoozed re-send has arrived, soonest first."""
+        """Pending items whose due time or snoozed re-send has arrived, soonest first.
+
+        Items still carrying a gap (#126) are never due, however their times read: nobody has
+        confirmed what they mean, so the scheduler must not deliver them.
+        """
 
     # --- actions ---------------------------------------------------------------------------
 

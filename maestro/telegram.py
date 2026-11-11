@@ -14,7 +14,7 @@ import urllib.request
 from collections.abc import Callable
 
 from maestro import captures as confirmations
-from maestro import commands
+from maestro import commands, gaps
 from maestro.actions import apply
 from maestro.interpret import Context, Interpreter, interpret_assessed
 from maestro.models import Capture, Item, Kind
@@ -175,8 +175,29 @@ class TelegramBot:
             self._answer_confirmation(chat_id, target, reply[0])
             return
 
+        # "#12 5pm", "5pm" or "dismiss" answers a question about something needing a look — but only
+        # while this chat has one it could answer; otherwise it is captured (ADR 0005, #126).
+        if self.confirm is not None and self.confirm.splits and (
+                answered := gaps.match_reply(self.store, CHANNEL, str(chat_id), text,
+                                             window=self.confirm.window)):
+            # Not counted as a capture: the item was counted when the message that produced it
+            # was split, and filling its gap completes that item rather than making a new one.
+            said, _ = gaps.answer(self.store, answered, requestable=self.requestable)
+            self.client.send(chat_id, said)
+            return
+
         if not text.startswith("/"):
             captured, confidence = interpret_assessed(text, Context(tz=self.store.tz), self.interpreter)
+            if self.confirm is not None and self.confirm.splits:
+                split = gaps.split_apply(self.store, captured, confidence, CHANNEL, str(chat_id),
+                                         text, requestable=self.requestable)
+                for _ in split.saved:
+                    METRICS.inc("maestro_captures_total", source="telegram")
+                buttons = _action_buttons(split.added[0]) \
+                    if len(split.saved) == 1 and split.added and split.added[0].kind == Kind.REMINDER \
+                    else (_undo_button(split.undo_id) if split.added else None)
+                self.client.send(chat_id, gaps.worded(split), buttons)
+                return
             if self.confirm and confirmations.needs_confirmation(captured, confidence):
                 proposal, _ = confirmations.propose(
                     self.store, captured, confidence, CHANNEL, str(chat_id), text,

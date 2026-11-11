@@ -145,6 +145,31 @@ def _email_in(config: Config, connect: bool) -> list[Check]:
 TEST_PHRASE = "dentist tomorrow at 3pm"
 
 
+def _confirm(config: Config) -> Check:
+    """What happens to a capture Maestro isn't sure it read right (#117, #126). Reported because
+    the default changed to `split` in ADR 0017: an operator should see which one is in force
+    without reading the changelog."""
+    from maestro.config import confirmation
+
+    try:
+        settings = confirmation(config)
+    except ValueError as e:
+        return Check(FAIL, "unsure captures", str(e))
+    if settings is None:
+        return Check(OK, "unsure captures", "never: every capture is applied at once, including "
+                                            "readings Maestro isn't sure of")
+    if settings.splits:
+        minutes = int(settings.window.total_seconds() // 60)
+        return Check(OK, "unsure captures", f"split: a reading with no readable time is saved as "
+                                            f"needing a look instead of being scheduled; a bare "
+                                            f"time answers it for {minutes} min, naming it always "
+                                            f"does. Everything with a time is saved and delivered "
+                                            f"as usual")
+    hours = int(settings.ttl.total_seconds() // 3600)
+    return Check(OK, "unsure captures", f"unsure: a doubted message is held whole for confirmation "
+                                        f"and expires unanswered after {hours}h")
+
+
 def _interpreter(config: Config, check_model: bool) -> list[Check]:
     """How captures are read, and — the part that matters for a self-hosted install — whether
     turning a model on means the text of every capture leaves this server."""
@@ -283,7 +308,7 @@ def run(config: Config, send_test: bool = False, out: Callable[[str], None] = pr
     the configured model provider. Both cost real money or real messages, so both are opt-in.
     """
     checks = [_timezone(config), _database(config), *_database_settings(), _api_token(config),
-              *_interpreter(config, check_model), *_telegram_bot(config),
+              *_interpreter(config, check_model), _confirm(config), *_telegram_bot(config),
               *_inbound_sms(config), *_email_in(config, connect=send_test), *_escalation(config),
               *_quiet_hours(config)]
     channel_checks, built = _channels(config)

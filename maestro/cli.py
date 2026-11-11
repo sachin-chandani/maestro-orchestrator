@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
 from maestro import captures as confirmations
-from maestro import commands, recurrence
+from maestro import commands, gaps, recurrence
 from maestro.actions import apply
 from maestro.config import Config, load_dotenv
 from maestro.interpret import Context, Interpreter, build_interpreter, interpret_assessed
@@ -66,11 +66,17 @@ _GROUPS = ((Kind.REMINDER, "Reminders"), (Kind.TASK, "Tasks"), (Kind.NOTE, "Note
 
 def _grouped(items: list[Item], verbose: bool = False) -> str:
     """The list under one heading per kind, so tasks are their own section and not lost among
-    notes. A kind nobody has captured gets no heading."""
+    notes. A kind nobody has captured gets no heading.
+
+    Items still needing a look (#126) get a section of their own, last: they are saved and visible,
+    but none of them will go out until someone answers, and mixing them in would hide that.
+    """
     sections = []
     for kind, title in _GROUPS:
-        if lines := [_format(i, verbose) for i in items if i.kind == kind]:
+        if lines := [_format(i, verbose) for i in items if i.kind == kind and i.gap is None]:
             sections.append("\n".join([title, *lines]))
+    if waiting := [gaps.line(i) for i in items if i.gap is not None]:
+        sections.append("\n".join(["Needs a look", *waiting]))
     return "\n\n".join(sections)
 
 
@@ -96,6 +102,57 @@ def _propose(store: Store, captured: "list[Action]", confidence: "Confidence", t
         print(confirmations.worded(outcome, proposal, items, removed, hint))
         return 0
     print(f"Answer with: maestro confirm {proposal.id}  |  maestro cancel {proposal.id}")
+    return 0
+
+
+def _add_split(store: Store, captured: "list[Action]", confidence: "Confidence", text: str,
+               requestable: "frozenset[str] | None") -> int:
+    """`maestro add` under `MAESTRO_CONFIRM=split`: save what is clear, list what still needs an
+    answer, and say how to undo the lot (#126)."""
+    split = gaps.split_apply(store, captured, confidence, "cli", "", text, requestable=requestable)
+    if split.dropped:
+        chosen = {c for i in split.saved for c in (i.channels or [])}
+        kept = "the other requested channels will be used" if chosen else "using the default channels"
+        print(f"Note: {', '.join(split.dropped)} isn't configured; {kept}.", file=sys.stderr)
+    for item in split.added:
+        print(f"Saved: {_format(item).strip()}")
+    for item in split.needs_look:
+        wanted = gaps.WANTED.get(str(item.gap), "an answer")
+        print(f"Needs {wanted}: {item.text} (maestro fill {item.id} \"…\")")
+    # The undo token exists for every capture, but it is only worth a line when the capture did
+    # something the person might not have expected. One plain reminder prints what it always has —
+    # and its number, which `maestro rm` takes.
+    if split.added and (len(split.saved) > 1 or split.needs_look):
+        print(f"Undo all of it within 10 minutes with: maestro undo {split.undo_id}")
+    return 0
+
+
+def _list_needs_look(store: Store) -> int:
+    """`maestro list --needs-look`: readings saved but waiting for an answer (#126)."""
+    rows = store.needs_look()
+    if not rows:
+        print("Nothing needs a look.")
+        return 0
+    for item in rows:
+        print(gaps.line(item))
+    return 0
+
+
+def _answer_gap(store: Store, command: str, item_id: int, phrase: str,
+                requestable: "frozenset[str] | None" = None) -> int:
+    """`maestro fill <id> <phrase>` / `maestro dismiss <id>`: answer one question by naming it."""
+    if (item := store.get(item_id)) is None or item.gap is None:
+        print(f"No item #{item_id} needing a look", file=sys.stderr)
+        return 1
+    if command == "dismiss":
+        gaps.dismiss(store, item)
+        print(f"Dismissed: {item.text}")
+        return 0
+    if (filled := gaps.fill(store, item, phrase, requestable)) is None:
+        wanted = gaps.WANTED.get(item.gap, "an answer")
+        print(f"Couldn't read {wanted} in {phrase!r}", file=sys.stderr)
+        return 1
+    print(f"Scheduled: {_format(filled).strip()}")
     return 0
 
 
@@ -142,6 +199,15 @@ def _build_parser(config: Config) -> argparse.ArgumentParser:
                     help="also show which interpreter read each item (rules or model)")
     ls.add_argument("--proposals", action="store_true",
                     help="show captures awaiting confirmation (and recently expired ones) instead")
+    ls.add_argument("--needs-look", action="store_true",
+                    help="show readings that are saved but still need a time, a description or a channel")
+
+    fill = sub.add_parser("fill", help='answer what an item needs, e.g. `fill 3 "tomorrow 9am"`')
+    fill.add_argument("id", type=int)
+    fill.add_argument("phrase", nargs="+")
+
+    dismissed = sub.add_parser("dismiss", help="drop an item that needs a look instead of answering it")
+    dismissed.add_argument("id", type=int)
 
     for name, help_text in [("confirm", "save a capture that is awaiting confirmation"),
                             ("cancel", "turn down a capture that is awaiting confirmation"),
@@ -241,18 +307,26 @@ def _dispatch(args: argparse.Namespace, config: Config, store: Store, tz: ZoneIn
         text = " ".join(args.text)
         captured, confidence = interpret_assessed(text, Context(tz=tz), interpreter)
         confirm = _confirmation(config)
+        requestable = requestable_channels(config)
+        if confirm is not None and confirm.splits:
+            return _add_split(store, captured, confidence, text, requestable)
         if confirm and confirmations.needs_confirmation(captured, confidence):
             return _propose(store, captured, confidence, text, confirm)
-        results = apply(store, captured, source="cli", requestable=requestable_channels(config))
+        results = apply(store, captured, source="cli", requestable=requestable)
         for result in results:
             if result.dropped:
                 kept = "the other requested channels will be used" if result.saved.channels \
                     else "using the default channels"
                 print(f"Note: {', '.join(result.dropped)} isn't configured; {kept}.", file=sys.stderr)
             print(f"Saved: {_format(result.saved).strip()}")
+    elif args.command in ("fill", "dismiss"):
+        return _answer_gap(store, args.command, args.id,
+                           " ".join(getattr(args, "phrase", [])), requestable_channels(config))
     elif args.command == "list":
         if args.proposals:
             return _list_proposals(store)
+        if args.needs_look:
+            return _list_needs_look(store)
         items = store.list(include_done=args.all)
         print(_grouped(items, args.verbose) if items else "Nothing to remember yet.")
     elif args.command == "search":

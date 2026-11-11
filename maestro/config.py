@@ -77,10 +77,15 @@ class Config:
     # The optional model interpreter (#115, ADR 0015). "rules" is the default and means no model is
     # ever contacted; a key on its own never turns one on. See maestro.interpret.
     interpreter: str = "rules"  # rules, auto (model only when the rules are unsure, #116) or model
-    # Confirm before acting on an unsure interpretation (#117). "never" is the default: captures
-    # are applied at once, exactly as before. "unsure" asks first in the channel used.
-    confirm: str = "never"  # never or unsure
+    # What to do with a capture Maestro isn't sure it read right (#117, #126). "split" is the
+    # default (ADR 0017): the parts it can act on are saved at once and the rest wait as needing a
+    # look. "unsure" holds the whole message for confirmation (ADR 0016); "never" applies
+    # everything at once, as Maestro did before either existed.
+    confirm: str = "split"  # split, unsure or never
     confirm_hours: float = 24.0  # how long an unanswered confirmation waits before expiring
+    # How long a bare time ("5pm") can answer the last question asked (#126). The item it answers
+    # never expires; only this shortcut does, so a stray time later is captured, not filed.
+    gap_reply_minutes: int = 30
     model_provider: str = ""  # anthropic, openai or openai-compatible
     model: str = ""  # the model name, e.g. claude-sonnet-5-5; no default on purpose
     # MAESTRO_MODEL_API_KEY, else the provider's usual variable; never in a repr (#123)
@@ -140,8 +145,9 @@ class Config:
             log_format=(env.get("MAESTRO_LOG_FORMAT") or "text").lower(),
             log_level=(env.get("MAESTRO_LOG_LEVEL") or "INFO").upper(),
             interpreter=(env.get("MAESTRO_INTERPRETER") or "rules").strip().lower(),
-            confirm=(env.get("MAESTRO_CONFIRM") or "never").strip().lower(),
+            confirm=(env.get("MAESTRO_CONFIRM") or "split").strip().lower(),
             confirm_hours=float(_count(env, "MAESTRO_CONFIRM_HOURS", 24)),
+            gap_reply_minutes=_count(env, "MAESTRO_GAP_REPLY_MINUTES", 30),
             model_provider=(env.get("MAESTRO_MODEL_PROVIDER") or "").strip().lower(),
             model=(env.get("MAESTRO_MODEL") or "").strip(),
             # MAESTRO_MODEL_API_KEY wins; otherwise the provider's usual variable, so a key already
@@ -243,17 +249,28 @@ def email_settings(config: Config) -> "EmailSettings | None":
 
 
 def confirmation(config: Config) -> "captures.Confirmation | None":
-    """The confirmation settings when `MAESTRO_CONFIRM=unsure`, else None (the default: apply at
-    once, as Maestro always has). Raises ValueError, as one sentence, on a bad setting (#117)."""
-    from maestro.captures import Confirmation
+    """How this deployment handles a capture it isn't sure about, or None for `never` — apply
+    everything at once, as Maestro did before #117.
+
+    `split` (the default, ADR 0017) and `unsure` (ADR 0016) both come back as a `Confirmation`;
+    its `mode` says which, so a channel can tell them apart. Raises ValueError, as one sentence an
+    operator can act on, on a bad setting.
+    """
+    from maestro.captures import Confirmation, ConfirmMode
 
     if config.confirm == "never":
         return None
-    if config.confirm != "unsure":
-        raise ValueError(f"MAESTRO_CONFIRM must be never or unsure, not {config.confirm!r}")
+    if config.confirm not in (ConfirmMode.SPLIT, ConfirmMode.UNSURE):
+        raise ValueError(f"MAESTRO_CONFIRM must be split, unsure or never, not {config.confirm!r}")
     if not 0 < config.confirm_hours <= 24 * 7:
         raise ValueError("MAESTRO_CONFIRM_HOURS must be between 0 and 168 (a week): an unanswered "
                          "question should expire, not queue up forever")
+    if not 0 < config.gap_reply_minutes <= 24 * 60:
+        raise ValueError("MAESTRO_GAP_REPLY_MINUTES must be between 0 and 1440 (a day): past it, a "
+                         "bare time is far likelier to be a new capture than an answer to a "
+                         "question. Answer an older one by naming it, which has no time limit")
     from datetime import timedelta
 
-    return Confirmation(ttl=timedelta(hours=config.confirm_hours))
+    return Confirmation(ttl=timedelta(hours=config.confirm_hours),
+                        mode=ConfirmMode(config.confirm),
+                        gap_reply_window=timedelta(minutes=config.gap_reply_minutes))

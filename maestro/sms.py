@@ -14,7 +14,7 @@ import re
 from xml.sax.saxutils import escape
 
 from maestro import captures as confirmations
-from maestro import commands
+from maestro import commands, gaps
 from maestro.actions import apply
 from maestro.interpret import Context, Interpreter, interpret_assessed
 from maestro.models import Item, Kind
@@ -72,27 +72,47 @@ class TwilioHandler:
     def verify(self, url: str, params: dict[str, str], signature: str | None) -> bool:
         return verify_signature(self.auth_token, url, params, signature)
 
-    def save(self, text: str, external_id: str | None, source: str) -> tuple[Item, str]:
-        """Read and save text from an inbound message, once per provider message/call id. Also
-        returns a note for the sender when a chosen channel isn't configured (#20), else ""."""
-        captured, _ = interpret_assessed(text, Context(tz=self.store.tz), self.interpreter)
-        results = apply(self.store, captured, source=f"twilio_{source}", dedupe_key=external_id or None,
-                        requestable=self.requestable)
-        # One message usually asks for one thing. A model interpreter (#115) can read several out
-        # of one, and they are all saved; the reply is about the first, and says how many there were.
-        result = results[0]
-        item, created, note = result.saved, result.created, ""
-        if dropped := sorted({c for r in results for c in r.dropped}):
-            kept = "the other requested channels" if item.channels else "the default channels"
-            note = f"{', '.join(dropped)} isn't configured; using {kept}."
-            log.warning("%s capture: %s", source, note)
-        if len(results) > 1:
-            note = f"Saved {len(results)} things. {note}".strip()
-        if created:
-            for _ in results:
+    def read_and_save(self, text: str, external_id: str | None, source: str) -> gaps.Split:
+        """Read and save text from an inbound message, once per provider message/call id.
+
+        Under `MAESTRO_CONFIRM=split` the parts Maestro can act on are saved and the rest are kept
+        as needing a look (#126); otherwise everything is applied at once, as before.
+        """
+        captured, confidence = interpret_assessed(text, Context(tz=self.store.tz), self.interpreter)
+        channel = f"twilio_{source}"
+        if self.confirm is not None and self.confirm.splits:
+            split = gaps.split_apply(self.store, captured, confidence, channel, self.owner, text,
+                                     dedupe_key=external_id or None, requestable=self.requestable)
+        else:
+            split = gaps.applied(apply(self.store, captured, source=channel,
+                                       dedupe_key=external_id or None,
+                                       requestable=self.requestable))
+        if split.created:
+            for _ in split.saved:
                 METRICS.inc("maestro_captures_total", source=source)
         else:
-            log.info("Twilio retried %s %s; returning the item already saved", source, external_id)
+            log.info("Twilio retried %s %s; returning what was saved the first time", source,
+                     external_id)
+        return split
+
+    def save(self, text: str, external_id: str | None, source: str) -> tuple[Item, str]:
+        """One captured message as the first thing it saved, plus a note for the sender: a channel
+        that isn't configured (#20), how many things were saved, and anything needing a look (#126).
+
+        Used where a reply has to be one short sentence (voice). SMS reports the whole split.
+        """
+        split = self.read_and_save(text, external_id, source)
+        # One message usually asks for one thing. A model interpreter (#115) can read several out
+        # of one, and they are all saved; the reply is about the first, and says how many there were.
+        item, note = split.saved[0], ""
+        if split.dropped:
+            kept = "the other requested channels" if item.channels else "the default channels"
+            note = f"{', '.join(split.dropped)} isn't configured; using {kept}."
+            log.warning("%s capture: %s", source, note)
+        if len(split.added) > 1:
+            note = f"Saved {len(split.added)} things. {note}".strip()
+        if question := gaps.asked(split.needs_look):
+            note = f"{note} {question}".strip()
         return item, note
 
     def is_owner(self, params: dict[str, str], field: str = "From") -> bool:
@@ -131,7 +151,17 @@ class SmsHandler(TwilioHandler):
                 if outcome == confirmations.Outcome.APPLIED else ""
             return twiml(confirmations.worded(outcome, target, items, removed, hint))
 
-        if self.confirm:
+        # "#12 5pm", "5pm" or "DISMISS" answers a question about something needing a look — but
+        # only while the owner has one it could answer; otherwise it is captured (ADR 0005, #126).
+        if self.confirm is not None and self.confirm.splits and (
+                answered := gaps.match_reply(self.store, CHANNEL, self.owner, text,
+                                             window=self.confirm.window)):
+            # Not counted as a capture: the item was counted when the message that produced it
+            # was split, and filling its gap completes that item rather than making a new one.
+            said, _ = gaps.answer(self.store, answered, requestable=self.requestable)
+            return twiml(said)
+
+        if self.confirm is not None and not self.confirm.splits:
             captured, confidence = interpret_assessed(text, Context(tz=self.store.tz), self.interpreter)
             if confirmations.needs_confirmation(captured, confidence):
                 proposal, created = confirmations.propose(
@@ -143,6 +173,11 @@ class SmsHandler(TwilioHandler):
                 what = "; ".join(confirmations.proposed_lines(proposal))
                 return twiml(f"Did you mean: {what}? Reply YES or NO (#{proposal.id}, "
                              f"expires {proposal.expires_at:%a %H:%M}).")
+
+        if self.confirm is not None and self.confirm.splits:
+            split = self.read_and_save(text, params.get("MessageSid"), source="sms")
+            hint = " Reply UNDO within 10 min to take it back." if split.added else ""
+            return twiml(gaps.worded(split, hint))
 
         item, note = self.save(text, params.get("MessageSid"), source="sms")
         hint = f" Reply 'done {item.id}' or 'snooze {item.id} 1h'." if item.kind == Kind.REMINDER else ""

@@ -286,7 +286,10 @@ def test_only_apply_turns_a_capture_into_store_calls():
             parses.append(name)
         if ".add_once(" in source or "store.add(" in source:
             saves.append(name)
-    assert parses == ["maestro/interpret.py"], f"the parser is called outside interpret: {parses}"
+    # The parser calling itself is not a bypass: `time_phrase_only` (#126) is a second way in to
+    # the same rules, and `maestro.interpret.read_time_phrase` is still the only way to reach it.
+    assert parses == ["maestro/interpret.py", "maestro/parser.py"], \
+        f"the parser is called outside interpret: {parses}"
     assert saves == ["maestro/actions.py"], f"items are saved outside apply: {saves}"
 
 

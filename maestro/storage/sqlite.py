@@ -177,6 +177,14 @@ MIGRATIONS: list[Migration] = [
            WHERE dedupe_key IS NOT NULL""",
         "ALTER TABLE items ADD COLUMN capture_id INTEGER",
     ],
+    # 13: readings that need a look (#126, ADR 0017). `gap` names what an item is still missing —
+    # "when", "what" or "channel" — and NULL, which every existing row keeps, means nothing is: a
+    # database upgraded to here has no items needing a look, exactly as before.
+    # No index: `due` already has idx_items_due, where the added `gap IS NULL` matches almost every
+    # row, and the list of things awaiting an answer is only ever as long as a person's patience.
+    [
+        "ALTER TABLE items ADD COLUMN gap TEXT",
+    ],
 ]
 
 
@@ -307,6 +315,7 @@ class SQLiteStore(Store):
             urgent=None if row["urgent"] is None else bool(row["urgent"]),
             interpreter=row["interpreter"],
             capture_id=row["capture_id"],
+            gap=row["gap"],
         )
 
     @property
@@ -317,16 +326,20 @@ class SQLiteStore(Store):
     def schema_version(self) -> int:
         return self.conn.execute("PRAGMA user_version").fetchone()[0]
 
+    _INSERT_ITEM = (
+        "INSERT INTO items (text, kind, status, due_at, created_at, source_text, recurrence,"
+        " channels, urgent, interpreter, gap) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    )
+
+    def _item_values(self, item: Item) -> tuple[object, ...]:
+        return (item.text, item.kind, item.status, self._to_db(item.due_at),
+                self._to_db(item.created_at), item.source_text, item.recurrence,
+                ",".join(item.channels) if item.channels else None,
+                None if item.urgent is None else int(item.urgent), item.interpreter, item.gap)
+
     def add(self, item: Item) -> Item:
         with self._transaction():
-            cur = self.conn.execute(
-                "INSERT INTO items (text, kind, status, due_at, created_at, source_text, recurrence,"
-                " channels, urgent, interpreter) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (item.text, item.kind, item.status, self._to_db(item.due_at),
-                 self._to_db(item.created_at), item.source_text, item.recurrence,
-                 ",".join(item.channels) if item.channels else None,
-                 None if item.urgent is None else int(item.urgent), item.interpreter),
-            )
+            cur = self.conn.execute(self._INSERT_ITEM, self._item_values(item))
         item.id = cur.lastrowid
         return item
 
@@ -340,14 +353,7 @@ class SQLiteStore(Store):
                 existing = self.conn.execute("SELECT * FROM items WHERE id = ?", (row["item_id"],)).fetchone()
                 if existing is not None:
                     return self._item(existing), False
-            cur = self.conn.execute(
-                "INSERT INTO items (text, kind, status, due_at, created_at, source_text, recurrence,"
-                " channels, urgent, interpreter) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (item.text, item.kind, item.status, self._to_db(item.due_at),
-                 self._to_db(item.created_at), item.source_text, item.recurrence,
-                 ",".join(item.channels) if item.channels else None,
-                 None if item.urgent is None else int(item.urgent), item.interpreter),
-            )
+            cur = self.conn.execute(self._INSERT_ITEM, self._item_values(item))
             item.id = cur.lastrowid
             self.conn.execute(
                 "INSERT OR REPLACE INTO inbound_messages (source, external_id, item_id) VALUES (?, ?, ?)",
@@ -403,8 +409,10 @@ class SQLiteStore(Store):
         return [self._item(r) for r in rows]
 
     def due(self, now: datetime) -> builtins.list[Item]:
+        # `gap IS NULL`: an item nobody has confirmed the meaning of is never delivered (#126).
         rows = self.conn.execute(
-            "SELECT * FROM items WHERE status = ? AND (due_at <= ? OR snoozed_until <= ?)"
+            "SELECT * FROM items WHERE status = ? AND gap IS NULL"
+            " AND (due_at <= ? OR snoozed_until <= ?)"
             " ORDER BY COALESCE(snoozed_until, due_at), id",
             (Status.PENDING, self._to_db(now), self._to_db(now)),
         )
@@ -605,10 +613,15 @@ class SQLiteStore(Store):
                     return self._capture(row), False
             cur = self.conn.execute(
                 "INSERT INTO captures (status, actions, source, address, source_text, interpreter,"
-                " doubts, dedupe_key, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " doubts, dedupe_key, created_at, expires_at, undo_until, decided_at, decided_via)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (capture.status, capture.actions, capture.source, capture.address,
                  capture.source_text, capture.interpreter, capture.doubts, dedupe_key,
-                 self._to_db(capture.created_at), self._to_db(capture.expires_at)),
+                 self._to_db(capture.created_at), self._to_db(capture.expires_at),
+                 # A split capture arrives already applied, with its undo window running (#126);
+                 # a capture awaiting confirmation leaves all three NULL, as it always has.
+                 self._to_db(capture.undo_until), self._to_db(capture.decided_at),
+                 capture.decided_via),
             )
         capture.id = cur.lastrowid
         return capture, True
@@ -674,6 +687,50 @@ class SQLiteStore(Store):
         rows = self.conn.execute(
             "SELECT * FROM items WHERE capture_id = ? ORDER BY id", (capture_id,))
         return [self._item(r) for r in rows]
+
+    # --- readings that need a look (#126) ---------------------------------------------------
+
+    def needs_look(self, source: str | None = None, address: str | None = None,
+                   since: datetime | None = None) -> builtins.list[Item]:
+        # LEFT JOIN, so a gapped item whose capture row is gone is still listed rather than hidden;
+        # the owner clauses only come into play when a caller asks about one sender.
+        sql = ("SELECT i.* FROM items i LEFT JOIN captures c ON c.id = i.capture_id"
+               " WHERE i.gap IS NOT NULL AND i.status != ?")
+        params: builtins.list[object] = [Status.DONE]
+        for clause, value in (("c.source = ?", source), ("c.address = ?", address),
+                              ("i.created_at >= ?", self._to_db(since) if since else None)):
+            if value is not None:
+                sql += f" AND {clause}"
+                params.append(value)
+        sql += " ORDER BY i.created_at DESC, i.id DESC"
+        return [self._item(r) for r in self.conn.execute(sql, params)]
+
+    def fill_gap(self, item_id: int, due_at: datetime | None = None, recurrence: str | None = None,
+                 channels: builtins.list[str] | None = None, text: str | None = None,
+                 kind: Kind | None = None) -> bool:
+        # A dict, so `kind` given alongside a `due_at` replaces what the time implied instead of
+        # assigning the same column twice, which PostgreSQL refuses outright.
+        sets: dict[str, object] = {"gap": None}
+        if due_at is not None:
+            # A filled time makes it a reminder again, pending and ready to fire, exactly as
+            # `reschedule` does for an item that already had one.
+            sets |= {"due_at": self._to_db(due_at), "status": Status.PENDING,
+                     "kind": Kind.REMINDER, "recurrence": recurrence}
+        if kind is not None:
+            sets["kind"] = kind
+        if channels is not None:
+            sets["channels"] = ",".join(channels) or None
+        if text is not None:
+            sets["text"] = text
+        # The column names are this method's own literals; every value is bound.
+        assignments = ", ".join(f"{name} = ?" for name in sets)
+        with self._transaction():
+            # `gap IS NOT NULL` is the check-and-set: two answers racing, one fills it.
+            cur = self.conn.execute(
+                f"UPDATE items SET {assignments} WHERE id = ? AND gap IS NOT NULL",
+                (*sets.values(), item_id),
+            )
+        return cur.rowcount > 0
 
     def last_delivered(self, channel: str) -> int | None:
         row = self.conn.execute(

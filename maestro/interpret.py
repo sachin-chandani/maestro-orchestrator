@@ -25,7 +25,7 @@ from maestro.model import MAX_ACTIONS, Prompt, Provider, ProviderError
 from maestro.models import Item
 from maestro.notifier import REQUESTABLE_CHANNELS
 from maestro.observability import METRICS, shown
-from maestro.parser import parse
+from maestro.parser import parse, time_phrase_only
 from maestro.tz import get_timezone, localize
 
 log = logging.getLogger(__name__)
@@ -270,6 +270,34 @@ def interpret(text: str, context: Context | None = None,
               interpreter: Interpreter | None = None) -> list[Action]:
     """The actions a captured message asks for. Uses the rules unless given another interpreter."""
     return (interpreter or DEFAULT).interpret(text, context or Context())
+
+
+def read_time_phrase(text: str, context: Context | None = None) -> Item | None:
+    """The time a message means when the message is nothing but a time, else None (#126).
+
+    Always the rules, never a model: this answers "did they just send me a time?", and a model
+    asked that question could be talked into reading one out of an ordinary capture. It lives here
+    because the parser is only ever called from this module (ADR 0015).
+    """
+    zone, now = (context or Context()).moment()
+    try:
+        return time_phrase_only(text, now=now, tz=zone)
+    except Exception:  # noqa: BLE001 - an unreadable reply is simply not an answer; it is captured
+        return None
+
+
+def read_answer(text: str, context: Context | None = None) -> Item | None:
+    """The rules' whole reading of a phrase offered as an answer to a question (#126): its words,
+    its time if it has one, and which kind that makes it.
+
+    Always the rules, for the same reason as `read_time_phrase`, and None when the phrase can't be
+    read at all — an answer that isn't one leaves the question exactly as it was.
+    """
+    zone, now = (context or Context()).moment()
+    try:
+        return parse(text, now=now, tz=zone)
+    except Exception:  # noqa: BLE001 - an unreadable answer is no answer; the question stands
+        return None
 
 
 def interpret_assessed(text: str, context: Context | None = None,

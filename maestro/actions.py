@@ -102,10 +102,21 @@ def _as_interpreter(name: str, value: Any) -> str | None:
     return value
 
 
-# Fields an interpreter fills in about itself. They aren't part of an action's JSON form: they are
-# left out of the schema a model is shown, refused by `from_json`, and omitted by `to_json`, so
-# nothing outside Maestro — a model, an API body — can claim to be the rules.
-INTERNAL_FIELDS = frozenset({"interpreter"})
+def _as_gap(name: str, value: Any) -> str | None:
+    """What this reading is still missing (#126); None means nothing. Set by the splitter from
+    `maestro.confidence.gap`, never by whoever wrote the capture."""
+    from maestro.confidence import GAPS
+
+    if value is not None and value not in GAPS:
+        raise ValueError(f"{name} must be one of {', '.join(GAPS)}")
+    return value
+
+
+# Fields Maestro fills in about a reading rather than taking from it: which interpreter read it, and
+# what the reading is missing. They aren't part of an action's JSON form: they are left out of the
+# schema a model is shown, refused by `from_json`, and omitted by `to_json`, so nothing outside
+# Maestro — a model, an API body — can claim to be the rules or wave its own gap away.
+INTERNAL_FIELDS = frozenset({"interpreter", "gap"})
 
 
 FIELD_TYPES: dict[str, Callable[[str, Any], Any]] = {
@@ -119,6 +130,7 @@ FIELD_TYPES: dict[str, Callable[[str, Any], Any]] = {
     "item_id": _as_item_id,
     "duration": _as_optional_text,
     "interpreter": _as_interpreter,
+    "gap": _as_gap,
 }
 
 
@@ -197,6 +209,9 @@ class _Create(Action):
     urgent: bool = False
     created_at: datetime | None = None  # when the capture happened; apply fills it in when absent
     interpreter: str | None = None  # "rules" or "model", set by the interpreter that read it (#116)
+    # What this reading is missing: "when", "what" or "channel", or None when nothing is (#126).
+    # Set by `maestro.gaps` from `maestro.confidence.gap`; an item saved with one is never scheduled.
+    gap: str | None = None
 
     def _item(self, kind: Kind, now: datetime | None, **extra: Any) -> Item:
         return Item(
@@ -207,6 +222,7 @@ class _Create(Action):
             channels=list(self.channels) if self.channels else None,
             urgent=self.urgent,
             interpreter=self.interpreter,
+            gap=self.gap,
             **extra,
         )
 

@@ -22,9 +22,9 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
-from maestro import __version__, commands, recurrence
+from maestro import __version__, commands, gaps, recurrence
 from maestro import captures as confirmations
-from maestro.actions import apply
+from maestro.actions import Action, apply
 from maestro.interpret import Context, Interpreter, interpret_assessed
 from maestro.models import Capture, CaptureStatus, Item, Kind
 from maestro.notifier import Notifier
@@ -44,6 +44,7 @@ from maestro.voice import (
 )
 
 if TYPE_CHECKING:
+    from maestro.confidence import Confidence
     from maestro.email_in import EmailWorker
     from maestro.escalation import Stage
     from maestro.quiet import QuietHours
@@ -131,6 +132,27 @@ class SnoozeIn(BaseModel):
     duration: str = Field(examples=["10m", "2h", "1d"])
 
 
+class FillIn(BaseModel):
+    """What an item that needs a look is missing: a time, a channel, or the words it never had."""
+
+    phrase: str = Field(min_length=1, max_length=2000, examples=["tomorrow at 9am", "5pm", "email"])
+
+
+class UndoOut(BaseModel):
+    """The token that takes a whole capture back, for as long as it lasts (#126)."""
+
+    id: int
+    expires_at: datetime
+
+
+class CaptureOut(BaseModel):
+    """What one capture did: what was saved, what still needs a look, and how to undo all of it."""
+
+    added: list["ItemOut"]  # saved and, if they have a time, scheduled
+    needs_look: list["ItemOut"]  # saved with a gap: visible, never scheduled
+    undo: UndoOut | None  # null when the capture saved nothing to take back
+
+
 class ItemOut(BaseModel):
     id: int
     text: str
@@ -149,6 +171,9 @@ class ItemOut(BaseModel):
     # Which interpreter read the capture: "rules" or "model" (#116); null on items from before it
     # was recorded, or saved without a capture.
     interpreter: str | None = None
+    # What this item still needs before anything can happen to it: "when", "what" or "channel"
+    # (#126). Null — the normal case — means nothing; an item with one is never scheduled.
+    gap: str | None = None
 
     @classmethod
     def of(cls, item: Item, awaiting: frozenset[int] = frozenset()) -> "ItemOut":
@@ -164,6 +189,7 @@ class ItemOut(BaseModel):
             awaiting_acknowledgement=item.id in awaiting,
             source_text=item.source_text,
             interpreter=item.interpreter,
+            gap=item.gap,
         )
 
 
@@ -334,13 +360,29 @@ def create_app(store: Store, api_token: str | None = None, notifier: Notifier | 
                                                        "maestro_store_info": store_info}),
                                  media_type="text/plain; version=0.0.4")
 
-    @app.post("/items", status_code=201, dependencies=[Depends(require_token)])
-    async def capture(body: CaptureIn, response: Response) -> ItemOut | ProposalOut:
+    async def read_capture(text: str) -> tuple[list[Action], "Confidence"]:
         # Reading the text can mean waiting on a model (#115), so it happens in a worker thread:
         # one slow capture must not stall the scheduler task or every other request. Applying stays
         # on the event loop, where the store has always been used (ADR 0003).
-        captured, confidence = await run_in_threadpool(
-            interpret_assessed, body.text, Context(tz=store.tz), interpreter)
+        return await run_in_threadpool(
+            interpret_assessed, text, Context(tz=store.tz), interpreter)
+
+    @app.post("/items", status_code=201, dependencies=[Depends(require_token)])
+    async def capture(body: CaptureIn, response: Response) -> ItemOut | ProposalOut:
+        """Capture one message, answering with the first item it saved.
+
+        The shape this has always had, kept for existing clients: `POST /capture` reports
+        everything one message did, including what still needs a look (#126).
+        """
+        captured, confidence = await read_capture(body.text)
+        if confirm is not None and confirm.splits:
+            split = gaps.split_apply(store, captured, confidence, "api", "", body.text,
+                                     requestable=requestable)
+            for _ in split.saved:
+                METRICS.inc("maestro_captures_total", source="api")
+            # The first item the capture asked for, gap or no gap: the response has always been one
+            # item, and an item with a gap is still an item — its `gap` field says it is waiting.
+            return ItemOut.of(split.saved[0])
         if confirm and confirmations.needs_confirmation(captured, confidence):
             proposal, _ = confirmations.propose(store, captured, confidence, "api", "", body.text,
                                                 ttl=confirm.ttl)
@@ -357,6 +399,66 @@ def create_app(store: Store, api_token: str | None = None, notifier: Notifier | 
             # GET /items. Reporting several from one capture is part of #117.
             log.info("One capture saved %d items; the response names the first", len(results))
         return ItemOut.of(results[0].saved)
+
+    @app.post("/capture", status_code=201, dependencies=[Depends(require_token)])
+    async def capture_split(body: CaptureIn, response: Response) -> CaptureOut | ProposalOut:
+        """Capture one message and say what became of all of it (#126): what was added, what still
+        needs a look, and the token that takes the whole lot back.
+
+        Under `MAESTRO_CONFIRM=unsure` an unsure message is still held whole, and this answers 202
+        with the proposal, exactly as `POST /items` does.
+        """
+        captured, confidence = await read_capture(body.text)
+        if confirm is not None and not confirm.splits and \
+                confirmations.needs_confirmation(captured, confidence):
+            proposal, _ = confirmations.propose(store, captured, confidence, "api", "", body.text,
+                                                ttl=confirm.ttl)
+            response.status_code = status.HTTP_202_ACCEPTED
+            return ProposalOut.of(proposal)
+        if confirm is not None and confirm.splits:
+            split = gaps.split_apply(store, captured, confidence, "api", "", body.text,
+                                     requestable=requestable)
+        else:  # MAESTRO_CONFIRM=never: everything is applied, and there is nothing to undo
+            split = gaps.applied(apply(store, captured, source="api", requestable=requestable))
+        for _ in split.saved:
+            METRICS.inc("maestro_captures_total", source="api")
+        undo = UndoOut(id=split.undo_id, expires_at=split.undo_until) \
+            if split.undo_id is not None and split.undo_until is not None and split.added else None
+        return CaptureOut(added=[ItemOut.of(i) for i in split.added],
+                          needs_look=[ItemOut.of(i) for i in split.needs_look], undo=undo)
+
+    @app.get("/needs-look", dependencies=[Depends(require_token)])
+    async def list_needs_look() -> list[ItemOut]:
+        """Readings saved but waiting for an answer (#126). They never expire, so this is the
+        whole list however old."""
+        return [ItemOut.of(item) for item in store.needs_look()]
+
+    def gapped_or_404(item_id: int) -> Item:
+        item = store.get(item_id)
+        if item is None or item.gap is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, f"No item #{item_id} needing a look")
+        return item
+
+    @app.post("/needs-look/{item_id}", dependencies=[Depends(require_token)])
+    async def fill_needs_look(item_id: int, body: FillIn) -> ItemOut:
+        """Answer what an item is missing: a time for `when`, a channel for `channel`, or the words
+        for `what`. A phrase that doesn't answer it leaves the item exactly as it was."""
+        item = gapped_or_404(item_id)
+        # On the event loop, not in a worker thread: this writes to the store, and the one SQLite
+        # connection is only ever used from this thread (ADR 0003). Only *reading* a capture can
+        # wait on a model and so belongs in a thread; an answer is read by the rules alone (#126).
+        filled = gaps.fill(store, item, body.phrase, requestable)
+        if filled is None:
+            wanted = gaps.WANTED.get(str(item.gap), "an answer")
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT,
+                                f"Couldn't read {wanted} in that; #{item_id} still needs {wanted}")
+        return ItemOut.of(filled)
+
+    @app.delete("/needs-look/{item_id}", status_code=204, dependencies=[Depends(require_token)])
+    async def dismiss_needs_look(item_id: int) -> Response:
+        """Drop a reading rather than answering it."""
+        gaps.dismiss(store, gapped_or_404(item_id))
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @app.get("/captures", dependencies=[Depends(require_token)])
     async def list_captures(status_filter: str | None = Query(default=None, alias="status")) -> \

@@ -48,6 +48,10 @@ class Item:
     # The confirmed capture this item came from (#117), so it can be undone. None for items saved
     # directly, or from before confirmations existed; those can't be undone.
     capture_id: int | None = None
+    # What this item still needs before it can be acted on: "when", "what" or "channel"
+    # (#126, ADR 0017). None — the normal case — means it is complete. An item with a gap is saved
+    # and visible but never scheduled and never delivered; answering fills it in.
+    gap: str | None = None
     id: int | None = None
 
 

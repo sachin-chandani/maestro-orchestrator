@@ -132,6 +132,7 @@ def test_migrating_from_the_schema_before_tasks_keeps_every_note_a_note(fresh):
         store.conn.execute("DROP INDEX IF EXISTS idx_items_kind")
         store.conn.execute("ALTER TABLE items DROP COLUMN interpreter")  # added later, by #116
         store.conn.execute("ALTER TABLE items DROP COLUMN capture_id")  # added later, by #117
+        store.conn.execute("ALTER TABLE items DROP COLUMN gap")  # added later, by #126
         store.conn.execute("UPDATE schema_version SET version = %s", (before,))
         # Rows as a schema-2 Maestro wrote them, so in the columns it had.
         for text, kind, due in [("Renew the passport", "note", None),
@@ -161,6 +162,7 @@ def test_migrating_from_the_schema_before_the_interpreter_was_recorded(fresh):
     with open_store(pgsupport.URL, tz=TZ) as store:  # migrate fully, then wind the schema back
         store.conn.execute("ALTER TABLE items DROP COLUMN interpreter")
         store.conn.execute("ALTER TABLE items DROP COLUMN capture_id")  # added later, by #117
+        store.conn.execute("ALTER TABLE items DROP COLUMN gap")  # added later, by #126
         store.conn.execute("UPDATE schema_version SET version = 3")
         # Rows as a schema-3 Maestro wrote them, so in the columns it had.
         store.conn.execute(
@@ -170,7 +172,7 @@ def test_migrating_from_the_schema_before_the_interpreter_was_recorded(fresh):
             " 'renew the passport', NULL, false)", (LATER, NOW, NOW))
 
     with open_store(pgsupport.URL, tz=TZ) as store:
-        assert store.schema_version == len(MIGRATIONS) == 5
+        assert store.schema_version == len(MIGRATIONS) == 6
         old_reminder, old_task = store.list()
         assert (old_reminder.text, old_reminder.channels, old_reminder.urgent, old_reminder.interpreter) \
             == ("Call mom", ["twilio_sms"], True, None)
@@ -189,6 +191,7 @@ def test_migrating_from_the_schema_before_confirmations(fresh):
     with open_store(pgsupport.URL, tz=TZ) as store:  # migrate fully, then wind the schema back
         store.conn.execute("DROP TABLE captures")
         store.conn.execute("ALTER TABLE items DROP COLUMN capture_id")
+        store.conn.execute("ALTER TABLE items DROP COLUMN gap")  # added later, by #126
         store.conn.execute("UPDATE schema_version SET version = 4")
         # A row as a schema-4 Maestro wrote it, so in the columns it had.
         store.conn.execute(
@@ -197,7 +200,7 @@ def test_migrating_from_the_schema_before_confirmations(fresh):
             " 'call mom tomorrow at 5pm', NULL, false, 'rules')", (LATER, NOW))
 
     with open_store(pgsupport.URL, tz=TZ) as store:
-        assert store.schema_version == len(MIGRATIONS) == 5
+        assert store.schema_version == len(MIGRATIONS) == 6
         (item,) = store.list()
         assert (item.text, item.interpreter, item.capture_id) == ("Call mom", "rules", None)
         proposal, created = store.add_capture(Capture(
@@ -207,6 +210,36 @@ def test_migrating_from_the_schema_before_confirmations(fresh):
                                                  NOW + timedelta(minutes=10))
         store.link_capture(proposal.id, [item.id])
         assert store.get(item.id).capture_id == proposal.id
+
+
+def test_migrating_from_the_schema_before_readings_needed_a_look(fresh):
+    """Schema 5 is the release before #126. Its items come through with no gap — nothing suddenly
+    needs a look after an upgrade — and the new column works afterwards. Mirrors the SQLite test
+    in `test_split.py`."""
+    with open_store(pgsupport.URL, tz=TZ) as store:  # migrate fully, then wind the schema back
+        store.conn.execute("ALTER TABLE items DROP COLUMN gap")
+        store.conn.execute("UPDATE schema_version SET version = 5")
+        # Rows as a schema-5 Maestro wrote them, so in the columns it had.
+        store.conn.execute(
+            "INSERT INTO items (text, kind, status, due_at, created_at, source_text, channels,"
+            " urgent, interpreter, capture_id) VALUES ('Call mom', 'reminder', 'pending', %s, %s,"
+            " 'call mom tomorrow at 5pm', NULL, false, 'rules', NULL),"
+            " ('Pick up the kids before', 'task', 'pending', NULL, %s, 'pick up the kids before',"
+            " NULL, false, 'rules', NULL)", (LATER, NOW, NOW))
+
+    with open_store(pgsupport.URL, tz=TZ) as store:
+        assert store.schema_version == len(MIGRATIONS) == 6
+        reminder_row, task_row = store.list()
+        assert (reminder_row.text, reminder_row.gap) == ("Call mom", None)
+        assert (task_row.text, task_row.gap) == ("Pick up the kids before", None)
+        assert store.needs_look() == []  # an upgrade never invents a question
+        assert [i.id for i in store.due(LATER)] == [reminder_row.id]  # and never silences one
+
+        waiting = store.add(Item(text="Pack before", kind=Kind.TASK, created_at=NOW, gap="when"))
+        assert store.get(waiting.id).gap == "when"
+        assert [i.id for i in store.needs_look()] == [waiting.id]
+        assert store.fill_gap(waiting.id, due_at=LATER)
+        assert store.get(waiting.id).gap is None and store.get(waiting.id).kind is Kind.REMINDER
 
 
 def test_tasks_are_listed_after_reminders_and_before_notes(store):
@@ -514,6 +547,7 @@ def test_migrates_a_version_1_database_with_real_rows(store):
     store.conn.execute("ALTER TABLE items DROP COLUMN urgent")
     store.conn.execute("ALTER TABLE items DROP COLUMN IF EXISTS interpreter")  # #116
     store.conn.execute("ALTER TABLE items DROP COLUMN IF EXISTS capture_id")  # #117
+    store.conn.execute("ALTER TABLE items DROP COLUMN IF EXISTS gap")  # #126
     store.conn.execute(
         "INSERT INTO items (text, kind, status, due_at, created_at, source_text)"
         " VALUES ('!take insulin', 'reminder', 'pending', %s, %s, '!take insulin at 11pm')",

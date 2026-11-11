@@ -13,6 +13,8 @@ export type IsoDateTime = string
 /** 'task' is something to do with no time: never delivered, done works on it (#114). */
 export type ItemKind = 'reminder' | 'task' | 'note'
 export type ItemStatus = 'pending' | 'fired' | 'done'
+/** What a saved reading is still missing, when it is waiting for an answer (#126, ADR 0017). */
+export type ItemGap = 'when' | 'what' | 'channel'
 
 /** A delivery channel name, as in MAESTRO_CHANNELS: "twilio_sms", "telegram", "email", "ntfy"… */
 export type ChannelName = string
@@ -39,6 +41,12 @@ export interface Item {
   /** Delivered, and nobody has said done or snooze yet. */
   awaiting_acknowledgement: boolean
   source_text: string
+  /**
+   * What this item still needs before anything can happen to it (#126, ADR 0017). null — the
+   * normal case — means nothing does; an item with a gap is saved and visible but is never
+   * scheduled and never delivered until it is answered. The screen for these is #22 / #104.
+   */
+  gap?: ItemGap | null
 
   // Shown by the design (docs/design/mobile/Today.dc.html) but NOT sent by the backend yet.
   // MockClient fills them; HttpClient leaves them undefined until the backend adds them.

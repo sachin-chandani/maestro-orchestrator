@@ -11,7 +11,7 @@ import pytest
 from conftest import TZ, dt
 
 from maestro import captures
-from maestro.captures import Confirmation, Outcome
+from maestro.captures import Confirmation, ConfirmMode, Outcome
 from maestro.config import Config, confirmation
 from maestro.interpret import Context, interpret_assessed
 from maestro.models import CaptureStatus, Item, Kind
@@ -46,16 +46,18 @@ def propose(store, text=UNSURE, now=NOW, ttl=timedelta(hours=24), dedupe_key=Non
 
 
 def test_confirmation_is_off_by_default():
-    assert confirmation(Config()) is None
-    assert confirmation(Config.from_env({})) is None
-    assert confirmation(Config.from_env({"MAESTRO_CONFIRM": "unsure"})) == \
-        Confirmation(ttl=timedelta(hours=24))
+    # The default is `split` (#126, ADR 0017); only `never` turns every question off.
+    assert confirmation(Config.from_env({"MAESTRO_CONFIRM": "never"})) is None
+    assert confirmation(Config()).mode is ConfirmMode.SPLIT
+    assert confirmation(Config.from_env({})).mode is ConfirmMode.SPLIT
+    unsure = confirmation(Config.from_env({"MAESTRO_CONFIRM": "unsure"}))
+    assert (unsure.ttl, unsure.mode) == (timedelta(hours=24), ConfirmMode.UNSURE)
     assert confirmation(Config.from_env({"MAESTRO_CONFIRM": "unsure",
                                          "MAESTRO_CONFIRM_HOURS": "2"})).ttl == timedelta(hours=2)
 
 
 @pytest.mark.parametrize("env,complaint", [
-    ({"MAESTRO_CONFIRM": "maybe"}, "must be never or unsure"),
+    ({"MAESTRO_CONFIRM": "maybe"}, "must be split, unsure or never"),
     ({"MAESTRO_CONFIRM": "unsure", "MAESTRO_CONFIRM_HOURS": "0"}, "between 0 and 168"),
 ])
 def test_a_bad_confirm_setting_is_one_sentence(env, complaint):
@@ -63,11 +65,13 @@ def test_a_bad_confirm_setting_is_one_sentence(env, complaint):
         confirmation(Config.from_env(env))
 
 
-def test_with_the_default_even_an_unsure_capture_is_applied_at_once(tmp_path, monkeypatch, capsys):
-    """Rules-only behaviour unchanged: no question, no captures row, the item just saves."""
+def test_with_never_even_an_unsure_capture_is_applied_at_once(tmp_path, monkeypatch, capsys):
+    """`MAESTRO_CONFIRM=never` keeps the behaviour Maestro had before #117 and #126: no question,
+    no captures row, nothing held back, the item just saves."""
     from maestro.cli import main
 
     monkeypatch.setenv("MAESTRO_CHANNELS", "console")
+    monkeypatch.setenv("MAESTRO_CONFIRM", "never")
     db = str(tmp_path / "m.db")
     assert main(["--db", db, "add", *UNSURE.split()]) == 0
     assert "Did you mean" not in capsys.readouterr().out
@@ -255,11 +259,12 @@ def test_migrating_from_the_schema_before_confirmations(tmp_path):
                    interpreter="rules"))
         s.conn.execute("DROP TABLE captures")
         s.conn.execute("ALTER TABLE items DROP COLUMN capture_id")
+        s.conn.execute("ALTER TABLE items DROP COLUMN gap")  # added later, by #126
         s.conn.execute("PRAGMA user_version = 11")
         s.conn.commit()
 
     with Store(path, tz=TZ) as s:
-        assert s.schema_version == len(MIGRATIONS) == 12
+        assert s.schema_version == len(MIGRATIONS) == 13
         (item,) = s.list()
         assert (item.text, item.interpreter, item.capture_id) == ("Call mom", "rules", None)
         capture = propose(s)
@@ -276,7 +281,8 @@ def telegram_bot(store, reply=None):
     from maestro.telegram import TelegramBot, TelegramClient
 
     transport = FakeTransport()
-    bot = TelegramBot(TelegramClient(transport), store, str(CHAT), confirm=Confirmation())
+    bot = TelegramBot(TelegramClient(transport), store, str(CHAT),
+                      confirm=Confirmation(mode=ConfirmMode.UNSURE))
     return transport, bot
 
 
@@ -351,7 +357,7 @@ def sms_handler(store):
 
     from maestro.sms import SmsHandler
 
-    return SmsHandler(store, SMS_TOKEN, OWNER, confirm=Confirmation()), OWNER
+    return SmsHandler(store, SMS_TOKEN, OWNER, confirm=Confirmation(mode=ConfirmMode.UNSURE)), OWNER
 
 
 def test_sms_asks_and_yes_undo_work_by_reply(store):
@@ -390,7 +396,8 @@ def api_client(store):
 
     from maestro.api import create_app
 
-    with TestClient(create_app(store, api_token="t0ken", confirm=Confirmation())) as client:
+    with TestClient(create_app(store, api_token="t0ken",
+                               confirm=Confirmation(mode=ConfirmMode.UNSURE))) as client:
         client.headers["Authorization"] = "Bearer t0ken"
         yield client
 
@@ -476,4 +483,4 @@ def test_cli_rejects_a_bad_confirm_setting_in_one_sentence(tmp_path, monkeypatch
     monkeypatch.setenv("MAESTRO_CHANNELS", "console")
     monkeypatch.setenv("MAESTRO_CONFIRM", "maybe")
     assert main(["--db", str(tmp_path / "m.db"), "add", "milk"]) == 2
-    assert "MAESTRO_CONFIRM must be never or unsure" in capsys.readouterr().err
+    assert "MAESTRO_CONFIRM must be split, unsure or never" in capsys.readouterr().err

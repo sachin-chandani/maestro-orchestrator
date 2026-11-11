@@ -1,4 +1,8 @@
-"""How sure the rules are that they understood a capture (#116).
+"""How sure the rules are that they understood a capture (#116), and what one reading is missing (#126).
+
+Two questions, one set of evidence. `assess` judges a whole message — that is what
+`MAESTRO_INTERPRETER=auto` and `MAESTRO_CONFIRM=unsure` ask. `gap` judges one proposed action on
+its own and names what it lacks, which is what `MAESTRO_CONFIRM=split` asks (ADR 0017).
 
 `MAESTRO_INTERPRETER=auto` asks a model only when the rules are unsure. "Sure" here means the
 rules' *reading* holds together, not that they used up the words: a parse that swallowed
@@ -22,16 +26,29 @@ word count, length or score to tune:
 A capture with no doubts is one the rules read on their own. Short, plain captures with no time
 ("milk", "renew the passport") are deliberately sure: there is nothing for a model to add, and
 sending them away would cost time, money and privacy for nothing.
+
+`gap` asks a narrower question of one action: not "might this be wrong?" but "is something
+plainly *missing*?". A doubt is a reason to ask a model; a gap is a reason to ask the person. The
+difference matters because a gap holds a reading back from being scheduled, so the rule is
+deliberately strict: **a reading that already has a usable time never has a `when` gap.** "Work
+from 9am to 5pm" is doubted (the rules read 9am and left 5pm) but it is not a gap — it has a time,
+it fires at 9am, and that is what it did before ADR 0017. Only a reading with no time at all, in a
+message that names one the rules cannot read, is held back. Nothing that used to fire stops firing.
 """
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 
-from maestro.models import Item
+from maestro.models import Item, Kind
 from maestro.parser import TODO_VERBS
 
 DOUBTS = ("time_left", "dangling_time_word", "unread_time", "several_requests",
           "several_sentences", "forwarded", "filler")
+
+# What one reading can be missing (#126). Ordered most to least fundamental: a reading with no
+# usable words at all is asked about as `what`, whatever else it also lacks.
+GAPS = ("what", "when", "channel")
 
 # Words that only carry meaning next to a time. At the very end of the saved text, the time they
 # referred to has been taken away ("before 3pm" -> "before"). "at", "on" and "by" are already
@@ -121,3 +138,49 @@ def assess(source: str, item: Item, again: Item | None) -> Confidence:
     if _FILLER_RE.search(text):
         doubts.append("filler")
     return Confidence(tuple(doubts))
+
+
+# --- what one reading is missing (#126, ADR 0017) ---------------------------------------------
+
+
+def _says_nothing(text: str) -> bool:
+    """The saved text carries no words of its own: dictation filler and punctuation, nothing else."""
+    return not _FILLER_RE.sub("", text).strip(" .,;:!?-…")
+
+
+def _names_a_time_it_cannot_read(text: str) -> bool:
+    """The text points at a time the rules have no rule for ("sometime next week", "before"), so a
+    reading with no time has lost one rather than never had one.
+
+    Only consulted for a reading that has *no* time: a plain "call the plumber" names no time, so
+    it stays the task it has always been rather than becoming a question.
+    """
+    return bool(_UNREAD_TIME_RE.search(text) or _DANGLING_RE.search(text)
+                or _DANGLING_MID_RE.search(text) or _EMPTY_RANGE_RE.search(text)
+                or _LONE_PART_OF_DAY_RE.search(text))
+
+
+def gap(item: Item, dropped: Sequence[str] = ()) -> str | None:
+    """What this one reading is missing, as a name from `GAPS`, or None when it can be acted on.
+
+    Pure and offline, and about this reading alone: a message that asks for three things has each
+    of them judged separately, so one unanswerable part never holds back the other two.
+
+    `item` is the reading as it would be saved, with its channels already narrowed to the ones this
+    deployment can honour; `dropped` is what that narrowing removed.
+
+    Note what is deliberately *not* a gap. A channel the deployment hasn't got is not: the item is
+    saved, delivered on the default channels and the person is told so, which is ADR 0011's
+    behaviour and loses nothing. Holding it back instead would stop a reminder that has a perfectly
+    good time from ever going out. `channel` stays in `GAPS` for an interpreter that can tell a
+    required channel from a preferred one (ADR 0017); the rules can't, so they never open one.
+    """
+    if _says_nothing(item.text):
+        return "what"
+    # Something to do, with no time, in a message that named one: the rules lost it, so ask rather
+    # than file it untimed. Only a task — a note is a fact to keep and never wanted a time, so
+    # "the best time to call dad is after dinner" is read exactly right and is left alone.
+    if (item.kind is Kind.TASK and item.due_at is None and item.recurrence is None
+            and _names_a_time_it_cannot_read(item.text)):
+        return "when"
+    return None

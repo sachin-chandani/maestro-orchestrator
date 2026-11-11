@@ -722,3 +722,125 @@ def test_linked_items_belong_to_their_capture_until_deleted(store):
     store.delete(first.id)
     assert [i.id for i in store.items_for_capture(saved.id)] == [second.id]
     assert store.items_for_capture(saved.id + 999) == []
+
+
+# --- readings that need a look (#126) ---------------------------------------------------------
+
+
+def needing(store, gap="when", text="Call the plumber sometime", created=None, owner=("telegram", "42")):
+    """An item saved with a gap, linked to the capture that produced it, as `split_apply` does."""
+    capture, _ = store.add_capture(Capture(
+        status=CaptureStatus.APPLIED, actions=ACTIONS_JSON, source=owner[0], address=owner[1],
+        source_text=text, interpreter="rules", doubts="unread_time", created_at=created or NOW,
+        expires_at=(created or NOW) + timedelta(minutes=10),
+        undo_until=(created or NOW) + timedelta(minutes=10), decided_at=created or NOW,
+        decided_via=owner[0]))
+    item = store.add(Item(text=text, kind=Kind.TASK, created_at=created or NOW, source_text=text,
+                          gap=gap))
+    store.link_capture(capture.id, [item.id])
+    return store.get(item.id), capture
+
+
+def test_a_gap_survives_a_round_trip_and_an_item_without_one_reads_as_none(store):
+    item, _ = needing(store)
+    assert item.gap == "when"
+    assert store.get(reminder(store).id).gap is None
+
+
+def test_an_applied_capture_keeps_its_undo_window_as_given(store):
+    """A split capture is stored already applied, so its undo window runs from the moment it is
+    saved rather than from an answer that never comes (#126)."""
+    _, capture = needing(store)
+    stored = store.get_capture(capture.id)
+    assert stored.status == CaptureStatus.APPLIED
+    assert stored.undo_until == NOW + timedelta(minutes=10) and stored.decided_via == "telegram"
+    # And it is undoable on those terms, which is what makes the token worth handing out.
+    assert store.undo_capture(capture.id, "telegram", NOW + timedelta(minutes=5))
+
+
+def test_needs_look_lists_newest_first_and_only_the_owners_own(store):
+    mine, _ = needing(store, created=NOW, owner=("telegram", "42"))
+    newer, _ = needing(store, text="Pack before", created=TOMORROW, owner=("telegram", "42"))
+    other, _ = needing(store, text="Theirs", owner=("telegram", "7"))
+    # Newest first, and the id breaks a tie: `other` was saved at the same moment as `mine`.
+    assert [i.id for i in store.needs_look()] == [newer.id, other.id, mine.id]
+    assert [i.id for i in store.needs_look("telegram", "42")] == [newer.id, mine.id]
+    assert [i.id for i in store.needs_look("telegram", "7")] == [other.id]
+    assert store.needs_look("twilio_sms", "42") == []
+
+
+def test_needs_look_can_be_limited_to_recent_ones(store):
+    """The bare-reply shortcut only reaches a question just asked; the item itself never expires."""
+    old, _ = needing(store, text="Old one", created=NOW)
+    fresh, _ = needing(store, text="Fresh one", created=NOW + timedelta(hours=2))
+    assert [i.id for i in store.needs_look(since=NOW + timedelta(hours=1))] == [fresh.id]
+    assert [i.id for i in store.needs_look()] == [fresh.id, old.id]  # still both, however old
+
+
+def test_a_finished_reading_is_no_longer_waiting(store):
+    item, _ = needing(store)
+    store.set_status(item.id, Status.DONE)
+    assert store.needs_look() == []
+
+
+def test_filling_a_time_makes_it_a_pending_reminder_exactly_once(store):
+    item, _ = needing(store)
+    assert store.fill_gap(item.id, due_at=LATER)
+    filled = store.get(item.id)
+    assert (filled.gap, filled.kind, filled.status, filled.due_at) == \
+        (None, Kind.REMINDER, Status.PENDING, LATER)
+    # The check-and-set: a second answer to the same question changes nothing.
+    assert not store.fill_gap(item.id, due_at=TOMORROW)
+    assert store.get(item.id).due_at == LATER
+    assert store.needs_look() == []
+
+
+def test_a_filled_reading_is_delivered_and_an_unfilled_one_never_is(store):
+    """The whole point of a gap: `due` skips it until somebody answers, however its time reads."""
+    item, _ = needing(store)
+    store.reschedule(item.id, NOW)  # a time, but the gap is still open
+    assert store.get(item.id).gap == "when" and store.due(NOW) == []
+    assert store.fill_gap(item.id, due_at=NOW)
+    assert [i.id for i in store.due(NOW)] == [item.id]
+
+
+def test_filling_a_channel_or_a_description_leaves_the_rest_alone(store):
+    channel, _ = needing(store, gap="channel", text="Text me the code")
+    assert store.fill_gap(channel.id, channels=["telegram"])
+    assert store.get(channel.id).channels == ["telegram"]
+    assert store.get(channel.id).kind is Kind.TASK  # no time was given, so it is not a reminder
+
+    described, _ = needing(store, gap="what", text="Um")
+    assert store.fill_gap(described.id, text="Call the dentist", due_at=LATER)
+    assert (store.get(described.id).text, store.get(described.id).due_at) == ("Call the dentist", LATER)
+
+
+def test_filling_a_one_off_time_clears_a_repeat_that_was_read_by_mistake(store):
+    item, _ = needing(store)
+    store.fill_gap(item.id, due_at=LATER, recurrence="daily")
+    assert store.get(item.id).recurrence == "daily"
+    store.set_status(item.id, Status.PENDING)
+    assert not store.fill_gap(item.id, due_at=LATER)  # the gap is gone; nothing more to fill
+
+
+def test_filling_something_that_is_gone_or_never_waited_says_no(store):
+    plain = reminder(store)
+    assert not store.fill_gap(plain.id, due_at=LATER)  # it never had a gap
+    assert not store.fill_gap(plain.id + 999, due_at=LATER)
+    item, _ = needing(store)
+    store.delete(item.id)
+    assert not store.fill_gap(item.id, due_at=LATER)
+
+
+def test_filling_words_can_change_the_kind_the_time_implied(store):
+    """`kind` overrides what `due_at` would make it, and the two together must be one assignment
+    per column: PostgreSQL refuses an UPDATE that sets the same column twice (#126)."""
+    item, _ = needing(store, gap="what", text="Um")
+    assert store.fill_gap(item.id, due_at=LATER, text="Call the dentist", kind=Kind.REMINDER)
+    filled = store.get(item.id)
+    assert (filled.text, filled.kind, filled.due_at, filled.gap) == \
+        ("Call the dentist", Kind.REMINDER, LATER, None)
+
+    untimed, _ = needing(store, gap="what", text="Uh")
+    assert store.fill_gap(untimed.id, text="Renew the passport", kind=Kind.TASK)
+    assert (store.get(untimed.id).kind, store.get(untimed.id).due_at) == (Kind.TASK, None)
