@@ -36,6 +36,11 @@ packages = ["maestro"]
 # otherwise skip; without a build the wheel still works and /app explains how to build.
 artifacts = ["maestro/web/app/**"]
 
+[tool.hatch.build.targets.sdist]
+# `python -m build` builds the wheel from the sdist, so the sdist must carry the app too (#111);
+# scripts/check_wheel_app.py guards this in CI.
+artifacts = ["maestro/web/app/**"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 filterwarnings = [

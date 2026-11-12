@@ -56,6 +56,25 @@ jobs:
       - run: npm test
       - run: npm run build
 
+  # Build the wheel the way the release does and fail if the React app is missing (#111).
+  wheel:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web-app/package-lock.json
+      - run: npm ci && npm run build
+        working-directory: web-app
+      - run: pip install build
+      - run: python -m build
+      - run: python scripts/check_wheel_app.py dist/*.whl
+
   audit:
     runs-on: ubuntu-latest
     steps:

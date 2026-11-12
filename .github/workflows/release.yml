@@ -35,6 +35,8 @@ jobs:
       - run: npm ci && npm run build
         working-directory: web-app
       - run: python -m build
+      # The wheel is built from the sdist; make sure neither dropped the app (#111).
+      - run: python scripts/check_wheel_app.py dist/*.whl
       - uses: actions/upload-artifact@v4
         with:
           name: dist
