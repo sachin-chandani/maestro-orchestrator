@@ -892,3 +892,14 @@ def test_touching_a_device_records_when_it_was_seen(store):
     store.touch_device(saved.id, LATER)
     seen = store.get_device(saved.id)
     assert seen is not None and seen.last_seen_at == LATER
+
+
+# --- once-a-day marks (#128) -----------------------------------------------------------------
+
+
+def test_a_day_is_claimed_exactly_once_per_name(store):
+    today = NOW.date()
+    assert store.claim_daily("wrapup", today)
+    assert not store.claim_daily("wrapup", today)  # second claim, any process: no
+    assert store.claim_daily("wrapup", today + timedelta(days=1))  # tomorrow is a new day
+    assert store.claim_daily("digest", today)  # another name has its own days

@@ -17,6 +17,7 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from datetime import time as dt_time
 from typing import TYPE_CHECKING
 
 from maestro import recurrence
@@ -261,7 +262,8 @@ def fire_due(store: Store, notifier: Notifier, now: datetime | None = None, leas
 
 
 def tick(store: Store, notifier: Notifier, lease: Lease | None = None,
-         escalation: "list[Stage] | None" = None, quiet: "QuietHours | None" = None) -> None:
+         escalation: "list[Stage] | None" = None, quiet: "QuietHours | None" = None,
+         wrapup_at: "dt_time | None" = None) -> None:
     """One scheduler pass for a long-running loop: errors are logged and counted, never raised."""
     try:
         fire_due(store, notifier, lease=lease, escalation=escalation, quiet=quiet)
@@ -270,6 +272,12 @@ def tick(store: Store, notifier: Notifier, lease: Lease | None = None,
         from maestro import captures
 
         captures.expire(store)
+        if wrapup_at is not None:
+            # The evening wrap-up (#128): claim_daily keeps it to one notice a day between every
+            # process that ticks, so no lease check is needed here.
+            from maestro import wrapup
+
+            wrapup.maybe_send(store, notifier, wrapup_at)
     except Exception:
         METRICS.inc("maestro_scheduler_errors_total")
         log.exception("Scheduler tick failed; retrying next tick")
@@ -277,14 +285,15 @@ def tick(store: Store, notifier: Notifier, lease: Lease | None = None,
 
 def run_forever(store: Store, notifier: Notifier, interval: float = 30.0,
                 wait: Callable[[float], None] = time.sleep, lease: Lease | None = None,
-                escalation: "list[Stage] | None" = None, quiet: "QuietHours | None" = None) -> None:
+                escalation: "list[Stage] | None" = None, quiet: "QuietHours | None" = None,
+                wrapup_at: "dt_time | None" = None) -> None:
     """Fire due reminders every `interval` seconds. `wait` can do useful work while it waits,
     e.g. long-poll a chat bot for new messages. The lease is released on the way out (Ctrl+C,
     SIGTERM handled as an exception) so a standby scheduler can take over at once."""
     lease = lease or Lease.for_interval(interval)
     try:
         while True:
-            tick(store, notifier, lease, escalation, quiet)
+            tick(store, notifier, lease, escalation, quiet, wrapup_at)
             wait(interval)
     finally:
         lease.release(store)

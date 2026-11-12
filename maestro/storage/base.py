@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import builtins
 from abc import ABC, abstractmethod
-from datetime import datetime
+from datetime import date, datetime
 from types import TracebackType
 from typing import Self
 from zoneinfo import ZoneInfo
@@ -138,6 +138,13 @@ class Store(ABC):
     @abstractmethod
     def items_for_capture(self, capture_id: int) -> builtins.list[Item]:
         """The items a confirmed capture created (empty once undone)."""
+
+    # --- once-a-day marks (#128) -------------------------------------------------------------
+
+    @abstractmethod
+    def claim_daily(self, name: str, day: date) -> bool:
+        """Claim `name` for `day`, exactly once across every process: True for the claimer,
+        False ever after. How the evening wrap-up sends one notice however many schedulers run."""
 
     # --- devices signed in with their own token (#108, ADR 0018) ----------------------------
 

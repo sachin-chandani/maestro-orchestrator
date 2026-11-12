@@ -20,7 +20,7 @@ import builtins
 import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 import psycopg
@@ -154,6 +154,14 @@ MIGRATIONS: list[list[str]] = [
             created_at   TIMESTAMPTZ NOT NULL,
             last_seen_at TIMESTAMPTZ,
             revoked_at   TIMESTAMPTZ
+        )""",
+    ],
+    # 8: once-a-day marks (#128), matching SQLite's 15.
+    [
+        """CREATE TABLE IF NOT EXISTS daily_marks (
+            name TEXT NOT NULL,
+            day  DATE NOT NULL,
+            PRIMARY KEY (name, day)
         )""",
     ],
 ]
@@ -669,6 +677,16 @@ class PostgresStore(Store):
     def items_for_capture(self, capture_id: int) -> builtins.list[Item]:
         rows = self._execute("SELECT * FROM items WHERE capture_id = %s ORDER BY id", (capture_id,))
         return [self._item(r) for r in rows]
+
+    # --- once-a-day marks (#128) -------------------------------------------------------------
+
+    def claim_daily(self, name: str, day: date) -> bool:
+        with self._transaction():
+            cur = self._execute(
+                "INSERT INTO daily_marks (name, day) VALUES (%s, %s) ON CONFLICT DO NOTHING",
+                (name, day),
+            )
+        return cur.rowcount > 0
 
     # --- devices (#108, ADR 0018) -----------------------------------------------------------
 

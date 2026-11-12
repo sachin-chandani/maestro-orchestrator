@@ -12,6 +12,7 @@ import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import datetime
+from datetime import time as dt_time
 from importlib.resources import files
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -23,7 +24,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
-from maestro import __version__, commands, devices, feed, gaps, recurrence
+from maestro import __version__, commands, devices, feed, gaps, recurrence, suggest
 from maestro import captures as confirmations
 from maestro.actions import Action, apply
 from maestro.interpret import Context, Interpreter, interpret_assessed
@@ -66,12 +67,13 @@ then restart <code>maestro serve</code>. The current web UI is at <a href="/">/<
 
 
 async def _scheduler_loop(store: Store, notifier: Notifier, interval: float,
-                          escalation: "list[Stage] | None" = None, quiet: "QuietHours | None" = None) -> None:
+                          escalation: "list[Stage] | None" = None, quiet: "QuietHours | None" = None,
+                          wrapup_at: "dt_time | None" = None) -> None:
     # Runs on the event loop with the request handlers, keeping SQLite access single-threaded.
     lease = Lease.for_interval(interval)
     try:
         while True:
-            tick(store, notifier, lease, escalation, quiet)
+            tick(store, notifier, lease, escalation, quiet, wrapup_at)
             await asyncio.sleep(interval)
     finally:  # cancelled at shutdown: hand over to any standby scheduler right away
         lease.release(store)
@@ -252,7 +254,8 @@ def create_app(store: Store, api_token: str | None = None, notifier: Notifier | 
                escalation: "list[Stage] | None" = None, quiet: "QuietHours | None" = None,
                requestable: frozenset[str] | None = None,
                interpreter: Interpreter | None = None,
-               confirm: "confirmations.Confirmation | None" = None) -> FastAPI:
+               confirm: "confirmations.Confirmation | None" = None,
+               wrapup_at: "dt_time | None" = None) -> FastAPI:
     """Build the app. With a notifier, due reminders are also fired from a background task;
     with a bot (maestro.telegram.TelegramBot), chat messages are handled from another; with an
     SmsHandler (maestro.sms), the Twilio webhook is enabled. `public_url` is the externally visible
@@ -265,7 +268,8 @@ def create_app(store: Store, api_token: str | None = None, notifier: Notifier | 
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         tasks: list[asyncio.Task[None]] = []
         if notifier:
-            tasks.append(asyncio.create_task(_scheduler_loop(store, notifier, interval, escalation, quiet)))
+            tasks.append(asyncio.create_task(
+                _scheduler_loop(store, notifier, interval, escalation, quiet, wrapup_at)))
         if bot:
             tasks.append(asyncio.create_task(_bot_loop(bot)))
         if email:
@@ -551,6 +555,26 @@ def create_app(store: Store, api_token: str | None = None, notifier: Notifier | 
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT,
                                 f"Couldn't read {wanted} in that; #{item_id} still needs {wanted}")
         return ItemOut.of(filled)
+
+    @app.get("/needs-look/{item_id}/suggestions", dependencies=[Depends(require_token)])
+    async def gap_suggestions(item_id: int) -> dict:
+        """Three concrete times the reading's vague words could mean (#128), with a reason each,
+        so every channel can offer the same ones. Only a `when` gap has times to suggest."""
+        item = gapped_or_404(item_id)
+        if item.gap != "when":
+            return {"said": suggest.said(item.text), "suggestions": []}
+        now = datetime.now(store.tz).replace(microsecond=0)
+        return {"said": suggest.said(item.text),
+                "suggestions": [{"at": s.at, "reason": s.reason}
+                                for s in suggest.suggest(item.text, now, quiet)]}
+
+    @app.post("/needs-look/{item_id}/keep", dependencies=[Depends(require_token)])
+    async def keep_needs_look(item_id: int) -> ItemOut:
+        """No time: keep the reading as it is, under Anytime (#128). The gap is simply closed."""
+        kept = gaps.keep(store, gapped_or_404(item_id))
+        if kept is None:  # someone answered or dismissed it first; theirs stands
+            raise HTTPException(status.HTTP_404_NOT_FOUND, f"No item #{item_id} needing a look")
+        return ItemOut.of(kept)
 
     @app.delete("/needs-look/{item_id}", status_code=204, dependencies=[Depends(require_token)])
     async def dismiss_needs_look(item_id: int) -> Response:

@@ -36,6 +36,7 @@ from maestro.storage import (
     parse_url,
 )
 from maestro.tz import add_elapsed, get_timezone
+from maestro.wrapup import parse_wrapup
 
 if TYPE_CHECKING:
     from maestro.actions import Action
@@ -313,6 +314,7 @@ def main(argv: list[str] | None = None) -> int:
         # MAESTRO_INTERPRETER=model (#115). Half-configured is an error, never a silent fallback.
         interpreter = build_interpreter(config)
         _confirmation(config)  # a bad MAESTRO_CONFIRM is a config error, found now (#117)
+        parse_wrapup(config.wrapup)  # a bad MAESTRO_WRAPUP too (#128)
     except ValueError as e:
         print(f"Config error: {e}", file=sys.stderr)
         return 2
@@ -435,7 +437,7 @@ def _dispatch(args: argparse.Namespace, config: Config, store: Store, tz: ZoneIn
                 email.start()
             try:
                 run_forever(store, notifier, args.interval, wait=_wait_with(bot, email),
-                            escalation=escalation, quiet=quiet)
+                            escalation=escalation, quiet=quiet, wrapup_at=parse_wrapup(config.wrapup))
             except KeyboardInterrupt:
                 pass
             finally:
@@ -528,6 +530,7 @@ def _serve(store: Store, config: Config, notifier: Notifier, args: argparse.Name
                      sms=sms, voice=voice, email=email, escalation=escalation, quiet=quiet,
                      public_url=config.public_url, requestable=requestable_channels(config),
                      interpreter=interpreter, confirm=_confirmation(config),
+                     wrapup_at=parse_wrapup(config.wrapup),
                      limits=RateLimits(config.rate_limit_webhook, config.rate_limit_auth_failures,
                                        config.trust_proxy_headers))
     # log_config=None keeps uvicorn on our root handler, so MAESTRO_LOG_FORMAT=json covers access logs too.

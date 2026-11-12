@@ -20,7 +20,7 @@ import sqlite3
 import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -196,6 +196,15 @@ MIGRATIONS: list[Migration] = [
             created_at   TEXT NOT NULL,
             last_seen_at TEXT,
             revoked_at   TEXT
+        )""",
+    ],
+    # 15: once-a-day marks (#128): the evening wrap-up claims its day here, so one notice goes
+    # out however many processes tick, and a restart can't repeat it.
+    [
+        """CREATE TABLE IF NOT EXISTS daily_marks (
+            name TEXT NOT NULL,
+            day  TEXT NOT NULL,
+            PRIMARY KEY (name, day)
         )""",
     ],
 ]
@@ -700,6 +709,16 @@ class SQLiteStore(Store):
         rows = self.conn.execute(
             "SELECT * FROM items WHERE capture_id = ? ORDER BY id", (capture_id,))
         return [self._item(r) for r in rows]
+
+    # --- once-a-day marks (#128) -------------------------------------------------------------
+
+    def claim_daily(self, name: str, day: date) -> bool:
+        with self._transaction():
+            cur = self.conn.execute(
+                "INSERT OR IGNORE INTO daily_marks (name, day) VALUES (?, ?)",
+                (name, day.isoformat()),
+            )
+        return cur.rowcount > 0
 
     # --- devices (#108, ADR 0018) -----------------------------------------------------------
 

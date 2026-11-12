@@ -265,7 +265,7 @@ def test_migrating_from_the_schema_before_confirmations(tmp_path):
         s.conn.commit()
 
     with Store(path, tz=TZ) as s:
-        assert s.schema_version == len(MIGRATIONS) == 14
+        assert s.schema_version == len(MIGRATIONS) == 15
         (item,) = s.list()
         assert (item.text, item.interpreter, item.capture_id) == ("Call mom", "rules", None)
         capture = propose(s)

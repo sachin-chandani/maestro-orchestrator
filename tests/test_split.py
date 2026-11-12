@@ -4,7 +4,7 @@ Nothing here reaches a network. The model interpreter appears only as a fake, to
 several-actions-from-one-message case the rules can't.
 """
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import pytest
 from conftest import TZ, dt
@@ -638,7 +638,7 @@ def test_migrating_from_the_schema_before_readings_needed_a_look(tmp_path):
         s.conn.commit()
 
     with Store(path, tz=TZ) as s:
-        assert s.schema_version == len(MIGRATIONS) == 14
+        assert s.schema_version == len(MIGRATIONS) == 15
         reminder_row, task_row = s.list()
         assert (reminder_row.gap, task_row.gap) == (None, None)
         assert s.needs_look() == []
@@ -790,3 +790,50 @@ def test_dismissing_something_another_answer_already_removed_says_so(store):
     assert gaps.dismiss(store, item)  # the other channel gets there first
     said, filled = gaps.answer(store, reply, now=NOW)
     assert filled is None and f"No item #{item.id} needing a look" in said
+
+
+# --- suggestions, keep and ISO answers (#128) --------------------------------------------------
+
+
+def test_suggestions_for_a_when_gap_come_with_reasons(client):
+    plumber = client.post("/capture", json={"text": "call the plumber sometime next week"}).json()
+    item_id = plumber["needs_look"][0]["id"]
+    body = client.get(f"/needs-look/{item_id}/suggestions").json()
+    assert body["said"] == "sometime next week"
+    assert len(body["suggestions"]) == 3
+    for s in body["suggestions"]:
+        assert datetime.fromisoformat(s["at"]) > datetime.now(TZ)
+        assert s["reason"]
+    assert [s["reason"] for s in body["suggestions"]][0] == "start of the week"
+    assert client.get("/needs-look/999/suggestions").status_code == 404
+
+
+def test_a_suggestion_round_trips_exactly_as_the_answer(client, store):
+    item_id = client.post("/capture", json={"text": UNSURE}).json()["needs_look"][0]["id"]
+    chosen = client.get(f"/needs-look/{item_id}/suggestions").json()["suggestions"][0]["at"]
+    filled = client.post(f"/needs-look/{item_id}", json={"phrase": chosen}).json()
+    assert filled["gap"] is None and filled["kind"] == "reminder"
+    assert datetime.fromisoformat(filled["due_at"]) == datetime.fromisoformat(chosen)
+    # scheduled for real: the item is due when its time comes
+    item = store.get(item_id)
+    assert item.due_at == datetime.fromisoformat(chosen).astimezone(TZ)
+
+
+def test_a_naive_iso_stamp_goes_through_the_rules_not_the_shortcut(client, store):
+    item_id = client.post("/capture", json={"text": UNSURE}).json()["needs_look"][0]["id"]
+    # No offset, so not a suggestion of ours; the rules read it as a date, in the user's timezone.
+    filled = client.post(f"/needs-look/{item_id}", json={"phrase": "2027-01-04T09:00:00"}).json()
+    assert filled["gap"] is None
+    assert store.get(item_id).due_at == dt(2027, 1, 4, 9, 0)
+
+
+def test_keep_closes_the_gap_and_leaves_an_anytime_task(client, store):
+    item_id = client.post("/capture", json={"text": UNSURE}).json()["needs_look"][0]["id"]
+    kept = client.post(f"/needs-look/{item_id}/keep").json()
+    assert kept["gap"] is None and kept["kind"] == "task" and kept["due_at"] is None
+    assert client.get("/needs-look").json() == []
+    feed_body = client.get("/feed").json()
+    assert [i["id"] for i in feed_body["anytime"]] == [item_id]
+    # keeping it twice: the question is gone
+    assert client.post(f"/needs-look/{item_id}/keep").status_code == 404
+    assert client.post("/needs-look/999/keep").status_code == 404

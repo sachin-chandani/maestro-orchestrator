@@ -241,10 +241,16 @@ def fill(store: Store, item: Item, phrase: str, requestable: frozenset[str] | No
     """
     assert item.id is not None
     if item.gap == "when":
-        read = read_time_phrase(phrase, Context(tz=store.tz, now=now))
-        if read is None or read.due_at is None:
-            return None
-        filled = store.fill_gap(item.id, due_at=read.due_at, recurrence=read.recurrence)
+        # A suggested time comes back as the ISO stamp the server offered (#128), read exactly;
+        # anything else is a phrase for the rules.
+        exact = _iso(phrase)
+        if exact is not None:
+            filled = store.fill_gap(item.id, due_at=exact)
+        else:
+            read = read_time_phrase(phrase, Context(tz=store.tz, now=now))
+            if read is None or read.due_at is None:
+                return None
+            filled = store.fill_gap(item.id, due_at=read.due_at, recurrence=read.recurrence)
     elif item.gap == "channel":
         wanted = [c for c in re.split(r"[,\s]+", phrase.strip().lower()) if c]
         if not wanted or (requestable is not None and any(c not in requestable for c in wanted)):
@@ -265,6 +271,27 @@ def fill(store: Store, item: Item, phrase: str, requestable: frozenset[str] | No
         return None  # someone else filled or dismissed it first; theirs stands
     METRICS.inc("maestro_capture_split_total", result="filled")
     log.info("Item %d's %s gap filled", item.id, item.gap)
+    return store.get(item.id)
+
+
+def _iso(phrase: str) -> datetime | None:
+    """An ISO 8601 answer with an offset, or None. Naive stamps are left to the rules."""
+    try:
+        exact = datetime.fromisoformat(phrase.strip())
+    except ValueError:
+        return None
+    return exact if exact.tzinfo is not None else None
+
+
+def keep(store: Store, item: Item) -> Item | None:
+    """Keep a reading that needs a time as it is, under Anytime (#128): the gap is cleared and
+    nothing else changes — a task with no time is a thing to do, not a question. None when
+    someone filled or dismissed it first."""
+    assert item.id is not None
+    if not store.fill_gap(item.id):
+        return None
+    METRICS.inc("maestro_capture_split_total", result="kept")
+    log.info("Item %d kept without %s", item.id, WANTED.get(str(item.gap), "an answer"))
     return store.get(item.id)
 
 
