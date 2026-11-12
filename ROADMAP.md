@@ -89,7 +89,7 @@ Dates are targets, not promises. Work is tracked in [GitHub issues](https://gith
 Exit criteria: capture from every source above, parser corpus >= 95%, exactly-once scheduling across processes, mypy and coverage >= 90% enforced in CI, no known vulnerabilities.
 - [x] More phrases: parts of the day, end of day/week, weekends, `on the 5th`, every N days/weeks (#16)
 
-## v0.4: More ways out (target Nov 22, 2026)
+## v0.4: More ways out (done; release pending)
 - [x] Voice-call reminders to your own phone (#11)
 - [x] Email (SMTP) channel, with reply-to-act through email-in (#17)
 - [x] Generic webhook channel for Slack, Discord, Home Assistant (#18)
@@ -97,76 +97,81 @@ Exit criteria: capture from every source above, parser corpus >= 95%, exactly-on
 - [x] Escalation policies: push, then SMS, then more (#12); voice calls work as a stage (`30m=twilio_call`)
 - [x] Quiet hours (#13)
 - [x] Per-item channel choice: "text me", "call me", "email me" (#20)
-- [ ] Channel plugins via entry points (#14)
-- [ ] Local backup and restore (#59)
-- [ ] Graceful shutdown and documented at-least-once delivery (#60)
-- [ ] Telegram: act on the reminder you replied to (#61)
-- [ ] Lead-time alerts: "remind me an hour before" (#84)
 
-Exit criteria: escalation proven end to end with fakes, acknowledgements on every channel, backups restorable, a third-party channel installable without core changes.
+The rest of the original v0.4 moved on 2026-11-11: #61 and #84 to v0.6, #14, #59 and #60 to v0.8, #70 to Later.
 
-## v0.5: The phone app (target Dec 13, 2026)
-Say it once and it's on your list. Design: `docs/design/mobile/README.md`; decision: ADR 0017 (save first, ask later); tracking: #109.
+## v0.5: The loop (target Dec 13, 2026)
+**Say it on your phone, it's in your list, it reaches your phone on time, you tap Done.** Nothing else goes in this release. Design: `docs/design/mobile/README.md`; decision: ADR 0017 (save first, ask later); tracking: #109.
 
 - [x] Minimal web UI at `/`: capture, reminders and notes, search, done/snooze/delete, auto-refresh
-- [ ] The React app connected to the server and shipped in the release (#108, #111, #112)
-- [ ] Capture splits per reminder: sure ones save at once, unsure ones wait with a gap, one undo per sentence (#126)
+- [x] Capture splits per reminder: sure ones save at once, unsure ones wait with a gap, one undo per capture (#126)
+- [x] The React app ships in the release and talks to the server (#111, #108, #112)
+- [x] Rules split one sentence into several requests (#130)
 - [x] One list: Needs a look, Next up, Today, Tomorrow, This week, Anytime (#22)
 - [x] Say or type, reminders land in place, with a 10-second Undo (#104)
+- [x] Fill a gap in one tap, and an evening wrap-up (#128)
 - [ ] Hold-to-talk mic with live words (#127)
-- [x] Needs a look: fill a gap in one tap, and an evening wrap-up (#128)
+- [ ] Mobile layout, keyboard and screen-reader accessibility (#87)
+- [ ] Live check: the reminder reaches your phone on Telegram (#132)
+
+Exit criteria: one sentence with three requests puts the sure ones in the list within a second and the unsure one in Needs a look; filling the gap takes one tap; the reminder arrives on a real phone through Telegram and Done there shows in the app; the React app ships in the wheel and the image.
+
+## v0.6: Live with it (target Jan 10, 2027)
+Use the loop every day for a week and fix what gets in the way (#133). The friction log decides the order; the items below are the starting list.
+
+- [ ] A week of real use, with a friction log (#133)
 - [ ] Reminder screen: what you said, what will happen, and edit (#21)
+- [ ] Hold-to-talk mic with live words (#127)
 - [ ] Search across reminders, tasks and notes (#105)
-- [ ] Reach your server from your phone over HTTPS (#96), install to the home screen with web push (#24)
+- [ ] Reach your server over HTTPS (#96), install to the home screen with web push (#24)
 - [ ] Pair a phone with a QR code (#95, #106), Settings (#107), share into Maestro (#97)
-- [ ] Mobile layout, keyboard and screen-reader accessibility (#87), end-to-end tests (#23)
+- [ ] Edit by replying: "make it 4pm" (#85); Telegram acts on the message you replied to (#61)
+- [ ] Lead-time alerts: "remind me an hour before" (#84)
+- [ ] End-to-end tests in CI (#23)
 
-Exit criteria: one spoken sentence with three requests puts the sure ones in the list within a second and the unsure one in Needs a look; a new phone goes from scanning a pairing code to its first push notification in under 2 minutes; everything doable from the CLI is doable from the app on a phone; e2e tests and an accessibility check run in CI.
+Exit criteria: the friction log exists and its top items are fixed; a phone installs the app and gets web push over HTTPS; everything doable from the CLI is doable from the phone; e2e tests run in CI.
 
-## v0.6: Second brain (target Jan 17, 2027)
+## v0.7: Second brain (target Feb 7, 2027)
 **Understands what you mean** (#120, ADR 0015):
 - [x] Capture produces actions: one interpret step and one apply step for every channel (#113)
 - [x] Tasks: a third kind between reminders and notes (#114)
 - [x] Optional language-model interpreter with your own key, off by default (#115)
 - [x] Ask the model only when the rules are unsure (#116)
 - [x] Confirm unsure interpretations, with undo (#117)
-- [ ] Propose reminders from forwarded emails (#118)
-- [ ] Tracks: organise information you want to keep (#119)
+- [ ] Propose reminders from forwarded emails (#118), and confirmations by email (#124)
+- [ ] One way to group things: lists (#88), tags (#29) and tracks (#119)
 
 - [ ] Full-text search with SQLite FTS5 (#28)
-- [ ] Tags, people and places (#29)
 - [ ] Daily and weekly digest (#30)
 - [ ] Import from Apple Reminders, Google Tasks, Todoist (#31); export to JSON and Markdown (#32)
 - [ ] Ask questions over your notes: offline by default, the optional model when configured (#33)
-- [ ] Lists: "add milk to the shopping list" (#88)
 - [ ] Streaks and adherence for recurring reminders (#89)
-- [ ] Edit a reminder by replying: "make it 4pm" (#85)
 
-Exit criteria: search behaves the same on SQLite and Postgres; import → export → import round-trips without loss; one grouping model (lists, tags and tracks, #119) decided and documented; with the model interpreter off, behaviour is identical to the rules alone.
+Exit criteria: one grouping model decided and documented; search behaves the same on SQLite and Postgres; import → export → import round-trips without loss; with the model interpreter off, behaviour is identical to the rules alone.
 
-## v0.7: Production-grade self-hosting (target Feb 7, 2027)
+## v0.8: Easy to run (target Feb 28, 2027)
 - [x] Storage interface and PostgreSQL backend (#34)
-- [ ] Multi-user per instance (#35) and OIDC login for the web UI (#36)
-- [ ] Encrypted off-site backups to S3-compatible storage (#37)
-- [ ] Deployment guides: Raspberry Pi, Fly.io, Railway, systemd, Caddy (#38) and a Helm chart (#39)
-- [ ] Per-token API rate limits and audit log (#40)
-- [ ] Move existing data between SQLite and PostgreSQL (#90)
+- [ ] Local backup and restore (#59) and graceful shutdown (#60)
 - [ ] Guided first-run setup: `maestro init` (#91)
-- [ ] iCalendar (`.ics`) feed (#25) and two-way CalDAV sync (#26)
-- [ ] Matrix channel, built as the first entry-point plugin (#86)
+- [ ] Deployment guides: Raspberry Pi, Fly.io, Railway, systemd, Caddy (#38)
+- [ ] Move existing data between SQLite and PostgreSQL (#90)
+- [ ] Encrypted off-site backups to S3-compatible storage (#37)
+- [ ] iCalendar (`.ics`) feed (#25)
+- [ ] Channel plugins via entry points (#14)
+- [ ] Performance at 10k items (#44)
 
-Exit criteria: a new user reaches the first test message in under 15 minutes with `maestro init`; an existing SQLite install moves to Postgres with one documented command; restores tested on both backends.
+Exit criteria: a new user reaches the first test message in under 15 minutes with `maestro init`; restores tested on both backends; a third-party channel installs without core changes.
 
-## v1.0: Stable (target Feb 28, 2027)
+## v1.0: Stable (target Mar 21, 2027)
 - [ ] Documentation site (#41)
 - [ ] API stability and deprecation policy (#42)
 - [ ] Security review and threat model (#43)
-- [ ] Performance at 10k items (#44)
-- [ ] Companion mobile app spike: is a native shell worth it after the web app? (#27)
 
-Exit criteria: public API, CLI, settings and plugin API frozen with a deprecation policy; threat model published; documented performance targets met in CI.
+Exit criteria: public API, CLI, settings and plugin API frozen with a deprecation policy; threat model published.
 
 ## Later / ideas
+Deferred until a real user asks for them (label `later`): Helm chart (#39), OIDC login (#36), multi-user (#35), two-way CalDAV (#26), Matrix channel (#86), voice PIN (#70), per-token limits and audit log (#40), native mobile app (#27).
+
 - Delegated reminders: ask someone you trust to nudge you. This involves other people's contact details, so it would be strictly opt-in with explicit consent from the other person.
 - Location-based reminders via the companion app ("when I'm at the pharmacy").
 - Home Assistant integration (announce reminders on smart speakers).
