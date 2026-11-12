@@ -50,6 +50,13 @@ function setup({
   }
 }
 
+/** The first match, or a clear failure instead of a type cast. */
+function first<T>(items: T[]): T {
+  const [item] = items
+  if (item === undefined) throw new Error('expected at least one match')
+  return item
+}
+
 describe('NeedsLookCard', () => {
   it('shows the text, what was said, and the gap as a chip', () => {
     const { card } = setup()
@@ -71,7 +78,7 @@ describe('NeedsLookCard', () => {
     ])
     expect(within(card).getByText('You said “sometime next week”')).toBeVisible()
 
-    fireEvent.click(buttons[0] as HTMLElement)
+    fireEvent.click(first(buttons))
     await waitFor(() => {
       expect(onAnswer).toHaveBeenCalledWith(plumber, '2026-11-09T09:00:00+05:30')
     })
@@ -162,7 +169,7 @@ describe('NeedsLookCard', () => {
       />,
     )
     expect(await axeViolations(container)).toEqual([])
-    fireEvent.click(screen.getAllByRole('button', { name: 'Answer…' })[0] as HTMLElement)
+    fireEvent.click(first(screen.getAllByRole('button', { name: 'Answer…' })))
     await screen.findAllByRole('list', { name: 'Suggested times' })
     expect(await axeViolations(container)).toEqual([])
   })
