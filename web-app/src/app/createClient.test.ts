@@ -7,9 +7,9 @@ const dev = { DEV: true, MODE: 'development' }
 const prod = { DEV: false, MODE: 'production' }
 
 describe('chooseClientKind', () => {
-  it('uses the mock for npm run dev and, until #108, for production builds', () => {
+  it('uses the mock for npm run dev and the server for production builds (#108)', () => {
     expect(chooseClientKind(dev, null)).toBe('mock')
-    expect(chooseClientKind(prod, null)).toBe('mock')
+    expect(chooseClientKind(prod, null)).toBe('http')
   })
 
   it('uses the server for npm run dev:api', () => {
@@ -24,7 +24,7 @@ describe('chooseClientKind', () => {
   it('lets the dev panel choose, in development only', () => {
     expect(chooseClientKind(dev, 'http')).toBe('http')
     expect(chooseClientKind({ DEV: true, MODE: 'api' }, 'mock')).toBe('mock')
-    expect(chooseClientKind(prod, 'http')).toBe('mock') // a stale choice never reaches production
+    expect(chooseClientKind(prod, 'mock')).toBe('http') // a stale choice never reaches production
     expect(chooseClientKind(dev, 'nonsense')).toBe('mock')
   })
 })

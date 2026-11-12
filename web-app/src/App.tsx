@@ -5,12 +5,15 @@ import type { Item } from './api/types.ts'
 import styles from './App.module.css'
 import { useClient, useConnection } from './app/clientContext.ts'
 import { groupReminders, headerDate, laterLabel, nextTime } from './app/groups.ts'
+import { captureMessage } from './app/captureMessage.ts'
 import { useSequence } from './app/sequence.ts'
+import { clearToken, loadToken, saveToken } from './app/session.ts'
 import { CaptureBar } from './components/CaptureBar.tsx'
 import { ConnectionPill } from './components/ConnectionPill.tsx'
 import { EmptyState } from './components/EmptyState.tsx'
 import { formatTime } from './components/format.ts'
 import { ReminderCard } from './components/ReminderCard.tsx'
+import { SignIn } from './components/SignIn.tsx'
 import { Toast } from './components/Toast.tsx'
 
 type Load =
@@ -48,12 +51,6 @@ async function fetchToday(client: MaestroClient): Promise<Load> {
   } catch (error) {
     return { status: 'error', message: messageOf(error) }
   }
-}
-
-// What a capture is confirmed as. A reminder's message names its time, so it isn't in here (#114).
-const SAVED: Partial<Record<Item['kind'], string>> = {
-  note: 'Saved as a note.',
-  task: 'Saved as a task.',
 }
 
 /**
@@ -167,8 +164,7 @@ export default function App({ devTools }: AppProps) {
     // with it (#112). If the save fails and nothing new has been typed, the text comes back.
     setDraft('')
     try {
-      const item = await client.capture(text)
-      say(SAVED[item.kind] ?? `Reminder set for ${item.when}.`)
+      say(captureMessage(await client.captureSplit(text)))
       await refresh()
     } catch (error) {
       setDraft((current) => (current.trim() ? current : text))
@@ -176,6 +172,22 @@ export default function App({ devTools }: AppProps) {
     } finally {
       setSaving(false)
     }
+  }
+
+  // Signed out (a 401: no token, a wrong one, or this device revoked): the stored token is no
+  // good, so forget it and ask to sign in. Never on a network error, which keeps the token.
+  const signedOut = connection.status === 'signed_out'
+  // Whether this device had signed in before: a stored token at start, or a list on screen.
+  const [hadToken] = useState(() => loadToken() !== null)
+  const wasSignedIn = hadToken || load.status === 'ready'
+  useEffect(() => {
+    if (signedOut) clearToken()
+  }, [signedOut])
+
+  const signIn = async (masterToken: string, deviceName: string) => {
+    const result = await client.registerDevice(masterToken, deviceName)
+    saveToken(result.token)
+    retry()
   }
 
   const now = new Date()
@@ -200,13 +212,20 @@ export default function App({ devTools }: AppProps) {
       </header>
 
       <main className={styles.main}>
-        {load.status === 'loading' && (
+        {signedOut && (
+          <SignIn
+            onSignIn={signIn}
+            reason={wasSignedIn ? 'This device was signed out.' : undefined}
+          />
+        )}
+
+        {!signedOut && load.status === 'loading' && (
           <p className={styles.message} role="status">
             Loading reminders…
           </p>
         )}
 
-        {load.status === 'error' && (
+        {!signedOut && load.status === 'error' && (
           <div className={styles.error} role="alert">
             <p className={styles.message}>Couldn't load your reminders: {load.message}</p>
             <button type="button" className={styles.retry} onClick={retry}>

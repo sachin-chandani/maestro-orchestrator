@@ -2,6 +2,7 @@ import { unsupportedError, type MaestroClient } from '../client.ts'
 import { Connection } from '../connection.ts'
 import { ApiError } from '../errors.ts'
 import type {
+  CaptureResult,
   ConnectionState,
   Device,
   Health,
@@ -10,9 +11,18 @@ import type {
   PairResult,
   ParsePreview,
   Settings,
+  SignIn,
   SnoozeDuration,
   TodoList,
 } from '../types.ts'
+
+/** POST /capture answers CaptureOut, or ProposalOut (202) under MAESTRO_CONFIRM=unsure. */
+type CaptureAnswer =
+  | { added: Item[]; needs_look: Item[]; undo: CaptureResult['undo'] }
+  | { id: number; lines: string[]; status: string }
+
+/** POST /devices: DeviceOut plus the token. */
+type DeviceCreated = Device & { token: string }
 
 type Method = keyof MaestroClient
 
@@ -74,6 +84,19 @@ export class HttpClient implements MaestroClient {
     return this.request('POST', '/items', { text })
   }
 
+  async captureSplit(text: string): Promise<CaptureResult> {
+    const answer = await this.request<CaptureAnswer>('POST', '/capture', { text })
+    if ('lines' in answer) {
+      return {
+        added: [],
+        needs_look: [],
+        undo: null,
+        proposal: { id: answer.id, lines: answer.lines },
+      }
+    }
+    return { ...answer, proposal: null }
+  }
+
   done(id: number): Promise<Item> {
     return this.request('POST', `/items/${itemId(id)}/done`)
   }
@@ -128,14 +151,29 @@ export class HttpClient implements MaestroClient {
   clearChecked(): Promise<TodoList> {
     return this.unsupported('clearChecked')
   }
+  async registerDevice(masterToken: string, deviceName: string): Promise<SignIn> {
+    // Past the lock and with the master token, once: a signed-out client is exactly the one that
+    // needs this. On success the device's own token takes over and the lock is lifted.
+    const { token, ...device } = await this.send<DeviceCreated>(
+      'POST',
+      '/devices',
+      { name: deviceName },
+      { token: masterToken, pastLock: true },
+    )
+    this.setToken(token)
+    return { token, device }
+  }
+
   pair(): Promise<PairResult> {
     return this.unsupported('pair')
   }
+
   listDevices(): Promise<Device[]> {
-    return this.unsupported('listDevices')
+    return this.request('GET', '/devices')
   }
-  revokeDevice(): Promise<void> {
-    return this.unsupported('revokeDevice')
+
+  revokeDevice(id: number): Promise<void> {
+    return this.request('DELETE', `/devices/${itemId(id)}`)
   }
   getSettings(): Promise<Settings> {
     return this.unsupported('getSettings')
@@ -165,16 +203,28 @@ export class HttpClient implements MaestroClient {
   // -------------------------------------------------------------------------------------------------
   // Internals
 
-  private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
-    const lock = this.conn.locked()
-    if (lock) throw lock
+  private request<T>(method: string, path: string, body?: unknown): Promise<T> {
+    return this.send(method, path, body, {})
+  }
+
+  private async send<T>(
+    method: string,
+    path: string,
+    body: unknown,
+    options: { token?: string; pastLock?: boolean },
+  ): Promise<T> {
+    if (!options.pastLock) {
+      const lock = this.conn.locked()
+      if (lock) throw lock
+    }
 
     const headers: Record<string, string> = {
       Accept: 'application/json',
       // Done, snooze and stop are then recorded as coming from the web UI (api.py client_name).
       'X-Maestro-Client': 'web',
     }
-    if (this.token) headers.Authorization = `Bearer ${this.token}`
+    const token = options.token ?? this.token
+    if (token) headers.Authorization = `Bearer ${token}`
     if (body !== undefined) headers['Content-Type'] = 'application/json'
 
     let response: Response

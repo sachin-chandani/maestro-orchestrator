@@ -541,6 +541,55 @@ describe('injected failures', () => {
   })
 })
 
+describe('devices (ADR 0018)', () => {
+  it('signs a device in, takes its token, and lists it as the current one', async () => {
+    const { client } = setup()
+    const signedIn = await client.registerDevice('t0ken', "Sachin's iPhone")
+
+    expect(signedIn.token).toMatch(/^mdt_/)
+    expect(signedIn.device).toMatchObject({ id: 1, name: "Sachin's iPhone", last_seen_at: null })
+    expect(client.token).toBe(signedIn.token)
+    expect(await client.listDevices()).toEqual([{ ...signedIn.device, current: true }])
+
+    await client.revokeDevice(1)
+    expect(await client.listDevices()).toEqual([])
+    expect((await rejection(client.revokeDevice(1))).kind).toBe('not_found')
+  })
+
+  it('refuses the wrong master token when one is set, and signs in past a 401 lock', async () => {
+    const { client } = setup({ masterToken: 't0ken' })
+    client.setFailure(failWith('unauthorized', { times: 1 }))
+    await rejection(client.listItems()) // locked, as after a revoked token
+
+    expect((await rejection(client.registerDevice('wrong', 'Phone'))).kind).toBe('unauthorized')
+    await client.registerDevice('t0ken', 'Phone')
+    expect((await client.listItems()).length).toBeGreaterThan(0) // unlocked by signing in
+  })
+
+  it('defaults a blank device name', async () => {
+    const { client } = setup()
+    expect((await client.registerDevice('t0ken', '   ')).device.name).toBe('Device')
+  })
+})
+
+describe('captureSplit (ADR 0017)', () => {
+  it('saves what it reads at once, with one undo for the capture', async () => {
+    const { client } = setup()
+    const result = await client.captureSplit('text me tomorrow at 9am to call the bank')
+
+    expect(result.added.map((i) => i.text)).toEqual(['Call the bank'])
+    expect(result.needs_look).toEqual([])
+    expect(result.proposal).toBeNull()
+    expect(result.undo).toEqual({ id: 1, expires_at: '2026-11-05T14:10:00+05:30' })
+    expect((await client.captureSplit('buy milk')).undo?.id).toBe(2)
+  })
+
+  it('refuses an empty capture like the server', async () => {
+    const { client } = setup()
+    expect((await rejection(client.captureSplit('   '))).kind).toBe('invalid')
+  })
+})
+
 describe('the 401 and 429 lock (#112)', () => {
   it('stops after a 401 until a token is set, without reaching the failure rule again', async () => {
     const { client } = setup()
@@ -593,8 +642,6 @@ describe('endpoints the backend does not have yet', () => {
     setChecked: (c) => c.setChecked(1, 1, true),
     clearChecked: (c) => c.clearChecked(1),
     pair: (c) => c.pair({ server_url: 'https://m.example', code: '123456', device_name: 'Phone' }),
-    listDevices: (c) => c.listDevices(),
-    revokeDevice: (c) => c.revokeDevice(1),
     getSettings: (c) => c.getSettings(),
     updateSettings: (c) => c.updateSettings({ quiet_hours: null }),
     sendTest: (c) => c.sendTest('telegram'),

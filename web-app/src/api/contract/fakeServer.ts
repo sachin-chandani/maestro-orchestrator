@@ -16,6 +16,8 @@ const STATUS: Partial<Record<ApiError['kind'], number>> = {
   rate_limited: 429,
 }
 
+/** Device tokens the fake server has handed out (POST /devices), accepted like the master token. */
+
 const json = (status: number, body: unknown, headers: Record<string, string> = {}) =>
   new Response(status === 204 ? null : JSON.stringify(body), {
     status,
@@ -30,13 +32,58 @@ export interface FakeServer {
 
 export function fakeServer(backend: MaestroClient, options: { token?: string } = {}): FakeServer {
   const requests: FakeServer['requests'] = []
+  const deviceTokens = new Set<string>()
 
-  const route = async (method: string, url: URL, body: unknown): Promise<Response> => {
+  const route = async (
+    method: string,
+    url: URL,
+    body: unknown,
+    master: boolean,
+  ): Promise<Response> => {
     const path = url.pathname
-    const id = Number(/^\/items\/(\d+)/.exec(path)?.[1])
+    const id = Number(/^\/(?:items|devices)\/(\d+)/.exec(path)?.[1])
     const send = async (status: number, call: () => Promise<unknown>) => json(status, await call())
 
     if (method === 'GET' && path === '/health') return send(200, () => backend.health())
+    if (path === '/devices' || /^\/devices\/\d+$/.test(path)) {
+      // Only the master token manages devices (ADR 0018); a device may list them.
+      if (options.token && !master && !(method === 'GET' && path === '/devices')) {
+        return json(403, { detail: "Only the server's API token can manage devices" })
+      }
+      if (method === 'POST' && path === '/devices') {
+        const name = (body as { name?: unknown } | null)?.name
+        if (typeof name !== 'string' || name.length < 1 || name.length > 80) {
+          return json(422, {
+            detail: [{ loc: ['body', 'name'], msg: 'String should have at most 80 characters' }],
+          })
+        }
+        const signedIn = await backend.registerDevice(options.token ?? '', name)
+        deviceTokens.add(signedIn.token)
+        return json(201, { ...signedIn.device, token: signedIn.token })
+      }
+      if (method === 'GET' && path === '/devices') return send(200, () => backend.listDevices())
+      if (method === 'DELETE') {
+        await backend.revokeDevice(id)
+        return json(204, null)
+      }
+    }
+    if (method === 'POST' && path === '/capture') {
+      const text = (body as { text?: unknown } | null)?.text
+      if (typeof text !== 'string' || text.length < 1) {
+        return json(422, {
+          detail: [{ loc: ['body', 'text'], msg: 'String should have at least 1 character' }],
+        })
+      }
+      const result = await backend.captureSplit(text)
+      if (result.proposal) {
+        return json(202, {
+          id: result.proposal.id,
+          lines: result.proposal.lines,
+          status: 'pending',
+        })
+      }
+      return json(201, { added: result.added, needs_look: result.needs_look, undo: result.undo })
+    }
     if (method === 'GET' && path === '/items') {
       const p = url.searchParams
       return send(200, () =>
@@ -77,13 +124,16 @@ export function fakeServer(backend: MaestroClient, options: { token?: string } =
     const body: unknown = typeof init.body === 'string' ? JSON.parse(init.body) : null
     requests.push({ method, url: url.pathname + url.search, headers, body })
 
+    let master = true
     if (options.token && url.pathname !== '/health') {
       const auth = headers.get('Authorization')
       if (auth === null) return json(401, { detail: 'Missing API token' })
-      if (auth !== `Bearer ${options.token}`) return json(401, { detail: 'Invalid API token' })
+      master = auth === `Bearer ${options.token}`
+      const presented = auth.startsWith('Bearer ') ? auth.slice('Bearer '.length) : ''
+      if (!master && !deviceTokens.has(presented)) return json(401, { detail: 'Invalid API token' })
     }
     try {
-      return await route(method, url, body)
+      return await route(method, url, body, master)
     } catch (error) {
       if (!(error instanceof ApiError)) throw error
       // A 429 says when to try again, as maestro/api.py does.

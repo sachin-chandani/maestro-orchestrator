@@ -2,6 +2,7 @@ import { unsupportedError, type MaestroClient } from '../client.ts'
 import { Connection } from '../connection.ts'
 import { ApiError, type ApiErrorKind } from '../errors.ts'
 import type {
+  CaptureResult,
   ConnectionState,
   Device,
   Health,
@@ -10,6 +11,7 @@ import type {
   PairResult,
   ParsePreview,
   Settings,
+  SignIn,
   SnoozeDuration,
   TodoList,
 } from '../types.ts'
@@ -52,6 +54,11 @@ export interface MockClientOptions {
   failure?: FailureRule | null
   /** Where state survives a reload (default localStorage); null keeps it in memory only. */
   storage?: KeyValueStorage | null
+  /**
+   * The master token the pretend server wants for registerDevice (default: any is accepted), so
+   * the sign-in screen's wrong-token path can be tried on sample data.
+   */
+  masterToken?: string | null
 }
 
 /**
@@ -114,6 +121,10 @@ export class MockClient implements MaestroClient {
   private readonly conn: Connection
   /** The token the app has set; the mock checks nothing against it, but keeps it as a client would. */
   token: string | null = null
+  private readonly masterToken: string | null
+  /** Devices signed in during this session (not persisted: the sample data is about reminders). */
+  private readonly signedIn: (Device & { token: string })[] = []
+  private undoIds = 0
 
   constructor(options: MockClientOptions = {}) {
     this.now = options.now ?? (() => new Date())
@@ -123,6 +134,7 @@ export class MockClient implements MaestroClient {
     this.storage = options.storage === undefined ? defaultStorage() : options.storage
     this.latencyMs = options.latencyMs ?? 0
     this.failure = options.failure ?? null
+    this.masterToken = options.masterToken ?? null
     this.state = load(this.storage) ?? this.seed()
     this.persist()
   }
@@ -200,6 +212,20 @@ export class MockClient implements MaestroClient {
       this.state.nextId += 1
       return this.view(item)
     })
+  }
+
+  async captureSplit(text: string): Promise<CaptureResult> {
+    // The sample parser has no notion of doubt, so everything it reads is sure and saved at once;
+    // what needs a look is the server's call (maestro.gaps) and arrives with #22's screen.
+    const item = await this.capture(text)
+    this.undoIds += 1
+    const expires = new Date(this.now().getTime() + 10 * 60_000)
+    return {
+      added: [item],
+      needs_look: [],
+      undo: { id: this.undoIds, expires_at: this.iso(expires) },
+      proposal: null,
+    }
   }
 
   done(id: number): Promise<Item> {
@@ -298,14 +324,49 @@ export class MockClient implements MaestroClient {
   clearChecked(): Promise<TodoList> {
     return this.unsupported('clearChecked')
   }
+  async registerDevice(masterToken: string, deviceName: string): Promise<SignIn> {
+    // Past the lock, like HttpClient: this is how a signed-out client signs in.
+    const result = await this.call(
+      'registerDevice',
+      () => {
+        if (this.masterToken !== null && masterToken !== this.masterToken) {
+          throw new ApiError('unauthorized', 'Invalid API token', { status: 401 })
+        }
+        const id = this.signedIn.length + 1
+        const device: Device & { token: string } = {
+          id,
+          name: deviceName.trim().slice(0, 80) || 'Device',
+          created_at: this.iso(this.now()),
+          last_seen_at: null,
+          current: false,
+          token: `mdt_mock-${String(id)}-${String(this.now().getTime())}`,
+        }
+        this.signedIn.push(device)
+        return device
+      },
+      { pastLock: true },
+    )
+    const { token, ...device } = result
+    this.setToken(token)
+    return { token, device }
+  }
+
   pair(): Promise<PairResult> {
     return this.unsupported('pair')
   }
+
   listDevices(): Promise<Device[]> {
-    return this.unsupported('listDevices')
+    return this.call('listDevices', () =>
+      this.signedIn.map(({ token, ...device }) => ({ ...device, current: token === this.token })),
+    )
   }
-  revokeDevice(): Promise<void> {
-    return this.unsupported('revokeDevice')
+
+  revokeDevice(id: number): Promise<void> {
+    return this.call('revokeDevice', () => {
+      const at = this.signedIn.findIndex((d) => d.id === id)
+      if (at < 0) throw new ApiError('not_found', `No device #${String(id)}`, { status: 404 })
+      this.signedIn.splice(at, 1)
+    })
   }
   getSettings(): Promise<Settings> {
     return this.unsupported('getSettings')
@@ -352,9 +413,15 @@ export class MockClient implements MaestroClient {
    * if a failure is injected (changing nothing), otherwise bring deliveries up to date, run it and
    * save.
    */
-  private async call<T>(method: Method, run: () => T): Promise<T> {
-    const lock = this.conn.locked()
-    if (lock) throw lock
+  private async call<T>(
+    method: Method,
+    run: () => T,
+    options: { pastLock?: boolean } = {},
+  ): Promise<T> {
+    if (!options.pastLock) {
+      const lock = this.conn.locked()
+      if (lock) throw lock
+    }
     if (this.latencyMs > 0) await new Promise((resolve) => setTimeout(resolve, this.latencyMs))
     const injected = this.failure?.(method) ?? null
     if (injected) {
@@ -365,12 +432,16 @@ export class MockClient implements MaestroClient {
     const before = JSON.stringify(this.state)
     try {
       // Copy out, so a caller changing what it got can't change the mock's state.
-      return structuredClone(run())
+      const result = structuredClone(run())
+      this.conn.succeeded()
+      return result
     } catch (error) {
       this.state = JSON.parse(before) as MockState // a call that fails changes nothing
+      // The "server" answered: that says nothing new about the connection, unless it refused
+      // the token, which locks the client as it would HttpClient.
+      if (error instanceof ApiError) this.conn.failed(error)
       throw error
     } finally {
-      this.conn.succeeded() // the "server" answered, even if with an error of its own
       this.persist()
     }
   }

@@ -60,6 +60,10 @@ describe('SUPPORT', () => {
       'POST /items/{id}/stop',
       'POST /items/{id}/snooze',
       'DELETE /items/{id}',
+      'POST /capture',
+      'POST /devices',
+      'GET /devices',
+      'DELETE /devices/{id}',
     ])
     for (const [method, support] of entries) {
       if (support.level === 'backend' || support.level === 'partial') {
@@ -79,8 +83,6 @@ describe('SUPPORT', () => {
       'setChecked',
       'clearChecked',
       'pair',
-      'listDevices',
-      'revokeDevice',
       'getSettings',
       'updateSettings',
       'sendTest',

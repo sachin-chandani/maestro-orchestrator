@@ -1,7 +1,14 @@
 import type { ProxyOptions } from 'vite'
 
 // The backend routes the app calls (maestro/api.py). `/` is left out: the dev server serves the app.
-export const API_PATHS = ['/health', '/items'] as const
+export const API_PATHS = [
+  '/health',
+  '/items',
+  '/capture',
+  '/devices',
+  '/needs-look',
+  '/captures',
+] as const
 
 // Proxy for `npm run dev:api`. There is deliberately no default target, so the app never talks to a
 // server nobody chose; point it at a `maestro serve` running on a scratch MAESTRO_DB.

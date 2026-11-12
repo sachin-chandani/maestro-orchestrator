@@ -1,5 +1,6 @@
 import { ApiError } from './errors.ts'
 import type {
+  CaptureResult,
   ConnectionState,
   Device,
   Health,
@@ -11,6 +12,7 @@ import type {
   ParsePreview,
   Settings,
   SettingsUpdate,
+  SignIn,
   SnoozeDuration,
   TodoList,
 } from './types.ts'
@@ -26,8 +28,13 @@ export interface MaestroClient {
   // Items
   listItems(options?: ListItemsOptions): Promise<Item[]>
   getItem(id: number): Promise<Item>
-  /** Capture plain text; the server parses it into a reminder or a note. */
+  /** Capture plain text; the server parses it into a reminder or a note. (`POST /items`: one item.) */
   capture(text: string): Promise<Item>
+  /**
+   * Capture plain text the way the app does (ADR 0017): every sure reading is saved at once, an
+   * unsure one is saved with a gap to answer later, and one undo covers the lot.
+   */
+  captureSplit(text: string): Promise<CaptureResult>
   /** Done. On a recurring reminder this is one occurrence; the series continues (ADR 0009). */
   done(id: number): Promise<Item>
   /** Snooze. On a recurring reminder this is one occurrence (ADR 0009). */
@@ -53,6 +60,12 @@ export interface MaestroClient {
   clearChecked(listId: number): Promise<TodoList>
 
   // Devices and pairing
+  /**
+   * Sign this device in with the server's master token (ADR 0018). Works while the client is
+   * locked by a 401: that is when it is needed. On success the client uses the device's own token
+   * from then on; the screen stores it.
+   */
+  registerDevice(masterToken: string, deviceName: string): Promise<SignIn>
   pair(request: PairRequest): Promise<PairResult>
   listDevices(): Promise<Device[]>
   revokeDevice(id: number): Promise<void>
@@ -99,6 +112,7 @@ export const SUPPORT: Record<keyof MaestroClient, Support> = {
   },
   getItem: { level: 'backend', endpoint: 'GET /items/{id}' },
   capture: { level: 'backend', endpoint: 'POST /items' },
+  captureSplit: { level: 'backend', endpoint: 'POST /capture' },
   done: {
     level: 'partial',
     endpoint: 'POST /items/{id}/done',
@@ -121,9 +135,10 @@ export const SUPPORT: Record<keyof MaestroClient, Support> = {
   addToList: { level: 'none', issue: 88 },
   setChecked: { level: 'none', issue: 88 },
   clearChecked: { level: 'none', issue: 88 },
+  registerDevice: { level: 'backend', endpoint: 'POST /devices' },
   pair: { level: 'none', issue: 95 },
-  listDevices: { level: 'none', issue: 95 },
-  revokeDevice: { level: 'none', issue: 95 },
+  listDevices: { level: 'backend', endpoint: 'GET /devices' },
+  revokeDevice: { level: 'backend', endpoint: 'DELETE /devices/{id}' },
   getSettings: { level: 'none', issue: 98 },
   updateSettings: { level: 'none', issue: 98 },
   sendTest: { level: 'none', issue: 98 },

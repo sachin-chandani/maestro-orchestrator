@@ -78,6 +78,8 @@ describe('requests', () => {
     await client.snooze(7, '2h')
     await client.stop(7)
     await client.health()
+    await client.listDevices()
+    await client.revokeDevice(3)
 
     expect(server.calls.map((c) => `${c.init.method ?? ''} ${c.url}`)).toEqual([
       'GET /items?include_done=true&q=bins+%26+bags&unacknowledged=true',
@@ -86,8 +88,38 @@ describe('requests', () => {
       'POST /items/7/snooze',
       'POST /items/7/stop',
       'GET /health',
+      'GET /devices',
+      'DELETE /devices/3',
     ])
     expect(server.calls[3]?.init.body).toBe('{"duration":"2h"}')
+  })
+
+  it('posts a split capture and reads back what was added, what needs a look and the undo', async () => {
+    const answer = {
+      added: [{ id: 1, text: 'Call mom' }],
+      needs_look: [{ id: 2, text: 'Call the plumber', gap: 'when' }],
+      undo: { id: 9, expires_at: '2026-11-05T14:10:00+05:30' },
+    }
+    const server = scripted(ok(answer, 201))
+    const client = new HttpClient(server)
+
+    expect(await client.captureSplit('call mom at 5pm and call the plumber sometime')).toEqual({
+      ...answer,
+      proposal: null,
+    })
+    expect(server.calls[0]?.url).toBe('/capture')
+  })
+
+  it('reads a held proposal (202, MAESTRO_CONFIRM=unsure) as nothing saved yet', async () => {
+    const server = scripted(ok({ id: 4, status: 'pending', lines: ['Call mom at 17:00'] }, 202))
+    const client = new HttpClient(server)
+
+    expect(await client.captureSplit('call mom at 5pm')).toEqual({
+      added: [],
+      needs_look: [],
+      undo: null,
+      proposal: { id: 4, lines: ['Call mom at 17:00'] },
+    })
   })
 
   it('reads a 204 as no content', async () => {
@@ -193,6 +225,31 @@ describe('the 401 and 429 lock', () => {
     now = 30_000
     expect(await client.listItems()).toEqual([])
     expect(server.mock).toHaveBeenCalledTimes(2)
+  })
+
+  it('signs a device in past the lock, with the master token once, then uses the device token', async () => {
+    const device = { id: 1, name: 'Phone', created_at: 'x', last_seen_at: null, current: false }
+    const server = scripted(
+      fail(401, 'Invalid API token'),
+      ok({ ...device, token: 'mdt_abc' }, 201),
+      ok([]),
+    )
+    const client = new HttpClient({ token: 'revoked', ...server })
+    await rejection(client.listItems())
+
+    expect(await client.registerDevice('master', 'Phone')).toEqual({ token: 'mdt_abc', device })
+    expect(headersOf(server.calls[1]?.init ?? {}).get('Authorization')).toBe('Bearer master')
+    expect(await client.listItems()).toEqual([])
+    expect(headersOf(server.calls[2]?.init ?? {}).get('Authorization')).toBe('Bearer mdt_abc')
+    expect(client.connection()).toEqual({ status: 'connected' })
+  })
+
+  it('reports a wrong master token at sign-in without unlocking anything', async () => {
+    const server = scripted(fail(401, 'Invalid API token'))
+    const client = new HttpClient(server)
+
+    expect((await rejection(client.registerDevice('wrong', 'Phone'))).kind).toBe('unauthorized')
+    expect(client.connection()).toEqual({ status: 'signed_out' })
   })
 
   it('does not lock on other errors', async () => {

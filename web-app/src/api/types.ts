@@ -150,15 +150,46 @@ export interface TodoList {
 }
 
 // ---------------------------------------------------------------------------------------------------
-// Devices and pairing: no backend support yet (#95).
+// Capture that saves what it can and names what still needs a look (POST /capture, ADR 0017).
 
+export interface UndoToken {
+  id: number
+  expires_at: IsoDateTime
+}
+
+/** What one capture did (CaptureOut): what was saved, what still needs a look, and the undo for all of it. */
+export interface CaptureResult {
+  /** Saved and, if they have a time, scheduled. */
+  added: Item[]
+  /** Saved with a `gap`: visible, never scheduled until it is answered. */
+  needs_look: Item[]
+  /** null when the capture saved nothing to take back. */
+  undo: UndoToken | null
+  /**
+   * Under MAESTRO_CONFIRM=unsure the server holds the whole message as a proposal instead (ADR
+   * 0016) and answers 202; then nothing was saved and this names what would be.
+   */
+  proposal: { id: number; lines: string[] } | null
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Devices (POST /devices, ADR 0018) and pairing by code (#95, not built yet).
+
+/** A phone or browser signed in with a token of its own (DeviceOut). */
 export interface Device {
   id: number
   name: string
-  paired_at: IsoDateTime
+  created_at: IsoDateTime
+  /** To the hour. */
   last_seen_at: IsoDateTime | null
   /** The device making this request. */
   current: boolean
+}
+
+/** The answer to signing a device in: its one and only token, which the client keeps from then on. */
+export interface SignIn {
+  token: string
+  device: Device
 }
 
 export interface PairRequest {

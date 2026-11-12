@@ -3,6 +3,7 @@
 import type { MaestroClient } from '../api/client.ts'
 import { HttpClient } from '../api/http/HttpClient.ts'
 import { MockClient } from '../api/mock/MockClient.ts'
+import { loadToken } from './session.ts'
 
 export type ClientKind = 'mock' | 'http'
 
@@ -17,21 +18,20 @@ export interface ClientEnv {
 
 /**
  * In order: the dev panel's choice (development only); VITE_MAESTRO_MOCK=1 or 0; `npm run dev:api`
- * (mode "api"), which proxies to a real server; otherwise the mock.
- *
- * The mock is the default in every build for now, production included: the real backend needs a
- * token, and entering one arrives with #108. #101's "production defaults to HttpClient" waits for that.
+ * (mode "api"), which proxies to a real server; otherwise the server in a production build (#108)
+ * and the mock in `npm run dev`, which has no server behind it.
  */
 export function chooseClientKind(env: ClientEnv, devChoice: string | null): ClientKind {
   if (env.DEV && (devChoice === 'mock' || devChoice === 'http')) return devChoice
   if (env.VITE_MAESTRO_MOCK === '1') return 'mock'
   if (env.VITE_MAESTRO_MOCK === '0' || env.MODE === 'api') return 'http'
-  return 'mock'
+  return env.DEV ? 'mock' : 'http'
 }
 
 export function createClient(kind: ClientKind): MaestroClient {
   // Same origin: `maestro serve` serves the app at /app and the API at /, and dev:api proxies.
-  return kind === 'mock' ? new MockClient() : new HttpClient()
+  // The device's own token, if it has signed in before (ADR 0018); none means a 401 and sign-in.
+  return kind === 'mock' ? new MockClient() : new HttpClient({ token: loadToken() })
 }
 
 /** The dev panel's saved choice, if storage can be read. */

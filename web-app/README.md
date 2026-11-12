@@ -4,12 +4,16 @@ The React web app for Maestro (ADR [0014](../docs/adr/0014-react-web-app.md), tr
 
 It shows today's reminders (#101, #102) through one API client with two implementations: `MockClient` (sample data, in the browser) and `HttpClient` (`maestro serve`). Screens get the client from `ClientProvider` and never know which one it is.
 
-| How you run it               | Client                                      |
-| ---------------------------- | ------------------------------------------- |
-| `npm run dev`                | MockClient                                  |
-| `npm run dev:api`            | HttpClient, through the proxy below         |
-| `npm run build` (any build)  | MockClient, until signing in arrives (#108) |
-| `VITE_MAESTRO_MOCK=1` or `0` | Forces MockClient or HttpClient             |
+| How you run it               | Client                                            |
+| ---------------------------- | ------------------------------------------------- |
+| `npm run dev`                | MockClient                                        |
+| `npm run dev:api`            | HttpClient, through the proxy below               |
+| `npm run build` (production) | HttpClient, against the server that serves `/app` |
+| `VITE_MAESTRO_MOCK=1` or `0` | Forces MockClient or HttpClient                   |
+
+**Signing in (#108, ADR 0018).** The first time the app meets a 401 it asks for the server's token (`MAESTRO_API_TOKEN`), sends it once to `POST /devices`, and keeps the device token it gets back in `localStorage` under `maestro.device_token`. The server's token is never stored. A 401 later (the device was revoked, or the server was reset) clears the device token and shows sign-in again, saying so; being offline or rate-limited never signs the app out. On the mock, `new MockClient({ masterToken })` makes the wrong-token path reachable.
+
+**Staying current.** The list is fetched again every minute while the tab is visible and whenever it becomes visible, so a sent reminder shows as awaiting and the groups roll over at midnight. A 429 pauses requests for its `Retry-After` and resumes by itself. Polling, not server-sent events: the backend has no streaming endpoint and a reminder list changes on the scale of minutes.
 
 In development, **Dev tools** at the bottom of the page switch client and, on sample data, reset it, delay every call, or make calls fail (unreachable, 500, 401, 429), to try loading and error states. Sample data is kept in this browser's localStorage. Dev tools and the gallery are left out of production builds.
 
@@ -27,7 +31,7 @@ npm run dev     # http://localhost:5173/app/ (Vite takes the next free port if 5
 
 ## Run against a scratch backend
 
-`npm run dev` uses mock data only. `npm run dev:api` also forwards the API routes (`/health`, `/items`) to the `maestro serve` named by `MAESTRO_API_URL`. It has no default, so it never reaches a server by accident.
+`npm run dev` uses mock data only. `npm run dev:api` also forwards the API routes (`/health`, `/items`, `/capture`, `/devices`, `/needs-look`, `/captures`) to the `maestro serve` named by `MAESTRO_API_URL`. It has no default, so it never reaches a server by accident.
 
 Start the backend with a throwaway database, never `~/.maestro/maestro.db`, on a free port:
 
@@ -56,7 +60,9 @@ npm run preview       # serve the built files locally at /app/
 
 ## Tests
 
-Tests sit next to the code they cover (`App.test.tsx` beside `App.tsx`) and never touch the network.
+Tests sit next to the code they cover (`App.test.tsx` beside `App.tsx`) and never touch the network. `src/api/contract/contract.test.ts` runs the same scenarios against both clients, `HttpClient` through an in-process fake of `maestro/api.py`, so a screen built on sample data behaves the same against a server.
+
+One test does reach a server, by choice: `src/api/contract/live.test.ts` runs `HttpClient` against a real `maestro serve` when `MAESTRO_LIVE_URL` and `MAESTRO_LIVE_TOKEN` are set, and is skipped otherwise. Start the server on a scratch database first (see above); the test removes everything it adds.
 
 Every component and screen gets an accessibility check: `axeViolations(container)` from `src/test/axe.ts` returns one line per [axe](https://github.com/dequelabs/axe-core) violation, and tests expect it to be empty. jsdom has no layout, so that check leaves out colour contrast. Check contrast in a real browser.
 

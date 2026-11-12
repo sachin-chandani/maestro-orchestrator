@@ -5,6 +5,9 @@ import { ApiError } from './api/errors.ts'
 import { MockClient, failWith } from './api/mock/MockClient.ts'
 import App, { REFRESH_MS } from './App.tsx'
 import { ClientProvider } from './app/ClientProvider.tsx'
+import { captureMessage } from './app/captureMessage.ts'
+import { TOKEN_KEY } from './app/session.ts'
+import { makeItem } from './test/items.ts'
 import { axeViolations } from './test/axe.ts'
 
 // The app on MockClient, in memory. The clock is the real one: the seed places its sample reminders
@@ -56,6 +59,7 @@ function hold(
 afterEach(() => {
   vi.restoreAllMocks()
   vi.useRealTimers()
+  localStorage.removeItem(TOKEN_KEY)
 })
 
 describe('App', () => {
@@ -310,6 +314,91 @@ describe('App', () => {
     })
     expect(screen.getByText('Loading reminders…')).toBeInTheDocument()
     expect(await screen.findByRole('alert')).toHaveTextContent('Database is locked')
+  })
+
+  it('asks to sign in on a 401, keeps the server token out of storage, and loads once signed in (ADR 0018)', async () => {
+    const client = new MockClient({ storage: null, timeZone: 'UTC', masterToken: 't0ken' })
+    client.setFailure(failWith('unauthorized', { times: 1, message: 'Missing API token' }))
+    setup(client)
+
+    const form = await screen.findByRole('form', { name: 'Sign in to your server' })
+    expect(screen.queryByText('Loading reminders…')).toBeNull()
+    expect(screen.queryByText('This device was signed out.')).toBeNull() // first time here
+    expect(screen.getByText('Signed out')).toBeInTheDocument()
+    const tokenField = within(form).getByLabelText('Server token')
+    const button = within(form).getByRole('button', { name: 'Sign in' })
+    expect(button).toBeDisabled()
+
+    fireEvent.change(tokenField, { target: { value: 'wrong' } })
+    fireEvent.click(button)
+    expect(await within(form).findByRole('alert')).toHaveTextContent(
+      "That isn't the server's token",
+    )
+    expect(tokenField).toHaveValue('wrong') // kept, to fix a typo
+
+    fireEvent.change(tokenField, { target: { value: 't0ken' } })
+    fireEvent.change(within(form).getByLabelText('Name this device'), {
+      target: { value: "Sachin's iPhone" },
+    })
+    fireEvent.click(button)
+    expect(await screen.findByRole('region', { name: 'Today' })).toBeInTheDocument()
+    expect(screen.queryByRole('form', { name: 'Sign in to your server' })).toBeNull()
+    expect(localStorage.getItem(TOKEN_KEY)).toMatch(/^mdt_/)
+    expect(JSON.stringify(localStorage)).not.toContain('t0ken')
+    expect((await client.listDevices()).map((d) => d.name)).toEqual(["Sachin's iPhone"])
+  })
+
+  it('signs out when its token stops working, forgets it, and says so', async () => {
+    localStorage.setItem(TOKEN_KEY, 'mdt_old')
+    const client = new MockClient({ storage: null, timeZone: 'UTC' })
+    setup(client)
+    const bank = await screen.findByRole('article', { name: 'Call the bank about the card' })
+
+    client.setFailure(failWith('unauthorized', { times: 1, message: 'Invalid API token' }))
+    fireEvent.click(within(bank).getByRole('button', { name: 'Done' }))
+
+    await screen.findByRole('form', { name: 'Sign in to your server' })
+    expect(screen.getByText('This device was signed out.')).toBeInTheDocument()
+    expect(localStorage.getItem(TOKEN_KEY)).toBeNull()
+  })
+
+  it('keeps its token when the server is merely unreachable', async () => {
+    localStorage.setItem(TOKEN_KEY, 'mdt_keep')
+    const client = new MockClient({ storage: null, timeZone: 'UTC', failure: failWith('offline') })
+    setup(client)
+
+    await screen.findByRole('alert')
+    expect(screen.queryByRole('form', { name: 'Sign in to your server' })).toBeNull()
+    expect(localStorage.getItem(TOKEN_KEY)).toBe('mdt_keep')
+  })
+
+  it('says what a capture did, in one sentence', () => {
+    const reminder = makeItem({ when: 'Thu 05 Nov 17:45' })
+    const note = makeItem({ id: 2, kind: 'note', when: 'note' })
+    const plumber = makeItem({ id: 3, kind: 'task', text: 'Call the plumber', gap: 'when' })
+    const undo = { id: 1, expires_at: '2026-11-05T14:10:00+05:30' }
+
+    expect(captureMessage({ added: [reminder], needs_look: [], undo, proposal: null })).toBe(
+      'Reminder set for Thu 05 Nov 17:45.',
+    )
+    expect(captureMessage({ added: [note], needs_look: [], undo, proposal: null })).toBe(
+      'Saved as a note.',
+    )
+    expect(
+      captureMessage({ added: [reminder, note], needs_look: [plumber], undo, proposal: null }),
+    ).toBe('Added 2. "Call the plumber" needs a time.')
+    expect(captureMessage({ added: [], needs_look: [plumber], undo, proposal: null })).toBe(
+      '"Call the plumber" needs a time.',
+    )
+    expect(
+      captureMessage({
+        added: [],
+        needs_look: [],
+        undo: null,
+        proposal: { id: 4, lines: ['Call mom at 17:00'] },
+      }),
+    ).toBe('Waiting for confirmation: Call mom at 17:00')
+    expect(captureMessage({ added: [], needs_look: [], undo: null, proposal: null })).toBe('Saved.')
   })
 
   it('has no axe violations once loaded', async () => {

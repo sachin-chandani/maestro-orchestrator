@@ -132,6 +132,7 @@ function lockingClients(kind: 'unauthorized' | 'rate_limited'): [string, () => L
           now: () => new Date(now),
           timeZone: TZ,
           storage: null,
+          masterToken: 't0ken',
           failure: (method) => {
             attempts += 1
             return rule(method)
@@ -163,6 +164,37 @@ function lockingClients(kind: 'unauthorized' | 'rate_limited'): [string, () => L
     ],
   ]
 }
+
+describe.each(lockingClients('unauthorized'))('%s signing in (ADR 0018)', (_, make) => {
+  it('takes the master token once, keeps a device token, and lists itself', async () => {
+    const { client, attempts } = make()
+    await rejection(client.listItems()) // signed out
+    const before = attempts()
+
+    expect((await rejection(client.registerDevice('wrong', 'Phone'))).kind).toBe('unauthorized')
+    expect(attempts()).toBe(before + 1) // sign-in gets past the lock, right or wrong
+
+    const signedIn = await client.registerDevice('t0ken', "Sachin's iPhone")
+    expect(signedIn.token).toMatch(/^mdt_/)
+    expect(signedIn.device).toMatchObject({ name: "Sachin's iPhone", current: false })
+    expect((await client.listItems()).length).toBeGreaterThan(0)
+    expect(client.connection()).toEqual({ status: 'connected' })
+    expect((await client.listDevices()).map((d) => d.current)).toEqual([true])
+  })
+
+  it('captures the same way through /capture', async () => {
+    const { client } = make()
+    await rejection(client.listItems()) // signed out first, as the app would be
+    await client.registerDevice('t0ken', 'Phone')
+    const result = await client.captureSplit('text me tomorrow at 9am to call the bank')
+
+    expect(result.added.map((i) => i.text)).toEqual(['Call the bank'])
+    expect(result.needs_look).toEqual([])
+    expect(result.undo?.id).toBe(1)
+    expect(result.proposal).toBeNull()
+    expect((await rejection(client.captureSplit(''))).kind).toBe('invalid')
+  })
+})
 
 describe.each(lockingClients('unauthorized'))('%s after a 401', (_, make) => {
   it('stops trying until a token is set', async () => {

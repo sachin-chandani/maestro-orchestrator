@@ -86,7 +86,7 @@ curl -X POST localhost:8000/items \
   -H "Content-Type: application/json" \
   -d '{"text": "dentist next tuesday at 3pm"}'
 ```
-Open `http://localhost:8000` for the web UI (capture, browse, search, done/snooze/delete). Interactive API docs are at `http://localhost:8000/docs`. A new phone-first web app is in progress at `http://localhost:8000/app` (built into the Docker image; from a source checkout see [web-app/README.md](web-app/README.md)). To capture from your phone with Apple Shortcuts or Android Tasker, see [docs/integrations/phone-shortcuts.md](docs/integrations/phone-shortcuts.md).
+Open `http://localhost:8000` for the web UI (capture, browse, search, done/snooze/delete). Interactive API docs are at `http://localhost:8000/docs`. The new phone-first web app is at `http://localhost:8000/app`: it asks for `MAESTRO_API_TOKEN` once, keeps a token of its own (see [Devices](#devices)) and shows your reminders live. It ships in the wheel and the Docker image; from a source checkout see [web-app/README.md](web-app/README.md). To capture from your phone with Apple Shortcuts or Android Tasker, see [docs/integrations/phone-shortcuts.md](docs/integrations/phone-shortcuts.md).
 
 ### Configuration
 All settings come from environment variables or a `.env` file. See [.env.example](.env.example).
