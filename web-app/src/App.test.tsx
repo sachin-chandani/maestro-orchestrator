@@ -615,6 +615,27 @@ describe('App', () => {
     expect(screen.queryByRole('button', { name: /^Undo/ })).toBeNull() // the line gave way
   })
 
+  it('Undo on the line takes back the latest capture only (#104)', async () => {
+    const client = new MockClient({ storage: null, timeZone: 'UTC' })
+    setup(client)
+    await screen.findByRole('region', { name: 'Today' })
+    const field = screen.getByRole('textbox', { name: 'Capture a reminder or note' })
+
+    fireEvent.change(field, { target: { value: 'renew the passport' } })
+    fireEvent.submit(field)
+    await screen.findByRole('article', { name: 'Renew the passport' })
+    fireEvent.change(field, { target: { value: 'buy stamps' } })
+    fireEvent.submit(field)
+    await screen.findByRole('article', { name: 'Buy stamps' })
+
+    fireEvent.click(screen.getByRole('button', { name: /^Undo/ }))
+    expect(await screen.findByText('Took it back.')).toBeVisible()
+    await waitFor(() => {
+      expect(screen.queryByRole('article', { name: 'Buy stamps' })).toBeNull()
+    })
+    expect(screen.getByRole('article', { name: 'Renew the passport' })).toBeVisible()
+  })
+
   it('replaces the line when a second capture follows (#104)', async () => {
     const client = new MockClient({ storage: null, timeZone: 'UTC' })
     setup(client)

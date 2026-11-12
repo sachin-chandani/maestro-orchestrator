@@ -121,6 +121,30 @@ describe.each(clients)('%s', (_, make) => {
     expect((await rejection(client.undoCapture(999))).kind).toBe('not_found')
   })
 
+  it('undoes one of several captures by its own token, leaving the others (#104)', async () => {
+    // Undo tokens and item ids are different number spaces; on a fresh database they happen to
+    // start at 1 together, which is where a mix-up would hide. Several captures pull them apart.
+    const client = make()
+    const a = await client.captureSplit('buy eggs')
+    const b = await client.captureSplit('renew the licence')
+    const c = await client.captureSplit('call the roofer sometime next week')
+    const ids = (r: typeof a) => [...r.added, ...r.needs_look].map((i) => i.id)
+    const tokens = [a.undo?.id, b.undo?.id, c.undo?.id]
+    expect(new Set(tokens).size).toBe(3)
+    expect(new Set([...ids(a), ...ids(b), ...ids(c)]).size).toBe(3)
+    expect(ids(a)).not.toEqual([a.undo?.id]) // the seed already holds items 1–13
+
+    await client.undoCapture(c.undo?.id ?? -1)
+    const items = (await client.listItems()).map((i) => i.id)
+    expect(items).not.toContain(ids(c)[0])
+    expect(items).toEqual(expect.arrayContaining([...ids(a), ...ids(b)]))
+    expect((await client.feed()).needs_look.map((i) => i.id)).not.toContain(ids(c)[0])
+
+    await client.undoCapture(a.undo?.id ?? -1)
+    expect((await client.listItems()).map((i) => i.id)).toEqual(expect.not.arrayContaining(ids(a)))
+    expect((await client.getItem(ids(b)[0] ?? -1)).text).toBe('Renew the licence')
+  })
+
   it('fills and dismisses what needs a look the same way (#126)', async () => {
     const client = make()
     expect(await rejection(client.fillGap(13, 'no idea'))).toMatchObject({

@@ -49,6 +49,23 @@ describe.skipIf(!url)('HttpClient against a live maestro serve', () => {
     expect(client.connection()).toEqual({ status: 'connected' })
   })
 
+  it('undoes one of several captures by its own token, leaving the others (#104)', async () => {
+    const a = await client.captureSplit('live test: buy eggs and call the vet at 4pm')
+    const b = await client.captureSplit('live test: renew the licence')
+    const ids = (r: typeof a) => [...r.added, ...r.needs_look].map((i) => i.id)
+    added.push(...ids(a), ...ids(b))
+    if (!a.undo || !b.undo) throw new Error('no undo tokens')
+    expect(a.undo.id).not.toBe(b.undo.id)
+
+    await client.undoCapture(a.undo.id)
+    const left = (await client.listItems()).map((i) => i.id)
+    for (const id of ids(a)) expect(left).not.toContain(id)
+    for (const id of ids(b)) expect(left).toContain(id)
+    await client.undoCapture(b.undo.id)
+    for (const id of ids(b)) expect(left).toContain(id) // the list from before; now gone:
+    expect((await rejection(client.getItem(ids(b)[0] ?? -1))).kind).toBe('not_found')
+  })
+
   it('captures and undoes, so the capture leaves nothing behind (#104)', async () => {
     const result = await client.captureSplit('live test: water the plants tomorrow at 8am')
     const saved = result.added[0]
