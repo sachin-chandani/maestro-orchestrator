@@ -25,7 +25,7 @@ from maestro.model import MAX_ACTIONS, Prompt, Provider, ProviderError
 from maestro.models import Item
 from maestro.notifier import REQUESTABLE_CHANNELS
 from maestro.observability import METRICS, shown
-from maestro.parser import parse, time_phrase_only
+from maestro.parser import parse, split_requests, time_phrase_only
 from maestro.tz import get_timezone, localize
 
 log = logging.getLogger(__name__)
@@ -87,17 +87,33 @@ class RulesInterpreter:
         return self.read(text, context)
 
     def read(self, text: str, context: Context) -> tuple[list[Action], Confidence]:
-        """The actions, and how sure the rules are of them (`maestro.confidence`, #116)."""
+        """The actions, and how sure the rules are of them (`maestro.confidence`, #116).
+
+        One message can ask for several things (#130): the clear joins are split first
+        (`maestro.parser.split_requests`), each part is parsed and assessed on its own, and the
+        doubts are pooled. A message that doesn't split cleanly is read whole, exactly as before,
+        and keeps its `several_requests` doubt. Every action records the whole message as its
+        `source_text`, as the model interpreter does, so "what you said" shows the full sentence.
+        """
         zone, now = context.moment()
-        item = parse(text, now=now, tz=zone)
-        # The saved text read again: if it still holds a time, the rules didn't explain it all.
-        # This second parse must never cost a capture the first one saved, so anything it raises
-        # ("… and again in 99999999999 hours" overflows) only means the rules are unsure.
-        try:
-            again: Item | None = parse(item.text, now=now, tz=zone)
-        except Exception:  # noqa: BLE001 - confidence is advice; the capture is already read
-            again = None
-        return _stamped([actions.from_item(item)], self.name), assess(text, item, again)
+        clauses = split_requests(text)
+        read: list[Action] = []
+        doubts: list[str] = []
+        for clause in clauses:
+            item = parse(clause, now=now, tz=zone)
+            # The saved text read again: if it still holds a time, the rules didn't explain it all.
+            # This second parse must never cost a capture the first one saved, so anything it
+            # raises ("… and again in 99999999999 hours" overflows) only means the rules are unsure.
+            try:
+                again: Item | None = parse(item.text, now=now, tz=zone)
+            except Exception:  # noqa: BLE001 - confidence is advice; the capture is already read
+                again = None
+            action = actions.from_item(item)
+            if len(clauses) > 1:
+                action = dataclasses.replace(action, source_text=text)
+            read.append(action)
+            doubts += [d for d in assess(clause, item, again).doubts if d not in doubts]
+        return _stamped(read, self.name), Confidence(tuple(doubts))
 
 
 @dataclass

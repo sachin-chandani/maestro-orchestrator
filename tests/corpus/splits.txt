@@ -1,0 +1,73 @@
+# Multi-request corpus (#130). An input line, then one "> " line per expected reading:
+# > text | due (local, or -) | rule (or -) | flags ("task", "gap:when", channel names, joined by "+")
+# A single "> " line means the message must NOT split and stay exactly what parse() makes of it.
+# "Now" is Tuesday 2026-10-27 08:00 America/New_York, as in phrases.txt. Made-up data only.
+
+# --- the ADR 0017 headline: two saved, one needing a look
+book flights, remind me friday at nine to check in, and call the plumber sometime next week
+> Book flights | - | - | task
+> Check in | 2026-10-30T09:00 | -
+> Call the plumber sometime next week | - | - | task+gap:when
+
+# --- clear joins
+buy milk and then call the dentist at 3pm
+> Buy milk | - | - | task
+> Call the dentist | 2026-10-27T15:00 | -
+
+pay rent tomorrow; also submit the expense report
+> Pay rent | 2026-10-28T09:00 | -
+> Submit the expense report | - | - | task
+
+remind me to pack tonight and don't forget to charge the power bank
+> Pack | 2026-10-27T20:00 | -
+> Charge the power bank | - | - | task
+
+renew the passport soon and book the mot friday
+> Renew the passport soon | - | - | task+gap:when
+> Book the mot | 2026-10-30T09:00 | -
+
+buy milk
+call the dentist at 3pm
+> Buy milk | - | - | task
+> Call the dentist | 2026-10-27T15:00 | -
+
+buy bread, milk and eggs and call the dentist
+> Buy bread, milk and eggs | - | - | task
+> Call the dentist | - | - | task
+
+water the plants every day at 8am and remember to buy a new watering can
+> Water the plants | 2026-10-28T08:00 | daily
+> Buy a new watering can | - | - | task
+
+# --- a channel tail stays with the request it qualifies (#20)
+buy milk and call the plumber, text me
+> Buy milk | - | - | task
+> Call the plumber | - | - | task+twilio_sms
+
+# --- conjunctions that must not split
+buy bread and milk
+> Buy bread and milk | - | - | task
+
+call mom and dad tomorrow at 5pm
+> Call mom and dad | 2026-10-28T17:00 | -
+
+clean and wash the car
+> Clean and wash the car | - | - | task
+
+pay the bills friday and then call me
+> Pay the bills | 2026-10-30T09:00 | - | twilio_call
+
+submit the report by eod and email me
+> Submit the report | 2026-10-27T17:00 | - | email
+
+the gate code is 4321 and the spare key lives under the pot
+> The gate code is 4321 and the spare key lives under the pot | - | -
+
+the invoice is overdue and remind me to chase it
+> The invoice is overdue and remind me to chase it | - | -
+
+milk and also remind me to call mom
+> Milk and also remind me to call mom | - | -
+
+work from 9am to 5pm
+> Work from to 5pm | 2026-10-27T09:00 | -

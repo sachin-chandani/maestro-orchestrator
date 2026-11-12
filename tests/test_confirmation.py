@@ -108,7 +108,8 @@ def test_a_proposal_is_stored_not_saved(store):
     assert capture.status == CaptureStatus.PENDING
     assert store.list() == []  # nothing reaches items until confirmed
     assert capture.interpreter == "rules" and "unread_time" in capture.doubts
-    assert captures.proposed_lines(capture) == ["⏰ Call the plumber sometime (Tue 03 Nov 09:00)"]
+    # "sometime next week" is a vague span, kept as words rather than read as one day (#130).
+    assert captures.proposed_lines(capture) == ["☑️ Call the plumber sometime next week (task)"]
     assert METRICS.get("maestro_captures_confirmation_total", outcome="proposed") == 1
 
 
@@ -116,7 +117,7 @@ def test_a_proposal_expires_at_the_due_time_when_that_is_sooner(store):
     soon = propose(store, "check the oven in 1 hour and in 99999999999 hours", now=NOW)
     assert soon.expires_at == NOW + timedelta(hours=1)  # not 24h: past the hour it is noise
     later = propose(store, UNSURE, now=NOW)
-    assert later.expires_at == NOW + timedelta(hours=24)  # "sometime next week" is days away
+    assert later.expires_at == NOW + timedelta(hours=24)  # an untimed proposal: the default
 
 
 def test_the_question_names_the_capture_and_when_it_expires(store):
@@ -300,7 +301,7 @@ def test_telegram_asks_with_buttons_and_yes_saves_exactly_once(store):
     bot.handle(button(f"cap:{capture.id}:yes", update_id=2))
     bot.handle(button(f"cap:{capture.id}:yes", update_id=3))  # the double tap
     (item,) = store.list()
-    assert item.text == "Call the plumber sometime" and item.capture_id == capture.id
+    assert item.text == "Call the plumber sometime next week" and item.capture_id == capture.id
     answers = [p["text"] for p, in zip(transport.sent("answerCallbackQuery"))]
     assert "Saved" in answers[0] and "Already saved" in answers[1]
     assert METRICS.get("maestro_captures_total", source="telegram") == 1
@@ -313,7 +314,7 @@ def test_telegram_plain_yes_and_undo_answer_in_words_too(store):
     bot.handle(message(UNSURE))
     bot.handle(message("yes", update_id=2))
     (item,) = store.list()
-    assert item.text == "Call the plumber sometime"
+    assert item.text == "Call the plumber sometime next week"
     assert "undo" in transport.sent()[1]["text"].lower()
     bot.handle(message("undo", update_id=3))
     assert store.list() == []

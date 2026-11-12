@@ -40,6 +40,14 @@ _TIME_FOLLOWERS = "|".join(["today", "tomorrow", "tonight", "on", "this", "next"
 TIME_BARE_RE = re.compile(
     rf"\b{_TIME_LEAD}(1[0-2]|[1-9])(?:\s*o'?clock)?(?=\s*(?:$|[,.;!?)]|(?:{_TIME_FOLLOWERS})\b))", re.I
 )
+# An hour said as a word needs its lead word ("at nine", "around seven"), so "one of the boxes"
+# and "nine lives" stay text. "to" joins the followers for this form only: "at nine to check in".
+_WORD_HOURS = ["one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
+               "eleven", "twelve"]
+TIME_WORD_RE = re.compile(
+    rf"\b{_TIME_LEAD}({'|'.join(_WORD_HOURS)})(?:\s*o'?clock)?"
+    rf"(?=\s*(?:$|[,.;!?)]|(?:{_TIME_FOLLOWERS}|to)\b))", re.I
+)
 _PM_CONTEXT_RE = re.compile(r"\b(?:tonight|evening|night|afternoon|pm)\b", re.I)
 _AM_CONTEXT_RE = re.compile(r"\b(?:morning|am)\b", re.I)
 
@@ -162,6 +170,10 @@ def _extract_time(parts: _Parts) -> None:
     elif m := TIME_BARE_RE.search(parts.text):
         parts.when_time = time(_conversational_hour(int(m[1]), parts.text), 0)
         _cut(parts, m)
+    elif m := TIME_WORD_RE.search(parts.text):
+        hour = _WORD_HOURS.index(m[1].lower()) + 1
+        parts.when_time = time(_conversational_hour(hour, parts.text), 0)
+        _cut(parts, m)
     _extract_part_of_day(parts)
 
 
@@ -233,6 +245,19 @@ def _extract_day(parts: _Parts, now: datetime) -> None:
         _extract_calendar_date(parts, now)
 
 
+# "sometime next week" names a span, not a day: reading it as one day would schedule a guess
+# (#130). Masked from dateparser, so the words stay in the text and open a `when` gap instead.
+# Bare "next week" (no vague qualifier) keeps meaning a week from now, as the corpus pins.
+_VAGUE_SPAN_RE = re.compile(
+    r"\b(?:some\s?time|at\s+some\s+point|later|soon)"
+    r"(?:\s+(?:next|this|the\s+coming)\s+(?:week|month|year|quarter))?\b", re.I)
+
+
+def _mask_vague_spans(text: str) -> str:
+    """Hide vaguely-qualified spans from dateparser, same length so positions still line up."""
+    return _VAGUE_SPAN_RE.sub(lambda m: "#" * len(m[0]), text)
+
+
 def _mask_non_year_numbers(text: str) -> str:
     """Hide long numbers that can't be a year ("form 1040", "0100") from dateparser, which would
     otherwise read them as one. Same length, so positions still line up with the original."""
@@ -240,7 +265,7 @@ def _mask_non_year_numbers(text: str) -> str:
 
 
 def _extract_calendar_date(parts: _Parts, now: datetime) -> None:
-    masked = _mask_non_year_numbers(parts.text)
+    masked = _mask_non_year_numbers(_mask_vague_spans(parts.text))
     for _ in range(3):  # each retry hides one more number that was mistaken for a year
         retry = _find_calendar_date(parts, masked, now)
         if retry is None:
@@ -456,3 +481,100 @@ def time_phrase_only(source: str, now: datetime | None = None,
     if item.due_at is None:
         return None
     return item if _clean(item.text).casefold() == _clean(source).casefold() else None
+
+
+# --- several requests in one message (#130, ADR 0017) -------------------------------------------
+# One sentence can ask for several things. `split_requests` finds the clear joins and cuts there,
+# but only when every resulting part reads as a request of its own, so "bread and milk", "clean and
+# wash the car" and "pay the bills friday and then call me" (a channel choice, #20) stay whole.
+# When in doubt it returns the message whole, which is exactly what the rules did before.
+
+# As many parts as a model may propose (maestro.model.MAX_ACTIONS); more smells like a pasted list.
+MAX_REQUESTS = 10
+
+_JOINER = r"(?:and\s+then|and\s+also|and|then|also)"
+# Words people put between a join and the request itself: "and then maybe pick up the parcel".
+_HEDGES = (r"(?:maybe|please|to|(?:i|we)\s+(?:need|have|want)\s+to|i\s+should|i\s+gotta"
+           r"|could\s+you|can\s+you|don'?t\s+forget\s+to)")
+# A clause join: a comma and/or a joining word, then any hedges. The joiner and hedges belong to
+# the join, so the clause that follows starts at its own first word.
+_JOIN_RE = re.compile(rf"(?:[,;]\s*(?:{_JOINER}\s+)?|\s{_JOINER}\s+)(?:{_HEDGES}\s+)*", re.I)
+# A sentence or line ends inside the message. Titles and "a.m." (checked separately) aren't ends.
+_BREAK_RE = re.compile(r"[\r\n]+\s*|[.!?;]+\s+")
+_ABBREVIATION_END_RE = re.compile(r"\b(?:dr|mr|mrs|ms|st|vs|etc|e\.g|i\.e|[ap]\.m|no)$", re.I)
+# Channel words without the named groups of _CHANNEL, for erasing rather than capturing.
+_CHANNEL_WORDS_RE = re.compile(
+    r"\b(?:(?:text|sms|call|email)\s+me|(?:on|via)\s+telegram|telegram\s+me)\b", re.I)
+_LEAD_WORDS_RE = re.compile(rf"^(?:(?:{_JOINER}|,|{_HEDGES})\s+)+", re.I)
+
+
+def _only_channel_phrases(tail: str) -> bool:
+    """True when `tail` is nothing but channel choices ("text me and email me."), which belong to
+    the request before them (#20), never to a request of their own."""
+    cleaned = _CHANNEL_WORDS_RE.sub(" ", tail)
+    cleaned = re.sub(r"\b(?:and\s+then|and|then|also|please)\b", " ", cleaned, flags=re.I)
+    return bool(tail.strip()) and not cleaned.strip(" ,;.!?")
+
+
+def _strip_request_lead(part: str) -> str:
+    """A clause without the join words a cut left on it ("also buy milk" -> "buy milk")."""
+    if TODO_MARKER_RE.match(part.strip()):  # "to do: …" keeps its marker; "to" here isn't a hedge
+        return part.strip()
+    return _LEAD_WORDS_RE.sub("", part.strip())
+
+
+def _reads_as_request(part: str) -> bool:
+    """Whether this part asks for something on its own: a capture prefix ("remind me to…") or a
+    to-do verb with something after it. One bare verb ("clean") is a description, not a request."""
+    if _only_channel_phrases(part):
+        return False
+    body = _strip_request_lead(part.lstrip(" !").strip())
+    if TODO_MARKER_RE.match(body) or PREFIX_RE.match(body):
+        return True
+    return bool(TODO_VERB_RE.match(body)) and len(body.split()) >= 2
+
+
+def split_requests(source: str) -> list[str]:
+    """The separate requests one message makes, in order — or the message whole (#130).
+
+    A cut happens at a clear join (a comma, "and", "then", "also", a semicolon, a sentence end or
+    a new line) and only where what follows starts a request of its own; channel tails ("…, text
+    me") stay with the request they qualify. If any resulting part doesn't read as a request, or
+    there are more than MAX_REQUESTS, nothing is split: the message is returned whole, exactly as
+    the rules have always read it, and `maestro.confidence` keeps its doubts about it.
+    """
+    cuts: list[tuple[int, int]] = []  # (where the join starts, where the next clause starts)
+    for m in _BREAK_RE.finditer(source):
+        if m.end() == len(source):
+            continue  # a final full stop ends the message, not a clause
+        if _ABBREVIATION_END_RE.search(source[:m.start()]):
+            continue
+        cuts.append((m.start(), m.end()))
+    cuts += [(m.start(), m.end()) for m in _JOIN_RE.finditer(source)]
+    spans: list[tuple[int, int]] = []
+    start = 0
+    for sep_start, clause_start in sorted(cuts):
+        if sep_start <= start or clause_start >= len(source):
+            continue
+        rest = source[clause_start:]
+        if _only_channel_phrases(rest):
+            continue  # "…, text me and email me": the tail belongs to the request before it
+        if not _reads_as_request(rest[: _next_cut(rest)]):
+            continue
+        spans.append((start, sep_start))
+        start = clause_start
+    if not spans:
+        return [source]
+    spans.append((start, len(source)))
+    parts = [_strip_request_lead(source[a:b].strip()) for a, b in spans]
+    if len(parts) > MAX_REQUESTS or not all(_reads_as_request(part) for part in parts):
+        return [source]
+    return parts
+
+
+def _next_cut(rest: str) -> int:
+    """Where the next possible join in `rest` is, so a clause is judged on its own words."""
+    join = _JOIN_RE.search(rest)
+    brk = _BREAK_RE.search(rest)
+    ends = [m.start() for m in (join, brk) if m]
+    return min(ends) if ends else len(rest)

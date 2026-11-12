@@ -82,7 +82,7 @@ def test_a_reading_that_never_wanted_a_time_is_left_alone(text):
     "work from 9am to 5pm",  # doubted (5pm was left) but it has a time, so it is not held back
     "pay rent on the 1st of every month",
     "remind me to check the oven before 3pm",
-    "call the plumber sometime next week",  # the rules do read a time here, so they keep it
+    "plan the sprint next week",  # a bare "next week" is read as one; only vague spans gap (#130)
 ])
 def test_a_reading_that_already_has_a_time_never_needs_one(text):
     """The rule that keeps the new default safe: whatever the doubts, a reading with a usable time

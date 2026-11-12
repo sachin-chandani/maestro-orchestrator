@@ -59,12 +59,16 @@ SURE = [
     "pay rent on the 1st of every month",
     "remember that my passport is in the blue drawer",
     "dentist friday at 3pm",
+    # Two clear requests now split and read in full (#130), so there is nothing left to doubt.
+    "book flights and remind me to pack sunscreen on friday",
+    "buy milk, call mom",
 ]
 UNSURE = {
     "pick up the kids before 3pm": "dangling_time_word",
     "work from 9am to 5pm": "time_left",
     "call the plumber sometime next week": "unread_time",
-    "book flights and remind me to pack sunscreen on friday": "several_requests",
+    # A join the rules can't split (#130): the first part states a fact, not a request.
+    "the invoice is overdue and remind me to chase it": "several_requests",
     "so um tomorrow i need to like call the bank about the card and then also maybe pick up the "
     "dry cleaning after work": "several_requests",
 }
@@ -86,7 +90,7 @@ def test_the_rules_say_why_they_are_unsure(text, doubt):
     ("Dentist friday at 3pm. Bring the forms.", "several_sentences"),
     ("um call mom tomorrow at 5pm", "filler"),
     ("call mom morning", "unread_time"),
-    ("buy milk, call mom", "several_requests"),
+    ("milk and also remind me to call mom", "several_requests"),  # "milk" alone can't split off
     # a dangling time word mid-text: "before 10am" lost its 10am and the grammar shows it
     ("meet john before 10am in the lobby", "dangling_time_word"),
     # "next weekend" is read as this weekend, leaving "next" behind

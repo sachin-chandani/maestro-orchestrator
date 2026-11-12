@@ -318,3 +318,8 @@ Submit the timesheet Friday. Text me. | Submit the timesheet | 2026-10-30T09:00 
 water the office plants tomorrow, please text me | Water the office plants | 2026-10-28T09:00 | - | twilio_sms
 every weekday at 9, text me | Every weekday at 9 | 2026-10-27T09:00 | weekdays | twilio_sms
 please text me to stretch at 3pm | Stretch | 2026-10-27T15:00 | - | twilio_sms
+
+# --- hours said as words (#130; ADR 0017's "friday at nine")
+remind me friday at nine to check in | Check in | 2026-10-30T09:00 | -
+dinner at seven tonight | Dinner | 2026-10-27T19:00 | -
+standup at nine o'clock | Standup | 2026-10-27T09:00 | -
