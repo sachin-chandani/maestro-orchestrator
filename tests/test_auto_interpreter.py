@@ -339,7 +339,7 @@ def test_migrating_from_the_schema_before_it_was_recorded(tmp_path):
         s.conn.commit()
 
     with Store(path, tz=TZ) as s:
-        assert s.schema_version == len(MIGRATIONS) == 13
+        assert s.schema_version == len(MIGRATIONS) == 14
         reminder_, task = s.list()
         assert (reminder_.text, reminder_.channels, reminder_.urgent, reminder_.interpreter) == \
             ("Call mom", ["twilio_sms"], True, None)

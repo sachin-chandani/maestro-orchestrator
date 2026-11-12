@@ -75,6 +75,22 @@ class Delivery:
 
 
 @dataclass
+class Device:
+    """A phone or browser signed in to the API with a token of its own (#108, ADR 0018).
+
+    Only the token's hash is stored; the token itself is shown once, when the device is added. A
+    revoked device keeps its row (so the name and dates stay on record) but its token stops working.
+    """
+
+    name: str  # what the person called it: "Sachin's iPhone"
+    token_hash: str  # maestro.devices.hash_token(token); never the token
+    created_at: datetime
+    last_seen_at: datetime | None = None  # the last request it made, to the hour
+    revoked_at: datetime | None = None
+    id: int | None = None
+
+
+@dataclass
 class Capture:
     """A captured message that needs (or needed) confirmation before acting (#117).
 

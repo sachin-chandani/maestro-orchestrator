@@ -18,7 +18,7 @@ needs_postgres = pytest.mark.skipif(
     not URL, reason="set MAESTRO_TEST_POSTGRES_URL to a disposable database to run these"
 )
 
-TABLES = "items, deliveries, acknowledgements, inbound_messages, scheduler_lease, captures"
+TABLES = "items, deliveries, acknowledgements, inbound_messages, scheduler_lease, captures, devices"
 
 
 def truncate(store):

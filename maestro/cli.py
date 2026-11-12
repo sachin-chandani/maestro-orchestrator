@@ -170,6 +170,31 @@ def _list_proposals(store: Store) -> int:
     return 0
 
 
+def _devices(store: Store, args: argparse.Namespace, tz: ZoneInfo) -> int:
+    """`maestro devices list|add|revoke` (#108, ADR 0018)."""
+    from maestro import devices
+
+    now = datetime.now(tz).replace(microsecond=0)
+    if args.devices_command == "add":
+        device, token = devices.register(store, " ".join(args.name), now)
+        print(f"Added device #{device.id} ({device.name}). Its token, shown only now:\n{token}")
+        return 0
+    if args.devices_command == "revoke":
+        if not store.revoke_device(args.id, now):
+            print(f"No device #{args.id}", file=sys.stderr)
+            return 1
+        print(f"Revoked device #{args.id}; its token no longer works.")
+        return 0
+    rows = store.devices()
+    if not rows:
+        print("No devices signed in. Sign in from the web app, or: maestro devices add <name>")
+        return 0
+    for device in rows:
+        seen = device.last_seen_at.strftime("%a %d %b %H:%M") if device.last_seen_at else "never"
+        print(f"#{device.id}  {device.name}  (added {device.created_at:%d %b %Y}, last seen {seen})")
+    return 0
+
+
 def _decide(store: Store, command: str, capture_id: int) -> int:
     proposal = store.get_capture(capture_id)
     if proposal is None:
@@ -235,6 +260,14 @@ def _build_parser(config: Config) -> argparse.ArgumentParser:
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8000)
     serve.add_argument("--interval", type=float, default=30.0, help="seconds between checks")
+
+    dev = sub.add_parser("devices", help="phones and browsers signed in with a token of their own (ADR 0018)")
+    dev_sub = dev.add_subparsers(dest="devices_command", required=True)
+    dev_sub.add_parser("list", help="show devices that can sign in")
+    dev_add = dev_sub.add_parser("add", help="sign a device in and print its token, once")
+    dev_add.add_argument("name", nargs="+", help='what to call it, e.g. "kitchen tablet"')
+    dev_revoke = dev_sub.add_parser("revoke", help="stop a device's token working, at once")
+    dev_revoke.add_argument("id", type=int)
 
     doctor = sub.add_parser("doctor", help="check configuration and channels before deploying")
     doctor.add_argument("--send-test", action="store_true", help="deliver a test message on every channel")
@@ -334,6 +367,8 @@ def _dispatch(args: argparse.Namespace, config: Config, store: Store, tz: ZoneIn
         print("\n".join(map(_format, items)) if items else "No matches.")
     elif args.command in ("confirm", "cancel", "undo"):
         return _decide(store, args.command, args.capture_id)
+    elif args.command == "devices":
+        return _devices(store, args, tz)
     elif args.command in ("done", "stop", "rm", "snooze"):
         if (target := store.get(args.id)) is None:
             print(f"No item #{args.id}", file=sys.stderr)

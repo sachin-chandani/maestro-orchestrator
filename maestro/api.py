@@ -1,6 +1,7 @@
 """HTTP API for self-hosted deployments. Install with `pip install 'maestro-orchestrator[server]'`.
 
-Every route except /health requires `Authorization: Bearer $MAESTRO_API_TOKEN` when a token is configured.
+Every route except /health requires `Authorization: Bearer $MAESTRO_API_TOKEN` when a token is configured,
+or a device token from `POST /devices` (ADR 0018), which works everywhere but on /devices itself.
 Handlers are async on purpose: they all run on the event-loop thread, so the single SQLite
 connection is never used from two threads at once.
 """
@@ -22,11 +23,11 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
-from maestro import __version__, commands, gaps, recurrence
+from maestro import __version__, commands, devices, gaps, recurrence
 from maestro import captures as confirmations
 from maestro.actions import Action, apply
 from maestro.interpret import Context, Interpreter, interpret_assessed
-from maestro.models import Capture, CaptureStatus, Item, Kind
+from maestro.models import Capture, CaptureStatus, Device, Item, Kind
 from maestro.notifier import Notifier
 from maestro.observability import METRICS, Labels
 from maestro.parser import parse_duration
@@ -136,6 +137,33 @@ class FillIn(BaseModel):
     """What an item that needs a look is missing: a time, a channel, or the words it never had."""
 
     phrase: str = Field(min_length=1, max_length=2000, examples=["tomorrow at 9am", "5pm", "email"])
+
+
+class DeviceIn(BaseModel):
+    name: str = Field(min_length=1, max_length=devices.MAX_NAME, examples=["Sachin's iPhone"])
+
+
+class DeviceOut(BaseModel):
+    """A phone or browser signed in with a token of its own (#108, ADR 0018)."""
+
+    id: int
+    name: str
+    created_at: datetime
+    last_seen_at: datetime | None  # to the hour
+    current: bool  # the device making this request
+
+    @classmethod
+    def of(cls, device: Device, current: bool = False) -> "DeviceOut":
+        if device.id is None:
+            raise ValueError("device has no id")
+        return cls(id=device.id, name=device.name, created_at=device.created_at,
+                   last_seen_at=device.last_seen_at, current=current)
+
+
+class DeviceCreatedOut(DeviceOut):
+    """The answer to signing a device in: the one and only copy of its token."""
+
+    token: str
 
 
 class UndoOut(BaseModel):
@@ -254,19 +282,40 @@ def create_app(store: Store, api_token: str | None = None, notifier: Notifier | 
                                     headers=error.headers)
         return await call_next(request)
 
+    def rejected(request: Request) -> HTTPException:
+        # Check and record in one step: no await in between, so concurrent guesses can't all slip
+        # past the limit before any failure is counted.
+        client = client_of(request)
+        if failure_bucket and not failure_bucket.take(client):
+            return too_many(failure_bucket, client, "auth_failures")
+        return HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid API token")
+
     async def require_token(request: Request, authorization: str | None = Header(default=None)) -> None:
+        """The master token (MAESTRO_API_TOKEN) or a live device token (ADR 0018). The device, if
+        one, is left in `request.state.device`; the master token leaves None."""
+        request.state.device = None
         if api_token is None:
             return
         if authorization is None:
             # Not a guess (e.g. the web UI before a token is entered), so it doesn't count.
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Missing API token")
-        if not hmac.compare_digest(authorization, f"Bearer {api_token}"):
-            # Check and record in one step: no await in between, so concurrent guesses can't all
-            # slip past the limit before any failure is counted.
-            client = client_of(request)
-            if failure_bucket and not failure_bucket.take(client):
-                raise too_many(failure_bucket, client, "auth_failures")
-            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid API token")
+        if hmac.compare_digest(authorization, f"Bearer {api_token}"):
+            return
+        presented = authorization.removeprefix("Bearer ")
+        device = devices.authenticate(store, presented, datetime.now(store.tz)) \
+            if authorization != presented else None
+        if device is None:
+            raise rejected(request)
+        request.state.device = device
+
+    async def require_master_token(request: Request,
+                                   authorization: str | None = Header(default=None)) -> None:
+        """Only the master token: a device can't add or revoke devices, so a lost phone can't
+        make itself a spare key."""
+        await require_token(request, authorization)
+        if request.state.device is not None:
+            raise HTTPException(status.HTTP_403_FORBIDDEN,
+                                "Only the server's API token can manage devices")
 
     async def twilio_params(request: Request, handler: TwilioHandler) -> dict[str, str]:
         """The form parameters of a Twilio webhook, after checking its signature.
@@ -345,6 +394,31 @@ def create_app(store: Store, api_token: str | None = None, notifier: Notifier | 
     async def health() -> dict:
         return {"status": "ok", "version": __version__, "schema": store.schema_version,
                 "timezone": store.tz.key, "backend": store.backend}
+
+    # Devices (#108, ADR 0018): the app sends the master token once and keeps a token of its own.
+
+    @app.post("/devices", status_code=201, dependencies=[Depends(require_master_token)])
+    async def add_device(body: DeviceIn) -> DeviceCreatedOut:
+        """Sign a device in. The answer carries the only copy of its token; store it on the device."""
+        device, token = devices.register(store, body.name, datetime.now(store.tz).replace(microsecond=0))
+        log.info("Device #%d signed in", device.id)
+        METRICS.inc("maestro_devices_total", action="added")
+        return DeviceCreatedOut(**DeviceOut.of(device).model_dump(), token=token)
+
+    @app.get("/devices", dependencies=[Depends(require_token)])
+    async def list_devices(request: Request) -> list[DeviceOut]:
+        """Devices that can sign in. `current` marks the one asking, when it is one."""
+        me: Device | None = request.state.device
+        return [DeviceOut.of(d, current=me is not None and d.id == me.id) for d in store.devices()]
+
+    @app.delete("/devices/{device_id}", status_code=204, dependencies=[Depends(require_master_token)])
+    async def revoke_device(device_id: int) -> Response:
+        """Stop a device's token working, at once and for good."""
+        if not store.revoke_device(device_id, datetime.now(store.tz).replace(microsecond=0)):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, f"No device #{device_id}")
+        log.info("Device #%d revoked", device_id)
+        METRICS.inc("maestro_devices_total", action="revoked")
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @app.get("/metrics", response_class=PlainTextResponse, dependencies=[Depends(require_token)])
     async def metrics() -> PlainTextResponse:

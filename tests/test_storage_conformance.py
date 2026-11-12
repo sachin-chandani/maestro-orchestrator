@@ -14,8 +14,8 @@ import pgsupport
 import pytest
 from conftest import TZ, dt
 
-from maestro.models import Acknowledgement, Capture, CaptureStatus, Delivery, Item, Kind, Status
-from maestro.storage import SQLiteStore, logic, open_store, parse_url
+from maestro.models import Acknowledgement, Capture, CaptureStatus, Delivery, Device, Item, Kind, Status
+from maestro.storage import SQLiteStore, driver_errors, logic, open_store, parse_url
 
 NOW = dt(2026, 10, 26, 9, 0)  # a Monday
 LATER = dt(2026, 10, 26, 17, 0)
@@ -844,3 +844,51 @@ def test_filling_words_can_change_the_kind_the_time_implied(store):
     untimed, _ = needing(store, gap="what", text="Uh")
     assert store.fill_gap(untimed.id, text="Renew the passport", kind=Kind.TASK)
     assert (store.get(untimed.id).kind, store.get(untimed.id).due_at) == (Kind.TASK, None)
+
+
+# --- devices (#108, ADR 0018) --------------------------------------------------------------
+
+
+def device(store, name="Phone", token_hash="h1", created=NOW):
+    return store.add_device(Device(name=name, token_hash=token_hash, created_at=created))
+
+
+def test_an_added_device_comes_back_whole_and_is_found_by_its_token_hash(store):
+    saved = device(store)
+    assert saved.id is not None
+    assert store.get_device(saved.id) == saved
+    assert store.find_device("h1") == saved
+    assert store.find_device("nope") is None
+    assert store.get_device(saved.id + 999) is None
+
+
+def test_devices_lists_live_devices_oldest_first(store):
+    first = device(store, "Phone", "h1")
+    second = device(store, "Tablet", "h2", created=LATER)
+    assert [d.id for d in store.devices()] == [first.id, second.id]
+
+
+def test_revoking_a_device_hides_it_and_stops_its_token_at_once(store):
+    saved = device(store)
+    assert store.revoke_device(saved.id, LATER)
+    assert store.find_device("h1") is None  # the lookup every request makes
+    assert store.devices() == []
+    revoked = store.get_device(saved.id)  # the row stays, for the record
+    assert revoked is not None and revoked.revoked_at == LATER and revoked.name == "Phone"
+    assert not store.revoke_device(saved.id, LATER)  # only once
+    assert not store.revoke_device(saved.id + 999, LATER)
+
+
+def test_a_token_hash_belongs_to_one_device(store):
+    device(store, "Phone", "same")
+    with pytest.raises(driver_errors(store.backend)):  # the backend's own integrity error
+        device(store, "Tablet", "same")
+    assert len(store.devices()) == 1
+
+
+def test_touching_a_device_records_when_it_was_seen(store):
+    saved = device(store)
+    assert saved.last_seen_at is None
+    store.touch_device(saved.id, LATER)
+    seen = store.get_device(saved.id)
+    assert seen is not None and seen.last_seen_at == LATER

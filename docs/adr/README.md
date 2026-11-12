@@ -20,3 +20,4 @@ Add a new numbered file for each decision; supersede rather than edit old ones.
 | [0015](0015-capture-produces-actions.md) | Capture produces typed actions; a language model is an optional interpreter | Accepted |
 | [0016](0016-confirm-unsure-captures.md) | Unsure captures are proposals the person confirms, with undo | Accepted |
 | [0017](0017-save-first-ask-later.md) | The app saves first and asks later | Accepted |
+| [0018](0018-device-tokens.md) | A phone signs in once and keeps a token of its own | Accepted |

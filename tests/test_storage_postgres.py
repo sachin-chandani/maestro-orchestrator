@@ -172,7 +172,7 @@ def test_migrating_from_the_schema_before_the_interpreter_was_recorded(fresh):
             " 'renew the passport', NULL, false)", (LATER, NOW, NOW))
 
     with open_store(pgsupport.URL, tz=TZ) as store:
-        assert store.schema_version == len(MIGRATIONS) == 6
+        assert store.schema_version == len(MIGRATIONS) == 7
         old_reminder, old_task = store.list()
         assert (old_reminder.text, old_reminder.channels, old_reminder.urgent, old_reminder.interpreter) \
             == ("Call mom", ["twilio_sms"], True, None)
@@ -200,7 +200,7 @@ def test_migrating_from_the_schema_before_confirmations(fresh):
             " 'call mom tomorrow at 5pm', NULL, false, 'rules')", (LATER, NOW))
 
     with open_store(pgsupport.URL, tz=TZ) as store:
-        assert store.schema_version == len(MIGRATIONS) == 6
+        assert store.schema_version == len(MIGRATIONS) == 7
         (item,) = store.list()
         assert (item.text, item.interpreter, item.capture_id) == ("Call mom", "rules", None)
         proposal, created = store.add_capture(Capture(
@@ -228,7 +228,7 @@ def test_migrating_from_the_schema_before_readings_needed_a_look(fresh):
             " NULL, false, 'rules', NULL)", (LATER, NOW, NOW))
 
     with open_store(pgsupport.URL, tz=TZ) as store:
-        assert store.schema_version == len(MIGRATIONS) == 6
+        assert store.schema_version == len(MIGRATIONS) == 7
         reminder_row, task_row = store.list()
         assert (reminder_row.text, reminder_row.gap) == ("Call mom", None)
         assert (task_row.text, task_row.gap) == ("Pick up the kids before", None)

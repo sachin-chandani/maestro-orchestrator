@@ -24,7 +24,7 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from maestro.models import Acknowledgement, Capture, CaptureStatus, Delivery, Item, Kind, Status
+from maestro.models import Acknowledgement, Capture, CaptureStatus, Delivery, Device, Item, Kind, Status
 from maestro.observability import METRICS
 from maestro.storage import logic, migrations
 from maestro.storage.base import Store
@@ -184,6 +184,19 @@ MIGRATIONS: list[Migration] = [
     # row, and the list of things awaiting an answer is only ever as long as a person's patience.
     [
         "ALTER TABLE items ADD COLUMN gap TEXT",
+    ],
+    # 14: devices signed in with a token of their own (#108, ADR 0018). Only the token's hash is
+    # kept; a revoked device keeps its row so the name and dates stay on record. The hash is the
+    # lookup every authenticated request makes, so it is unique and indexed.
+    [
+        """CREATE TABLE IF NOT EXISTS devices (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            name         TEXT NOT NULL,
+            token_hash   TEXT NOT NULL UNIQUE,
+            created_at   TEXT NOT NULL,
+            last_seen_at TEXT,
+            revoked_at   TEXT
+        )""",
     ],
 ]
 
@@ -687,6 +700,56 @@ class SQLiteStore(Store):
         rows = self.conn.execute(
             "SELECT * FROM items WHERE capture_id = ? ORDER BY id", (capture_id,))
         return [self._item(r) for r in rows]
+
+    # --- devices (#108, ADR 0018) -----------------------------------------------------------
+
+    def _device(self, row: sqlite3.Row) -> Device:
+        return Device(
+            id=row["id"],
+            name=row["name"],
+            token_hash=row["token_hash"],
+            created_at=self._required_from_db(row["created_at"]),
+            last_seen_at=self._from_db(row["last_seen_at"]),
+            revoked_at=self._from_db(row["revoked_at"]),
+        )
+
+    def add_device(self, device: Device) -> Device:
+        with self._transaction():
+            cur = self.conn.execute(
+                "INSERT INTO devices (name, token_hash, created_at, last_seen_at, revoked_at)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (device.name, device.token_hash, self._to_db(device.created_at),
+                 self._to_db(device.last_seen_at), self._to_db(device.revoked_at)),
+            )
+        device.id = cur.lastrowid
+        return device
+
+    def find_device(self, token_hash: str) -> Device | None:
+        row = self.conn.execute(
+            "SELECT * FROM devices WHERE token_hash = ? AND revoked_at IS NULL", (token_hash,)
+        ).fetchone()
+        return self._device(row) if row else None
+
+    def get_device(self, device_id: int) -> Device | None:
+        row = self.conn.execute("SELECT * FROM devices WHERE id = ?", (device_id,)).fetchone()
+        return self._device(row) if row else None
+
+    def devices(self) -> builtins.list[Device]:
+        rows = self.conn.execute("SELECT * FROM devices WHERE revoked_at IS NULL ORDER BY id")
+        return [self._device(r) for r in rows]
+
+    def revoke_device(self, device_id: int, now: datetime) -> bool:
+        with self._transaction():
+            cur = self.conn.execute(
+                "UPDATE devices SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL",
+                (self._to_db(now), device_id),
+            )
+        return cur.rowcount > 0
+
+    def touch_device(self, device_id: int, now: datetime) -> None:
+        with self._transaction():
+            self.conn.execute("UPDATE devices SET last_seen_at = ? WHERE id = ?",
+                              (self._to_db(now), device_id))
 
     # --- readings that need a look (#126) ---------------------------------------------------
 

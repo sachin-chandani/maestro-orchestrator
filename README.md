@@ -96,7 +96,7 @@ All settings come from environment variables or a `.env` file. See [.env.example
 | `MAESTRO_DB` | SQLite path (default `~/.maestro/maestro.db`). Must be on a local disk or Docker volume, not NFS/SMB (WAL mode) |
 | `MAESTRO_DB_URL` | Database URL, for a backend other than the default SQLite file: `sqlite:///data/maestro.db` or `postgresql://user:pw@host/maestro` (needs `pip install 'maestro-orchestrator[postgres]'`). Wins over `MAESTRO_DB` |
 | `MAESTRO_TIMEZONE` | Your IANA timezone, e.g. `Europe/London`. Defaults to the system zone, which is UTC in Docker, so set it when self-hosting |
-| `MAESTRO_API_TOKEN` | Bearer token for the API; required unless bound to localhost |
+| `MAESTRO_API_TOKEN` | Bearer token for the API; required unless bound to localhost. Phones sign in with it once and keep a token of their own (see [Devices](#devices)) |
 | `MAESTRO_RATE_LIMIT_WEBHOOK` | Webhook requests with an invalid signature allowed per minute per client (default 60, 0 = off). Genuine Twilio callbacks are never limited |
 | `MAESTRO_RATE_LIMIT_AUTH_FAILURES` | Wrong API tokens allowed per minute per client before it is locked out of the API (default 10, 0 = off). A missing token doesn't count |
 | `MAESTRO_TRUST_PROXY_HEADERS` | `true` behind a reverse proxy, so limits apply per real client (last `X-Forwarded-For` entry) |
@@ -143,6 +143,9 @@ maestro doctor              # timezone, database, API token, every configured ch
 maestro doctor --send-test  # also delivers a test message on each channel
 ```
 It exits non-zero if anything fails, so you can run it before a deploy (`docker compose run --rm maestro maestro doctor`).
+
+### Devices
+A phone or browser shouldn't keep the master token. The web app asks for it once, calls `POST /devices {"name": "Sachin's iPhone"}` and keeps the device token it gets back (`mdt_…`), which works on every route except `/devices`. Only the token's hash is stored. Lose a phone: `maestro devices revoke <id>` (or `DELETE /devices/{id}`) stops that one token at once; `maestro devices list` shows what is signed in and when it was last seen; `maestro devices add <name>` prints a token for a device that can't run the app. Rotating `MAESTRO_API_TOKEN` leaves devices signed in. See ADR 0018.
 
 ### Monitoring
 `GET /metrics` serves Prometheus metrics (same bearer token as the API): captures by source, deliveries by channel and result, reminders fired, acknowledgements and reminders still awaiting one, scheduler ticks and lag, and item counts by kind and status. `GET /items?unacknowledged=true` lists reminders that were sent but not yet marked done or snoozed, and `GET /items?kind=task` (or `reminder`, `note`) lists one kind. Alert on `time() - maestro_scheduler_last_tick_timestamp_seconds > 120` to catch a stuck scheduler.

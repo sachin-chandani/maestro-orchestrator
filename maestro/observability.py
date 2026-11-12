@@ -118,6 +118,8 @@ def _escape(value: str) -> str:
 
 METRICS = Metrics()
 METRICS.describe("maestro_captures_total", "counter", "Items captured, by source.")
+METRICS.describe("maestro_devices_total", "counter",
+                 "Devices signed in with their own token (ADR 0018), by action: added, revoked.")
 METRICS.describe("maestro_captures_confirmation_total", "counter",
                  "Captures held for confirmation (#117), by outcome: proposed, confirmed, "
                  "cancelled, expired, undone.")

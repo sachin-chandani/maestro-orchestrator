@@ -638,7 +638,7 @@ def test_migrating_from_the_schema_before_readings_needed_a_look(tmp_path):
         s.conn.commit()
 
     with Store(path, tz=TZ) as s:
-        assert s.schema_version == len(MIGRATIONS) == 13
+        assert s.schema_version == len(MIGRATIONS) == 14
         reminder_row, task_row = s.list()
         assert (reminder_row.gap, task_row.gap) == (None, None)
         assert s.needs_look() == []

@@ -18,7 +18,7 @@ from types import TracebackType
 from typing import Self
 from zoneinfo import ZoneInfo
 
-from maestro.models import Acknowledgement, Capture, Delivery, Item, Kind, Status
+from maestro.models import Acknowledgement, Capture, Delivery, Device, Item, Kind, Status
 from maestro.storage.logic import ACK_WINDOW
 
 __all__ = ["ACK_WINDOW", "SchemaTooNewError", "Store"]
@@ -138,6 +138,34 @@ class Store(ABC):
     @abstractmethod
     def items_for_capture(self, capture_id: int) -> builtins.list[Item]:
         """The items a confirmed capture created (empty once undone)."""
+
+    # --- devices signed in with their own token (#108, ADR 0018) ----------------------------
+
+    @abstractmethod
+    def add_device(self, device: Device) -> Device:
+        """Save a device and return it with its `id` set. `token_hash` must be unique."""
+
+    @abstractmethod
+    def find_device(self, token_hash: str) -> Device | None:
+        """The device whose token hashes to this, unless it was revoked. How a request is
+        authenticated, so it must be one indexed lookup."""
+
+    @abstractmethod
+    def get_device(self, device_id: int) -> Device | None:
+        """The device with this id, revoked or not, or None."""
+
+    @abstractmethod
+    def devices(self) -> builtins.list[Device]:
+        """Devices that can still sign in, oldest first."""
+
+    @abstractmethod
+    def revoke_device(self, device_id: int, now: datetime) -> bool:
+        """Stop a device's token working, keeping its row. False if it was unknown or already revoked."""
+
+    @abstractmethod
+    def touch_device(self, device_id: int, now: datetime) -> None:
+        """Record that the device was just seen. Called at most once an hour per device, so
+        authenticating a request is usually a read alone."""
 
     # --- readings that need a look (#126, ADR 0017) -----------------------------------------
 
