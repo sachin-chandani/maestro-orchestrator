@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest'
 import { SUPPORT, type MaestroClient } from '../client.ts'
 import { ApiError } from '../errors.ts'
 import { HttpClient } from '../http/HttpClient.ts'
-import { MockClient } from '../mock/MockClient.ts'
+import { MockClient, failWith } from '../mock/MockClient.ts'
 import { fakeServer } from './fakeServer.ts'
 
 const TZ = 'Asia/Kolkata'
@@ -108,5 +108,89 @@ describe.each(clients)('%s', (_, make) => {
 
   it('starts connected', () => {
     expect(make().connection()).toEqual({ status: 'connected' })
+  })
+})
+
+// The 401 and 429 lock (#112): the same on sample data as against a server. `attempts` counts what
+// reached the server (or the mock's failure rule); a locked client adds nothing to it.
+interface Locking {
+  client: MaestroClient
+  attempts: () => number
+  advance: (ms: number) => void
+}
+
+function lockingClients(kind: 'unauthorized' | 'rate_limited'): [string, () => Locking][] {
+  const injected = () => failWith(kind, { times: 1, retryAfterSeconds: 30 })
+  return [
+    [
+      'MockClient',
+      () => {
+        let now = new Date(START).getTime()
+        let attempts = 0
+        const rule = injected()
+        const client = new MockClient({
+          now: () => new Date(now),
+          timeZone: TZ,
+          storage: null,
+          failure: (method) => {
+            attempts += 1
+            return rule(method)
+          },
+        })
+        return { client, attempts: () => attempts, advance: (ms) => (now += ms) }
+      },
+    ],
+    [
+      'HttpClient',
+      () => {
+        let now = new Date(START).getTime()
+        // A 401 comes from the fake server's own token check; a 429 is injected in the backend,
+        // which shares the clock because it locks on it too and must lift it in step.
+        const backend = new MockClient({
+          now: () => new Date(now),
+          timeZone: TZ,
+          storage: null,
+          failure: kind === 'rate_limited' ? injected() : null,
+        })
+        const server = fakeServer(backend, { token: 't0ken' })
+        const client = new HttpClient({
+          token: kind === 'unauthorized' ? 'wrong' : 't0ken',
+          fetch: server.fetch,
+          now: () => now,
+        })
+        return { client, attempts: () => server.requests.length, advance: (ms) => (now += ms) }
+      },
+    ],
+  ]
+}
+
+describe.each(lockingClients('unauthorized'))('%s after a 401', (_, make) => {
+  it('stops trying until a token is set', async () => {
+    const { client, attempts } = make()
+
+    expect((await rejection(client.listItems())).kind).toBe('unauthorized')
+    expect(client.connection()).toEqual({ status: 'signed_out' })
+    expect((await rejection(client.health())).kind).toBe('unauthorized')
+    expect(attempts()).toBe(1)
+
+    client.setToken('t0ken')
+    expect((await client.health()).status).toBe('ok')
+    expect(client.connection()).toEqual({ status: 'connected' })
+  })
+})
+
+describe.each(lockingClients('rate_limited'))('%s after a 429', (_, make) => {
+  it('stops trying until Retry-After has passed, then carries on', async () => {
+    const { client, attempts, advance } = make()
+
+    expect((await rejection(client.listItems())).kind).toBe('rate_limited')
+    expect(client.connection()).toEqual({ status: 'rate_limited', retry_after_seconds: 30 })
+    advance(29_999)
+    expect((await rejection(client.listItems())).kind).toBe('rate_limited')
+    expect(attempts()).toBe(1)
+
+    advance(1)
+    expect((await client.listItems()).length).toBeGreaterThan(0)
+    expect(client.connection()).toEqual({ status: 'connected' })
   })
 })

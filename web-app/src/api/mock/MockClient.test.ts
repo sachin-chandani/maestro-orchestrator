@@ -142,6 +142,17 @@ describe('items', () => {
     expect(await client.getItem(13)).toEqual(item)
   })
 
+  it('keeps day, time and recurrence words after "in N minutes", which already set the time', async () => {
+    const { client } = setup()
+    const item = await client.capture(
+      "in 10 minutes tell Monday's team the daily standup is at 9am",
+    )
+
+    expect(item.due_at).toBe('2026-11-05T14:10:00+05:30')
+    expect(item.text).toBe("Tell Monday's team the daily standup is at 9am")
+    expect(item.recurrence).toBeNull()
+  })
+
   it('captures untimed text as a note', async () => {
     const { client } = setup()
     expect(await client.capture('the wifi password is on the router')).toMatchObject({
@@ -498,16 +509,18 @@ describe('injected failures', () => {
   })
 
   it('drive the connection state, as real failures will', async () => {
-    const { client } = setup()
+    const { client, setNow } = setup()
     const seen: ConnectionState[] = []
     const unsubscribe = client.onConnectionChange((state) => seen.push(state))
 
     client.setFailure(failWith('unauthorized', { times: 1 }))
     await rejection(client.listItems())
     expect(client.connection()).toEqual({ status: 'signed_out' })
+    client.setToken('t0ken') // signing in again unlocks, as it does HttpClient
 
     client.setFailure(failWith('rate_limited', { times: 1, retryAfterSeconds: 30 }))
     await rejection(client.listItems())
+    setNow('2026-11-05T14:00:30+05:30') // the Retry-After has passed
     client.setFailure(failWith('offline', { times: 1 }))
     await rejection(client.listItems())
     client.setFailure(failWith('not_found', { times: 1 })) // not about the connection
@@ -525,6 +538,47 @@ describe('injected failures', () => {
     client.setFailure(failWith('offline', { times: 1 }))
     await rejection(client.listItems())
     expect(seen).toHaveLength(4)
+  })
+})
+
+describe('the 401 and 429 lock (#112)', () => {
+  it('stops after a 401 until a token is set, without reaching the failure rule again', async () => {
+    const { client } = setup()
+    const rule = vi.fn(failWith('unauthorized', { times: 1 }))
+    client.setFailure(rule)
+
+    expect((await rejection(client.listItems())).kind).toBe('unauthorized')
+    expect((await rejection(client.health())).kind).toBe('unauthorized')
+    expect(rule).toHaveBeenCalledTimes(1) // the second call never got as far as the rule
+    expect(client.connection()).toEqual({ status: 'signed_out' })
+
+    client.setToken('t0ken')
+    expect((await client.health()).status).toBe('ok')
+    expect(client.connection()).toEqual({ status: 'connected' })
+  })
+
+  it('lifts a 429 lock once its Retry-After has passed', async () => {
+    const { client, setNow } = setup()
+    const rule = vi.fn(failWith('rate_limited', { times: 1, retryAfterSeconds: 30 }))
+    client.setFailure(rule)
+
+    expect((await rejection(client.health())).kind).toBe('rate_limited')
+    setNow('2026-11-05T14:00:29+05:30')
+    expect((await rejection(client.health())).kind).toBe('rate_limited')
+    expect(rule).toHaveBeenCalledTimes(1)
+
+    setNow('2026-11-05T14:00:30+05:30')
+    expect((await client.health()).status).toBe('ok')
+    expect(client.connection()).toEqual({ status: 'connected' })
+  })
+
+  it('is lifted by switching injected failures off', async () => {
+    const { client } = setup()
+    client.setFailure(failWith('unauthorized'))
+    await rejection(client.health())
+
+    client.setFailure(null)
+    expect((await client.health()).status).toBe('ok')
   })
 })
 

@@ -8,13 +8,19 @@ export interface ToastProps {
   onDismiss: () => void
   /** How long it stays (default 2.6 s, as in the design); a new message starts the time again. */
   durationMs?: number
+  /**
+   * Tells one message from another with the same words: a second "Done." said while the first is
+   * still up would otherwise keep the first one's timer and vanish early (#112). Screens pass a
+   * counter.
+   */
+  messageKey?: number | string
 }
 
 /**
  * A short confirmation above the capture bar. The status region is always in the page, empty when
  * there's nothing to say, so a new message is announced politely without moving focus.
  */
-export function Toast({ message, onDismiss, durationMs = 2600 }: ToastProps) {
+export function Toast({ message, onDismiss, durationMs = 2600, messageKey }: ToastProps) {
   // The latest callback, so a parent re-rendering with a new function doesn't restart the timer.
   const dismiss = useRef(onDismiss)
   useEffect(() => {
@@ -28,7 +34,7 @@ export function Toast({ message, onDismiss, durationMs = 2600 }: ToastProps) {
     return () => {
       clearTimeout(timer)
     }
-  }, [message, durationMs])
+  }, [message, messageKey, durationMs])
 
   return (
     <div className={styles.region} role="status">

@@ -2,6 +2,7 @@
 // maestro/tz.py and maestro/recurrence.py so the mock moves reminders the way the server does,
 // using only Intl (no date library).
 
+import { dateTimeFormat } from '../../lib/intl.ts'
 import type { IsoDateTime } from '../types.ts'
 
 const MINUTE = 60_000
@@ -26,24 +27,17 @@ export type WallTime = Ymd &
     weekday: number
   }
 
-const formatters = new Map<string, Intl.DateTimeFormat>()
-
 function formatter(tz: string): Intl.DateTimeFormat {
-  let f = formatters.get(tz)
-  if (!f) {
-    f = new Intl.DateTimeFormat('en-US', {
-      timeZone: tz,
-      hourCycle: 'h23',
-      year: 'numeric',
-      month: 'numeric',
-      day: 'numeric',
-      hour: 'numeric',
-      minute: 'numeric',
-      second: 'numeric',
-    })
-    formatters.set(tz, f)
-  }
-  return f
+  return dateTimeFormat('en-US', {
+    timeZone: tz,
+    hourCycle: 'h23',
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: 'numeric',
+    second: 'numeric',
+  })
 }
 
 /** True if `tz` is an IANA timezone the runtime knows. */

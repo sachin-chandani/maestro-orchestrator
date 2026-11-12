@@ -2,6 +2,7 @@
 // #103 adds "This week" and the tests around midnight and DST.
 
 import type { Item } from '../api/types.ts'
+import { dateTimeFormat } from '../lib/intl.ts'
 
 export type GroupName = 'Today' | 'Tomorrow' | 'Later'
 
@@ -10,21 +11,14 @@ export interface Group {
   items: Item[]
 }
 
-const dayFormats = new Map<string, Intl.DateTimeFormat>()
-
 /** "2026-11-05": the calendar day of `instant` in `timeZone`. */
 export function dayKey(instant: Date, timeZone: string): string {
-  let f = dayFormats.get(timeZone)
-  if (!f) {
-    f = new Intl.DateTimeFormat('en-CA', {
-      timeZone,
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-    })
-    dayFormats.set(timeZone, f)
-  }
-  return f.format(instant)
+  return dateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(instant)
 }
 
 /** The day after `key`, by the calendar (so a 23- or 25-hour day can't skip or repeat one). */
@@ -57,34 +51,17 @@ export function groupReminders(items: Item[], now: Date, timeZone: string): Grou
     .filter((g) => g.items.length > 0)
 }
 
-const laterFormats = new Map<string, Intl.DateTimeFormat>()
-
 /** The time column for a Later reminder, where a time alone would be ambiguous: "Fri 8". */
 export function laterLabel(iso: string, timeZone: string): string {
-  let f = laterFormats.get(timeZone)
-  if (!f) {
-    f = new Intl.DateTimeFormat('en-GB', { timeZone, weekday: 'short', day: 'numeric' })
-    laterFormats.set(timeZone, f)
-  }
+  const f = dateTimeFormat('en-GB', { timeZone, weekday: 'short', day: 'numeric' })
   const parts = f.formatToParts(new Date(iso))
   const part = (type: string) => parts.find((p) => p.type === type)?.value ?? ''
   return `${part('weekday')} ${part('day')}`
 }
 
-const headerFormats = new Map<string, Intl.DateTimeFormat>()
-
 /** "Thu 5 Nov", for the header. */
 export function headerDate(now: Date, timeZone: string): string {
-  let f = headerFormats.get(timeZone)
-  if (!f) {
-    f = new Intl.DateTimeFormat('en-GB', {
-      timeZone,
-      weekday: 'short',
-      day: 'numeric',
-      month: 'short',
-    })
-    headerFormats.set(timeZone, f)
-  }
+  const f = dateTimeFormat('en-GB', { timeZone, weekday: 'short', day: 'numeric', month: 'short' })
   const parts = f.formatToParts(now)
   const part = (type: string) => parts.find((p) => p.type === type)?.value ?? ''
   return `${part('weekday')} ${part('day')} ${part('month')}`

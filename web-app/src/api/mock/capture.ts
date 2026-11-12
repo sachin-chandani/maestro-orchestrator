@@ -74,11 +74,19 @@ export function parseCapture(source: string, now: Date, tz: string): Captured {
     dueAt = new Date(now.getTime() + ms)
   }
 
-  const rec = take(
-    new RegExp(`\\bevery (day|weekday|week|month|${WEEKDAYS.join('|')})\\b|\\bdaily\\b`, 'i'),
-  )
-  const day = take(new RegExp(`\\b(?:on )?(today|tonight|tomorrow|${WEEKDAYS.join('|')})\\b`, 'i'))
-  const time = take(/\b(?:at )?(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b|\bat (\d{1,2}):(\d{2})\b/i)
+  // Only read the recurrence, day and time words when they decide the time: after "in N minutes"
+  // they are part of what to remember ("in 10 minutes tell Monday's team"), so they stay (#112).
+  const rec = dueAt
+    ? null
+    : take(
+        new RegExp(`\\bevery (day|weekday|week|month|${WEEKDAYS.join('|')})\\b|\\bdaily\\b`, 'i'),
+      )
+  const day = dueAt
+    ? null
+    : take(new RegExp(`\\b(?:on )?(today|tonight|tomorrow|${WEEKDAYS.join('|')})\\b`, 'i'))
+  const time = dueAt
+    ? null
+    : take(/\b(?:at )?(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b|\bat (\d{1,2}):(\d{2})\b/i)
 
   if (!dueAt && (rec || day || time)) {
     let hour = DEFAULT_HOUR

@@ -1,4 +1,5 @@
-import { SUPPORT, type MaestroClient } from '../client.ts'
+import { unsupportedError, type MaestroClient } from '../client.ts'
+import { Connection } from '../connection.ts'
 import { ApiError, type ApiErrorKind } from '../errors.ts'
 import type {
   ConnectionState,
@@ -99,6 +100,8 @@ const DEFAULT_QUIET: QuietHours = { start: '22:00', end: '07:00' }
  * recurring reminder act on one occurrence (ADR 0009), and quiet hours hold reminders that aren't
  * urgent. Reminders "go out" when their time passes, as the scheduler would send them, so they
  * become awaiting an answer. Endpoints the backend doesn't have yet reject with "unsupported".
+ * After an injected 401 or 429 it locks exactly as HttpClient does (Connection), so a screen can't
+ * behave differently on sample data than against a server (#112).
  */
 export class MockClient implements MaestroClient {
   private readonly now: () => Date
@@ -108,11 +111,13 @@ export class MockClient implements MaestroClient {
   private latencyMs: number
   private failure: FailureRule | null
   private state: MockState
-  private connectionState: ConnectionState = { status: 'connected' }
-  private readonly listeners = new Set<(state: ConnectionState) => void>()
+  private readonly conn: Connection
+  /** The token the app has set; the mock checks nothing against it, but keeps it as a client would. */
+  token: string | null = null
 
   constructor(options: MockClientOptions = {}) {
     this.now = options.now ?? (() => new Date())
+    this.conn = new Connection(() => this.now().getTime())
     this.tz = options.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone
     this.quiet = options.quietHours === undefined ? DEFAULT_QUIET : options.quietHours
     this.storage = options.storage === undefined ? defaultStorage() : options.storage
@@ -136,8 +141,10 @@ export class MockClient implements MaestroClient {
     this.latencyMs = ms
   }
 
+  /** Change what fails. Switching failures off (null) also lifts a 401 or 429 lock they caused. */
   setFailure(rule: FailureRule | null): void {
     this.failure = rule
+    if (rule === null) this.conn.unlock()
   }
 
   // -------------------------------------------------------------------------------------------------
@@ -323,27 +330,35 @@ export class MockClient implements MaestroClient {
     }))
   }
 
+  setToken(token: string | null): void {
+    // Nothing to check it against; setting one unlocks the client, as it does the real one.
+    this.token = token
+    this.conn.unlock()
+  }
+
   connection(): ConnectionState {
-    return this.connectionState
+    return this.conn.current()
   }
 
   onConnectionChange(listener: (state: ConnectionState) => void): () => void {
-    this.listeners.add(listener)
-    return () => this.listeners.delete(listener)
+    return this.conn.subscribe(listener)
   }
 
   // -------------------------------------------------------------------------------------------------
   // Internals
 
   /**
-   * Runs one call the way a request would: wait out the latency, fail if a failure is injected
-   * (changing nothing), otherwise bring deliveries up to date, run it and save.
+   * Runs one call the way a request would: fail at once while locked, wait out the latency, fail
+   * if a failure is injected (changing nothing), otherwise bring deliveries up to date, run it and
+   * save.
    */
   private async call<T>(method: Method, run: () => T): Promise<T> {
+    const lock = this.conn.locked()
+    if (lock) throw lock
     if (this.latencyMs > 0) await new Promise((resolve) => setTimeout(resolve, this.latencyMs))
     const injected = this.failure?.(method) ?? null
     if (injected) {
-      this.setConnection(injected)
+      this.conn.failed(injected)
       throw injected
     }
     this.deliverDue()
@@ -355,32 +370,15 @@ export class MockClient implements MaestroClient {
       this.state = JSON.parse(before) as MockState // a call that fails changes nothing
       throw error
     } finally {
-      this.setConnection(null)
+      this.conn.succeeded() // the "server" answered, even if with an error of its own
       this.persist()
     }
   }
 
   private unsupported<T>(method: Method): Promise<T> {
-    const support = SUPPORT[method]
-    const issue = 'issue' in support ? ` (#${String(support.issue)})` : ''
     return this.call(method, () => {
-      throw new ApiError(
-        'unsupported',
-        `${method} needs backend support that isn't built yet${issue}`,
-      )
+      throw unsupportedError(method)
     })
-  }
-
-  private setConnection(error: ApiError | null): void {
-    let next: ConnectionState = { status: 'connected' }
-    if (error?.kind === 'unauthorized') next = { status: 'signed_out' }
-    else if (error?.kind === 'rate_limited') {
-      next = { status: 'rate_limited', retry_after_seconds: error.retryAfterSeconds }
-    } else if (error?.kind === 'offline') next = { status: 'offline', queued: 0 }
-    else if (error) return // other failures say nothing about the connection
-    if (JSON.stringify(next) === JSON.stringify(this.connectionState)) return
-    this.connectionState = next
-    for (const listener of this.listeners) listener(next)
   }
 
   /**

@@ -1,3 +1,4 @@
+import { ApiError } from './errors.ts'
 import type {
   ConnectionState,
   Device,
@@ -64,6 +65,8 @@ export interface MaestroClient {
 
   // Server and connection
   health(): Promise<Health>
+  /** Use a new token (or none). Unlocks a client locked by a 401 or 429. */
+  setToken(token: string | null): void
   /** The current connection state; kept by the client from the outcome of its own requests. */
   connection(): ConnectionState
   /** Called whenever the connection state changes. Returns a function that unsubscribes. */
@@ -125,6 +128,14 @@ export const SUPPORT: Record<keyof MaestroClient, Support> = {
   updateSettings: { level: 'none', issue: 98 },
   sendTest: { level: 'none', issue: 98 },
   health: { level: 'backend', endpoint: 'GET /health' },
+  setToken: { level: 'client' },
   connection: { level: 'client' },
   onConnectionChange: { level: 'client' },
+}
+
+/** The rejection for a method the backend has no endpoint for yet, naming the issue that adds it. */
+export function unsupportedError(method: keyof MaestroClient): ApiError {
+  const support = SUPPORT[method]
+  const issue = 'issue' in support ? ` (#${String(support.issue)})` : ''
+  return new ApiError('unsupported', `${method} needs backend support that isn't built yet${issue}`)
 }

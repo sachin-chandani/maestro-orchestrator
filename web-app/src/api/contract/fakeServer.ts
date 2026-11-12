@@ -86,7 +86,10 @@ export function fakeServer(backend: MaestroClient, options: { token?: string } =
       return await route(method, url, body)
     } catch (error) {
       if (!(error instanceof ApiError)) throw error
-      return json(STATUS[error.kind] ?? 500, { detail: error.message })
+      // A 429 says when to try again, as maestro/api.py does.
+      const extra: Record<string, string> =
+        error.retryAfterSeconds !== null ? { 'Retry-After': String(error.retryAfterSeconds) } : {}
+      return json(STATUS[error.kind] ?? 500, { detail: error.message }, extra)
     }
   }
 

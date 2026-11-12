@@ -1,4 +1,5 @@
-import { SUPPORT, type MaestroClient } from '../client.ts'
+import { unsupportedError, type MaestroClient } from '../client.ts'
+import { Connection } from '../connection.ts'
 import { ApiError } from '../errors.ts'
 import type {
   ConnectionState,
@@ -22,35 +23,35 @@ export interface HttpClientOptions {
   token?: string | null
   /** The fetch to use (default the browser's); tests pass their own so nothing touches the network. */
   fetch?: typeof fetch
+  /** The clock, in ms (default Date.now); decides when a 429 lock lifts. Tests pass their own. */
+  now?: () => number
 }
 
 /**
  * MaestroClient against a real `maestro serve` (#101), for the endpoints in maestro/api.py.
  *
- * After a 401 or 429 the client locks: every call fails at once without a request, as the current
- * page does, so polling can't keep sending a missing or wrong token and extend a lockout. Setting a
- * token unlocks it. Methods the backend has no endpoint for reject with "unsupported" (SUPPORT in
- * client.ts) without a request.
+ * After a 401 or 429 the client locks (Connection): every call fails at once without a request, so
+ * polling can't keep sending a missing or wrong token and extend a lockout. Setting a token unlocks
+ * it; a 429 lock also lifts by itself after its Retry-After (#112). Methods the backend has no
+ * endpoint for reject with "unsupported" (SUPPORT in client.ts) without a request.
  */
 export class HttpClient implements MaestroClient {
   private readonly baseUrl: string
   private readonly fetchImpl: typeof fetch
   private token: string | null
-  private lock: ApiError | null = null
-  private connectionState: ConnectionState = { status: 'connected' }
-  private readonly listeners = new Set<(state: ConnectionState) => void>()
+  private readonly conn: Connection
 
   constructor(options: HttpClientOptions = {}) {
     this.baseUrl = (options.baseUrl ?? '').replace(/\/+$/, '')
     this.token = options.token ?? null
     // Bound, because calling the browser's fetch as a method of another object throws.
     this.fetchImpl = options.fetch ?? fetch.bind(globalThis)
+    this.conn = new Connection(options.now)
   }
 
-  /** Use a new token (or none). Unlocks a client locked by a 401 or 429. */
   setToken(token: string | null): void {
     this.token = token
-    this.lock = null
+    this.conn.unlock()
   }
 
   // -------------------------------------------------------------------------------------------------
@@ -154,19 +155,19 @@ export class HttpClient implements MaestroClient {
   }
 
   connection(): ConnectionState {
-    return this.connectionState
+    return this.conn.current()
   }
 
   onConnectionChange(listener: (state: ConnectionState) => void): () => void {
-    this.listeners.add(listener)
-    return () => this.listeners.delete(listener)
+    return this.conn.subscribe(listener)
   }
 
   // -------------------------------------------------------------------------------------------------
   // Internals
 
   private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
-    if (this.lock) throw this.lock
+    const lock = this.conn.locked()
+    if (lock) throw lock
 
     const headers: Record<string, string> = {
       Accept: 'application/json',
@@ -185,17 +186,16 @@ export class HttpClient implements MaestroClient {
       })
     } catch (cause) {
       const error = new ApiError('offline', "Can't reach the Maestro server", { cause })
-      this.setConnection(error)
+      this.conn.failed(error)
       throw error
     }
 
     if (!response.ok) {
       const error = await errorFrom(response)
-      if (error.kind === 'unauthorized' || error.kind === 'rate_limited') this.lock = error
-      this.setConnection(error)
+      this.conn.failed(error)
       throw error
     }
-    this.setConnection(null)
+    this.conn.succeeded()
     if (response.status === 204) return undefined as T
     try {
       return (await response.json()) as T
@@ -208,23 +208,7 @@ export class HttpClient implements MaestroClient {
   }
 
   private unsupported<T>(method: Method): Promise<T> {
-    const support = SUPPORT[method]
-    const issue = 'issue' in support ? ` (#${String(support.issue)})` : ''
-    return Promise.reject(
-      new ApiError('unsupported', `${method} needs backend support that isn't built yet${issue}`),
-    )
-  }
-
-  private setConnection(error: ApiError | null): void {
-    let next: ConnectionState = { status: 'connected' }
-    if (error?.kind === 'unauthorized') next = { status: 'signed_out' }
-    else if (error?.kind === 'rate_limited') {
-      next = { status: 'rate_limited', retry_after_seconds: error.retryAfterSeconds }
-    } else if (error?.kind === 'offline') next = { status: 'offline', queued: 0 }
-    else if (error) return // the server answered: that says nothing new about the connection
-    if (JSON.stringify(next) === JSON.stringify(this.connectionState)) return
-    this.connectionState = next
-    for (const listener of this.listeners) listener(next)
+    return Promise.reject(unsupportedError(method))
   }
 }
 

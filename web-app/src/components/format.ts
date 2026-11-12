@@ -2,27 +2,21 @@
 // Pure functions, so screens and tests can use them without rendering.
 
 import type { ChipKind, ConnectionState, IsoDateTime, Item } from '../api/types.ts'
+import { dateTimeFormat } from '../lib/intl.ts'
 
 export interface ChipData {
   kind: ChipKind
   label: string
 }
 
-const timeFormats = new Map<string, Intl.DateTimeFormat>()
-
 /** "17:45" in the server's timezone (times are always shown there, ENGINEERING.md). */
 export function formatTime(iso: IsoDateTime, timeZone: string): string {
-  let f = timeFormats.get(timeZone)
-  if (!f) {
-    f = new Intl.DateTimeFormat('en-GB', {
-      timeZone,
-      hour: '2-digit',
-      minute: '2-digit',
-      hourCycle: 'h23',
-    })
-    timeFormats.set(timeZone, f)
-  }
-  return f.format(new Date(iso))
+  return dateTimeFormat('en-GB', {
+    timeZone,
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).format(new Date(iso))
 }
 
 /** How the design names a channel on a chip ("text me" was the capture, "Text me" the chip). */

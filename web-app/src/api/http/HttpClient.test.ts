@@ -167,6 +167,34 @@ describe('the 401 and 429 lock', () => {
     expect(server.mock).toHaveBeenCalledTimes(1)
   })
 
+  it('lifts the 429 lock once Retry-After has passed, without a reload (#112)', async () => {
+    let now = 1_000_000
+    const server = scripted(fail(429, 'Too many requests', { 'Retry-After': '30' }), ok([]))
+    const client = new HttpClient({ token: 'wrong', now: () => now, ...server })
+
+    await rejection(client.listItems())
+    now += 29_999
+    expect((await rejection(client.listItems())).kind).toBe('rate_limited')
+    expect(server.mock).toHaveBeenCalledTimes(1)
+
+    now += 1
+    expect(await client.listItems()).toEqual([])
+    expect(client.connection()).toEqual({ status: 'connected' })
+  })
+
+  it('assumes 30 seconds when a 429 names no Retry-After', async () => {
+    let now = 0
+    const server = scripted(fail(429, 'Too many requests'), ok([]))
+    const client = new HttpClient({ now: () => now, ...server })
+
+    await rejection(client.listItems())
+    now = 29_999
+    await rejection(client.listItems())
+    now = 30_000
+    expect(await client.listItems()).toEqual([])
+    expect(server.mock).toHaveBeenCalledTimes(2)
+  })
+
   it('does not lock on other errors', async () => {
     const server = scripted(fail(404, 'No item #7'), ok({ id: 7 }))
     const client = new HttpClient(server)

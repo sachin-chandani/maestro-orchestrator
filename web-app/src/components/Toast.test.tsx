@@ -55,6 +55,20 @@ describe('Toast', () => {
     expect(onDismiss).toHaveBeenCalledOnce()
   })
 
+  it('starts again for the same words said again, told apart by messageKey (#112)', () => {
+    const onDismiss = vi.fn()
+    const { rerender } = render(
+      <Toast message="Done." messageKey={1} onDismiss={onDismiss} durationMs={1000} />,
+    )
+
+    act(() => void vi.advanceTimersByTime(900))
+    rerender(<Toast message="Done." messageKey={2} onDismiss={onDismiss} durationMs={1000} />)
+    act(() => void vi.advanceTimersByTime(900))
+    expect(onDismiss).not.toHaveBeenCalled()
+    act(() => void vi.advanceTimersByTime(100))
+    expect(onDismiss).toHaveBeenCalledOnce()
+  })
+
   it('has no axe violations', async () => {
     vi.useRealTimers()
     const { container } = render(<Toast message="Done." onDismiss={vi.fn()} />)
