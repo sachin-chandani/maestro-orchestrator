@@ -56,6 +56,13 @@ function hold(
   }
 }
 
+/** The first match, or a clear failure instead of a type cast. */
+function first<T>(items: T[]): T {
+  const [item] = items
+  if (item === undefined) throw new Error('expected at least one match')
+  return item
+}
+
 afterEach(() => {
   vi.restoreAllMocks()
   vi.useRealTimers()
@@ -64,6 +71,9 @@ afterEach(() => {
 
 describe('App', () => {
   it('shows loading, then the one list in the design order (#22)', async () => {
+    // Midday UTC: outside the mock's quiet hours, so the reminder due 40 minutes ago has been sent
+    vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-11-13T12:02:00Z'))
     setup()
 
     expect(screen.getByText('Loading reminders…')).toHaveAttribute('role', 'status')
@@ -481,8 +491,7 @@ describe('App', () => {
 
     fireEvent.click(within(plumber).getByRole('button', { name: 'Answer…' }))
     const list = await within(plumber).findByRole('list', { name: 'Suggested times' })
-    const [monday] = within(list).getAllByRole('button')
-    fireEvent.click(monday as HTMLElement)
+    fireEvent.click(first(within(list).getAllByRole('button')))
 
     expect(await screen.findByText(/^Set for /)).toBeVisible()
     await waitFor(() => {
