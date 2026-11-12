@@ -3,6 +3,7 @@ import type {
   CaptureResult,
   ConnectionState,
   Device,
+  Feed,
   Health,
   Item,
   ItemEdit,
@@ -43,6 +44,18 @@ export interface MaestroClient {
   stop(id: number): Promise<Item>
   deleteItem(id: number): Promise<void>
   editItem(id: number, changes: ItemEdit): Promise<Item>
+
+  // The list
+  /** Everything the list shows for the next `days` days (default 7), in one call (#22). */
+  feed(days?: number): Promise<Feed>
+  /**
+   * Answer what a reading that needs a look is missing (#126): a time ("tomorrow 9am"), a channel
+   * ("email") or the words. Rejects with `invalid` when the phrase doesn't answer it; the item is
+   * then exactly as it was.
+   */
+  fillGap(id: number, phrase: string): Promise<Item>
+  /** Drop a reading that needs a look rather than answering it. */
+  dismissGap(id: number): Promise<void>
 
   // Notes
   /** Notes matching `query` (all notes when empty), newest first. */
@@ -123,6 +136,9 @@ export const SUPPORT: Record<keyof MaestroClient, Support> = {
   stop: { level: 'backend', endpoint: 'POST /items/{id}/stop' },
   deleteItem: { level: 'backend', endpoint: 'DELETE /items/{id}' },
   editItem: { level: 'none', issue: 101 },
+  feed: { level: 'backend', endpoint: 'GET /feed' },
+  fillGap: { level: 'backend', endpoint: 'POST /needs-look/{id}' },
+  dismissGap: { level: 'backend', endpoint: 'DELETE /needs-look/{id}' },
   searchNotes: {
     level: 'partial',
     endpoint: 'GET /items?q=',

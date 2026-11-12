@@ -41,10 +41,29 @@ export function fakeServer(backend: MaestroClient, options: { token?: string } =
     master: boolean,
   ): Promise<Response> => {
     const path = url.pathname
-    const id = Number(/^\/(?:items|devices)\/(\d+)/.exec(path)?.[1])
+    const id = Number(/^\/(?:items|devices|needs-look)\/(\d+)/.exec(path)?.[1])
     const send = async (status: number, call: () => Promise<unknown>) => json(status, await call())
 
     if (method === 'GET' && path === '/health') return send(200, () => backend.health())
+    if (method === 'GET' && path === '/feed') {
+      const days = url.searchParams.get('days')
+      return send(200, () => backend.feed(days === null ? undefined : Number(days)))
+    }
+    if (/^\/needs-look\/\d+$/.test(path)) {
+      if (method === 'POST') {
+        const phrase = (body as { phrase?: unknown } | null)?.phrase
+        if (typeof phrase !== 'string' || phrase.length < 1) {
+          return json(422, {
+            detail: [{ loc: ['body', 'phrase'], msg: 'String should have at least 1 character' }],
+          })
+        }
+        return send(200, () => backend.fillGap(id, phrase))
+      }
+      if (method === 'DELETE') {
+        await backend.dismissGap(id)
+        return json(204, null)
+      }
+    }
     if (path === '/devices' || /^\/devices\/\d+$/.test(path)) {
       // Only the master token manages devices (ADR 0018); a device may list them.
       if (options.token && !master && !(method === 'GET' && path === '/devices')) {

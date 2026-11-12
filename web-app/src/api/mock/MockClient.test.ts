@@ -69,6 +69,7 @@ describe('seed data', () => {
       ['Car service is due at 60,000 km', 'note'],
       ['The plumber the neighbours liked is called Alex; number is on the fridge', 'note'],
       ['Gift idea for Sam: the blue scarf from the Saturday market', 'note'],
+      ['Call the plumber sometime next week', 'task'], // needs a time (#22); listed like any item
     ])
   })
 
@@ -111,7 +112,7 @@ describe('seed data', () => {
         const client = new MockClient({ now: () => now, timeZone, storage: null })
         const items = await client.listItems({ include_done: true })
 
-        expect(items).toHaveLength(12)
+        expect(items).toHaveLength(13)
         for (const item of items) {
           if (item.snoozed_until && item.due_at) {
             expect(new Date(item.snoozed_until) < new Date(item.due_at), item.text).toBe(true)
@@ -129,7 +130,7 @@ describe('items', () => {
     const item = await client.capture('text me tomorrow at 9am to call the bank')
 
     expect(item).toMatchObject({
-      id: 13,
+      id: 14,
       text: 'Call the bank',
       kind: 'reminder',
       status: 'pending',
@@ -139,7 +140,7 @@ describe('items', () => {
       created_at: START,
       source_text: 'text me tomorrow at 9am to call the bank',
     })
-    expect(await client.getItem(13)).toEqual(item)
+    expect(await client.getItem(14)).toEqual(item)
   })
 
   it('keeps day, time and recurrence words after "in N minutes", which already set the time', async () => {
@@ -428,7 +429,7 @@ describe('persistence', () => {
     storage.data.set(STORAGE_KEY, raw)
     const client = new MockClient({ now: () => new Date(START), timeZone: TZ, storage })
 
-    expect(await client.listItems({ include_done: true })).toHaveLength(12)
+    expect(await client.listItems({ include_done: true })).toHaveLength(13)
   })
 
   it('resets to the sample data', async () => {
@@ -441,7 +442,7 @@ describe('persistence', () => {
     expect((await client.getItem(1)).text).toBe('Call the bank about the card')
 
     const reloaded = new MockClient({ now: () => new Date(START), timeZone: TZ, storage })
-    expect(await reloaded.listItems({ include_done: true })).toHaveLength(12)
+    expect(await reloaded.listItems({ include_done: true })).toHaveLength(13)
   })
 
   it('keeps working when storage is unavailable or refuses to save', async () => {
@@ -587,6 +588,84 @@ describe('captureSplit (ADR 0017)', () => {
   it('refuses an empty capture like the server', async () => {
     const { client } = setup()
     expect((await rejection(client.captureSplit('   '))).kind).toBe('invalid')
+  })
+})
+
+describe('the feed (#22)', () => {
+  it('puts every row where maestro.feed would, in time order', async () => {
+    const { client } = setup()
+    const feed = await client.feed()
+
+    expect(feed.timezone).toBe(TZ)
+    expect(feed.needs_look.map((i) => [i.text, i.gap])).toEqual([
+      ['Call the plumber sometime next week', 'when'],
+    ])
+    expect(feed.anytime).toEqual([]) // the seed's untimed things are notes, not tasks
+    const rows = feed.upcoming.map((o) => [o.item.text, o.at.slice(11, 16), o.state, o.acts])
+    expect(rows.slice(0, 5)).toEqual([
+      ['Call the bank about the card', '13:20', 'awaiting', true], // delivered, nobody answered
+      ['Stretch for ten minutes', '14:20', 'snoozed', true], // the snoozed re-send comes first
+      ['Pick up the kids from practice', '15:30', 'scheduled', true],
+      ['Water the plants', '17:00', 'scheduled', true],
+      ['Renew the car insurance', '23:15', 'held', true], // quiet hours start at 22:00
+    ])
+    expect(feed.upcoming.find((o) => o.item.text === 'Renew the car insurance')?.held_until).toBe(
+      '2026-11-06T07:00:00+05:30',
+    )
+    // the daily series continues at its own time, without buttons
+    const stretch = feed.upcoming.filter((o) => o.item.text === 'Stretch for ten minutes')
+    expect(stretch.map((o) => [o.at.slice(0, 16), o.acts])).toEqual([
+      ['2026-11-05T14:20', true],
+      ['2026-11-06T07:30', false],
+      ['2026-11-07T07:30', false],
+      ['2026-11-08T07:30', false],
+      ['2026-11-09T07:30', false],
+      ['2026-11-10T07:30', false],
+      ['2026-11-11T07:30', false],
+    ])
+    const ats = feed.upcoming.map((o) => o.at)
+    expect(ats).toEqual([...ats].sort())
+    expect(feed.later).toBe(0)
+  })
+
+  it('counts a reminder past the window instead of listing it', async () => {
+    const { client } = setup()
+    await client.capture('renew the passport in 10 days')
+    const week = await client.feed()
+    expect(week.later).toBe(1)
+    expect((await client.feed(31)).later).toBe(0)
+  })
+
+  it('saves a vague task as needing a time, and fills or dismisses it', async () => {
+    const { client } = setup()
+    const result = await client.captureSplit('renew the passport soon')
+    expect(result.added).toEqual([])
+    expect(result.needs_look.map((i) => [i.text, i.gap])).toEqual([
+      ['Renew the passport soon', 'when'],
+    ])
+    const [plumber, passport] = (await client.feed()).needs_look
+    expect([plumber?.text, passport?.text]).toEqual([
+      'Renew the passport soon', // newest first
+      'Call the plumber sometime next week',
+    ])
+
+    const passportId = result.needs_look[0]?.id ?? -1
+    const error = await rejection(client.fillGap(passportId, 'no idea'))
+    expect(error).toMatchObject({ kind: 'invalid', status: 422 })
+    expect(error.message).toContain('still needs a time')
+
+    const filled = await client.fillGap(passportId, 'tomorrow at 9am')
+    expect([filled.kind, filled.due_at, filled.gap]).toEqual([
+      'reminder',
+      '2026-11-06T09:00:00+05:30',
+      null,
+    ])
+    expect((await client.feed()).upcoming.some((o) => o.item.id === filled.id)).toBe(true)
+
+    await client.dismissGap(13)
+    expect((await client.feed()).needs_look).toEqual([])
+    expect((await rejection(client.dismissGap(13))).kind).toBe('not_found')
+    expect((await rejection(client.dismissGap(1))).kind).toBe('not_found') // not a gap
   })
 })
 

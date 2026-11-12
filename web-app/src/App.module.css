@@ -101,3 +101,85 @@
   padding-bottom: env(safe-area-inset-bottom);
   background: var(--color-surface);
 }
+
+/* A group heading that opens and closes (This week): the whole heading is the control. */
+.groupToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: calc(-1 * var(--space-2)) 0;
+  padding: var(--space-2) var(--space-1);
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  cursor: pointer;
+  min-height: var(--touch-target);
+}
+
+.groupToggle .count {
+  color: var(--color-accent-text);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.later {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-muted);
+  text-align: center;
+}
+
+/* The shortcuts sheet (?): a small dialog over the list. */
+.shortcuts {
+  position: fixed;
+  inset: auto 0 0 0;
+  margin: 0 auto;
+  max-width: var(--content-width);
+  padding: var(--space-7);
+  border: 1px solid var(--color-line-control);
+  border-bottom: 0;
+  border-radius: var(--radius-card) var(--radius-card) 0 0;
+  background: var(--color-surface);
+  z-index: 2;
+}
+
+.shortcutsTitle {
+  margin: 0 0 var(--space-4);
+  font-size: var(--text-base);
+}
+
+.shortcutList {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--space-3) var(--space-6);
+  margin: 0 0 var(--space-5);
+}
+
+.shortcut {
+  display: contents;
+}
+
+.shortcutKey {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+
+.shortcutWhat {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-muted);
+}
+
+.helpButton {
+  min-height: var(--touch-target);
+  min-width: var(--touch-target);
+  border: 1px solid var(--color-line-control);
+  border-radius: var(--radius-button);
+  background: var(--color-surface);
+  color: var(--color-ink-secondary);
+  font-family: var(--font-mono);
+  cursor: pointer;
+}

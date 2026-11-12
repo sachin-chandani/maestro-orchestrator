@@ -1,0 +1,52 @@
+/* A reading that needs a look: the card, with a dashed border that says "unfinished" (ADR 0017). */
+
+.card {
+  border-style: dashed;
+  border-color: var(--color-line-control);
+}
+
+/* The time column asks the question instead of showing a time. */
+.ask {
+  color: var(--color-info);
+  font-family: var(--font-sans);
+}
+
+/* The gap as a dashed chip, blue like a time chip: it is the time (or words) that is missing. */
+.gap {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--chip-height);
+  padding: 0 var(--space-3);
+  border: 1px dashed var(--color-info);
+  border-radius: var(--radius-chip);
+  color: var(--color-info);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  line-height: 1.2;
+}
+
+.answer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.input {
+  min-height: var(--control-height);
+  padding: 0 var(--space-6);
+  border-radius: var(--radius-input);
+  border: 1px solid var(--color-line-control);
+  background: var(--color-surface-sunken);
+  color: var(--color-ink);
+  font-size: var(--text-base);
+}
+
+.input::placeholder {
+  color: var(--color-muted);
+}
+
+.error {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-urgent);
+}

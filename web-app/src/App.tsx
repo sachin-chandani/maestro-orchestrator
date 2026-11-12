@@ -1,24 +1,26 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { MaestroClient } from './api/client.ts'
 import { isApiError } from './api/errors.ts'
-import type { Item } from './api/types.ts'
+import type { Feed, Item } from './api/types.ts'
 import styles from './App.module.css'
-import { useClient, useConnection } from './app/clientContext.ts'
-import { groupReminders, headerDate, laterLabel, nextTime } from './app/groups.ts'
 import { captureMessage } from './app/captureMessage.ts'
+import { useClient, useConnection } from './app/clientContext.ts'
+import { groupFeed } from './app/feedGroups.ts'
+import { headerDate, nextTime } from './app/groups.ts'
 import { useSequence } from './app/sequence.ts'
 import { clearToken, loadToken, saveToken } from './app/session.ts'
+import { SHORTCUT_LIST, useShortcuts } from './app/useShortcuts.ts'
 import { CaptureBar } from './components/CaptureBar.tsx'
 import { ConnectionPill } from './components/ConnectionPill.tsx'
-import { EmptyState } from './components/EmptyState.tsx'
+import { rowId, rowsOf } from './app/rows.ts'
+import { FeedList } from './components/FeedList.tsx'
 import { formatTime } from './components/format.ts'
-import { ReminderCard } from './components/ReminderCard.tsx'
 import { SignIn } from './components/SignIn.tsx'
 import { Toast } from './components/Toast.tsx'
 
 type Load =
   | { status: 'loading' }
-  | { status: 'ready'; items: Item[]; timeZone: string }
+  | { status: 'ready'; feed: Feed; timeZone: string }
   | { status: 'error'; message: string }
 
 /** Something said above the capture bar; `id` tells apart two with the same words (#112). */
@@ -44,18 +46,19 @@ function messageOf(error: unknown): string {
   return isApiError(error) ? error.message : 'Something went wrong'
 }
 
-async function fetchToday(client: MaestroClient): Promise<Load> {
+async function fetchFeed(client: MaestroClient): Promise<Load> {
   try {
-    const [health, items] = await Promise.all([client.health(), client.listItems()])
-    return { status: 'ready', items, timeZone: health.timezone }
+    const feed = await client.feed()
+    return { status: 'ready', feed, timeZone: feed.timezone }
   } catch (error) {
     return { status: 'error', message: messageOf(error) }
   }
 }
 
 /**
- * The app's one screen until #103–#107: reminders for today, tomorrow and later, with Done and
- * +1 hour, and the capture bar. Everything goes through the client from ClientProvider.
+ * The app's one screen (#22, ADR 0017): the list — Needs a look, Next up, Today, Tomorrow, This
+ * week, Anytime — with Done and +1 hour on each row, answering or dismissing what needs a look,
+ * and the capture bar. Everything goes through the client from ClientProvider.
  */
 export default function App({ devTools }: AppProps) {
   const { client, kind } = useClient()
@@ -65,6 +68,11 @@ export default function App({ devTools }: AppProps) {
   const [draft, setDraft] = useState('')
   const [saving, setSaving] = useState(false)
   const [toast, setToast] = useState<Notice | null>(null)
+  const [weekOpen, setWeekOpen] = useState(false)
+  const [help, setHelp] = useState(false)
+  // Regrouped on every refresh and at midnight: `now` is state so a tick can move the day on.
+  const [now, setNow] = useState(() => new Date())
+  const captureRef = useRef<HTMLInputElement>(null)
   // Each fetch takes a number; a result that isn't from the latest fetch is dropped, so a slow
   // older response can't overwrite a newer one (#112).
   const fetches = useSequence()
@@ -79,8 +87,11 @@ export default function App({ devTools }: AppProps) {
 
   useEffect(() => {
     const mine = fetches.next()
-    void fetchToday(client).then((next) => {
-      if (fetches.isLatest(mine)) setLoad(next)
+    void fetchFeed(client).then((next) => {
+      if (fetches.isLatest(mine)) {
+        setLoad(next)
+        setNow(new Date())
+      }
     })
     return () => {
       fetches.next() // whatever is in flight is for a client that's gone
@@ -90,16 +101,22 @@ export default function App({ devTools }: AppProps) {
   /** Fetch again after a change or on a timer; a failure keeps what's on screen. */
   const refresh = useCallback(async () => {
     const mine = fetches.next()
-    const next = await fetchToday(client)
-    if (fetches.isLatest(mine) && next.status === 'ready') setLoad(next)
+    const next = await fetchFeed(client)
+    if (fetches.isLatest(mine)) {
+      if (next.status === 'ready') setLoad(next)
+      setNow(new Date()) // the groups move on even when the fetch failed
+    }
   }, [client, fetches])
 
   /** Load again through the loading state, so a failure shows in place of the list. */
   const retry = () => {
     const mine = fetches.next()
     setLoad({ status: 'loading' })
-    void fetchToday(client).then((next) => {
-      if (fetches.isLatest(mine)) setLoad(next)
+    void fetchFeed(client).then((next) => {
+      if (fetches.isLatest(mine)) {
+        setLoad(next)
+        setNow(new Date())
+      }
     })
   }
 
@@ -158,6 +175,38 @@ export default function App({ devTools }: AppProps) {
     }
   }
 
+  /** Answer what a reading needs (#126). Throws so the card can show why an answer didn't take. */
+  const answer = async (item: Item, phrase: string) => {
+    setCardBusy(item.id, true)
+    try {
+      const filled = await client.fillGap(item.id, phrase)
+      say(
+        filled.due_at
+          ? `Set for ${filled.when}.`
+          : filled.kind === 'task'
+            ? 'Kept under Anytime.'
+            : 'Saved.',
+      )
+      await refresh()
+    } finally {
+      setCardBusy(item.id, false)
+    }
+  }
+
+  const dismiss = async (item: Item) => {
+    if (busy.has(item.id)) return
+    setCardBusy(item.id, true)
+    try {
+      await client.dismissGap(item.id)
+      say(`Dismissed "${item.text}".`)
+      await refresh()
+    } catch (error) {
+      say(`Couldn't dismiss it: ${messageOf(error)}`)
+    } finally {
+      setCardBusy(item.id, false)
+    }
+  }
+
   const capture = async (text: string) => {
     setSaving(true)
     // The box is cleared now, not after the save, so words typed during a slow save aren't lost
@@ -190,23 +239,82 @@ export default function App({ devTools }: AppProps) {
     retry()
   }
 
-  const now = new Date()
-  const groups = load.status === 'ready' ? groupReminders(load.items, now, load.timeZone) : []
-  const left = groups.find((g) => g.name === 'Today')?.items.length ?? 0
+  const ready = load.status === 'ready' ? load : null
+  const groups = useMemo(
+    () => (ready ? groupFeed(ready.feed, now, ready.timeZone) : null),
+    [ready, now],
+  )
+
+  // Keyboard (#22): j/k walk the rows, d/s act on the focused one, a answers it, / captures.
+  const rows = useMemo(() => (groups ? rowsOf(groups, weekOpen) : []), [groups, weekOpen])
+  const [cursor, setCursor] = useState<string | null>(null)
+  const move = useCallback(
+    (step: 1 | -1) => {
+      if (rows.length === 0) return
+      const at = rows.findIndex((row) => rowId(row) === cursor)
+      const next = rows[Math.min(rows.length - 1, Math.max(0, at + step))] ?? rows[0]
+      if (!next) return
+      const id = rowId(next)
+      setCursor(id)
+      document.getElementById(id)?.focus()
+    },
+    [rows, cursor],
+  )
+  const focused = rows.find((row) => rowId(row) === cursor) ?? null
+  const shortcuts = useMemo(
+    () => ({
+      capture: () => captureRef.current?.focus(),
+      down: () => {
+        move(1)
+      },
+      up: () => {
+        move(-1)
+      },
+      done: () => {
+        if (!ready || !focused) return
+        if (focused.kind === 'occurrence' && focused.occurrence.acts)
+          void act(focused.occurrence.item, 'done', ready.timeZone)
+        else if (focused.kind === 'task') void act(focused.item, 'done', ready.timeZone)
+      },
+      snooze: () => {
+        if (!ready || !focused) return
+        if (focused.kind === 'occurrence' && focused.occurrence.acts)
+          void act(focused.occurrence.item, 'snooze', ready.timeZone)
+        else if (focused.kind === 'task') void act(focused.item, 'snooze', ready.timeZone)
+      },
+      answer: () => {
+        if (focused?.kind !== 'needs') return
+        document
+          .getElementById(rowId(focused))
+          ?.querySelector<HTMLButtonElement>('[data-shortcut="answer"]')
+          ?.click()
+      },
+      help: () => {
+        setHelp((open) => !open)
+      },
+      escape: () => {
+        setHelp(false)
+      },
+    }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- act closes over state read at call time
+    [move, focused, ready],
+  )
+  useShortcuts(shortcuts, !signedOut)
+
+  const pillName = kind === 'mock' ? 'Sample data' : 'Connected'
 
   return (
     <div className={styles.app}>
       <header className={styles.header}>
         <div className={styles.titleRow}>
-          <h1 className={styles.title}>Today</h1>
-          <ConnectionPill
-            state={connection}
-            serverName={kind === 'mock' ? 'Sample data' : 'Connected'}
-          />
+          <h1 className={styles.title}>{ready ? headerDate(now, ready.timeZone) : 'Maestro'}</h1>
+          <ConnectionPill state={connection} serverName={pillName} />
         </div>
-        {load.status === 'ready' && (
+        {groups && (
           <p className={styles.summary}>
-            {headerDate(now, load.timeZone)} · {left} left today
+            {groups.leftToday} left today
+            {groups.needsLook.length > 0 &&
+              ` · ${String(groups.needsLook.length)} need${groups.needsLook.length === 1 ? 's' : ''} a look`}
           </p>
         )}
       </header>
@@ -234,44 +342,49 @@ export default function App({ devTools }: AppProps) {
           </div>
         )}
 
-        {load.status === 'ready' && groups.length === 0 && (
-          <EmptyState
-            title="Nothing coming up"
-            hint="Try “text me tomorrow at 9am to call the bank” below."
+        {!signedOut && ready && groups && (
+          <FeedList
+            groups={groups}
+            timeZone={ready.timeZone}
+            busy={busy}
+            weekOpen={weekOpen}
+            onToggleWeek={() => {
+              setWeekOpen((open) => !open)
+            }}
+            onDone={(i) => void act(i, 'done', ready.timeZone)}
+            onSnooze={(i) => void act(i, 'snooze', ready.timeZone)}
+            onAnswer={answer}
+            onDismiss={(i) => void dismiss(i)}
           />
         )}
 
-        {load.status === 'ready' &&
-          groups.map((group) => (
-            <section
-              key={group.name}
-              className={styles.group}
-              aria-labelledby={`group-${group.name}`}
-            >
-              <h2 className={styles.groupName} id={`group-${group.name}`}>
-                {group.name}
-              </h2>
-              {group.items.map((item) => {
-                const next = nextTime(item)
-                return (
-                  <ReminderCard
-                    key={item.id}
-                    item={item}
-                    timeZone={load.timeZone}
-                    timeLabel={
-                      group.name === 'Later' && next ? laterLabel(next, load.timeZone) : undefined
-                    }
-                    busy={busy.has(item.id)}
-                    onDone={(i) => void act(i, 'done', load.timeZone)}
-                    onSnooze={(i) => void act(i, 'snooze', load.timeZone)}
-                  />
-                )
-              })}
-            </section>
-          ))}
-
         {devTools?.(retry)}
       </main>
+
+      {help && (
+        <div className={styles.shortcuts} role="dialog" aria-label="Keyboard shortcuts">
+          <h2 className={styles.shortcutsTitle}>Keyboard shortcuts</h2>
+          <dl className={styles.shortcutList}>
+            {SHORTCUT_LIST.map(([key, what]) => (
+              <div key={key} className={styles.shortcut}>
+                <dt className={styles.shortcutKey}>
+                  <kbd>{key}</kbd>
+                </dt>
+                <dd className={styles.shortcutWhat}>{what}</dd>
+              </div>
+            ))}
+          </dl>
+          <button
+            type="button"
+            className={styles.helpButton}
+            onClick={() => {
+              setHelp(false)
+            }}
+          >
+            Close
+          </button>
+        </div>
+      )}
 
       <footer className={styles.footer}>
         <Toast message={toast?.text ?? null} messageKey={toast?.id} onDismiss={dismissToast} />
@@ -281,6 +394,7 @@ export default function App({ devTools }: AppProps) {
           onSubmit={(text) => {
             if (!saving) void capture(text)
           }}
+          inputRef={captureRef}
         />
       </footer>
     </div>

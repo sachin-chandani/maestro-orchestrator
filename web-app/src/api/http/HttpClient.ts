@@ -5,6 +5,7 @@ import type {
   CaptureResult,
   ConnectionState,
   Device,
+  Feed,
   Health,
   Item,
   ListItemsOptions,
@@ -115,6 +116,21 @@ export class HttpClient implements MaestroClient {
 
   editItem(): Promise<Item> {
     return this.unsupported('editItem')
+  }
+
+  // -------------------------------------------------------------------------------------------------
+  // The list (#22)
+
+  feed(days?: number): Promise<Feed> {
+    return this.request('GET', days === undefined ? '/feed' : `/feed?days=${String(days)}`)
+  }
+
+  fillGap(id: number, phrase: string): Promise<Item> {
+    return this.request('POST', `/needs-look/${itemId(id)}`, { phrase })
+  }
+
+  dismissGap(id: number): Promise<void> {
+    return this.request('DELETE', `/needs-look/${itemId(id)}`)
   }
 
   // -------------------------------------------------------------------------------------------------

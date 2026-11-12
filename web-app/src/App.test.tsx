@@ -63,24 +63,53 @@ afterEach(() => {
 })
 
 describe('App', () => {
-  it('shows loading, then the reminders grouped by day', async () => {
+  it('shows loading, then the one list in the design order (#22)', async () => {
     setup()
 
     expect(screen.getByText('Loading reminders…')).toHaveAttribute('role', 'status')
     expect(await screen.findByRole('region', { name: 'Today' })).toBeInTheDocument()
     const groups = screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)
-    expect(groups[0]).toBe('Today')
-    expect(groups).toContain('Later')
-    expect(screen.getAllByRole('article').length).toBe(8) // the seed's open reminders; no notes
+    expect(groups.slice(0, 4)).toEqual(['Needs a look', 'Next up', 'Today', 'Tomorrow'])
+    expect(groups[4]).toMatch(/^This week \d+ more ›$/) // how many depends on the hour it runs
+    // Next up is the very next thing: the delivered reminder nobody has answered yet
+    const next = screen.getByRole('region', { name: 'Next up' })
+    expect(
+      within(next).getByRole('article', { name: 'Call the bank about the card' }),
+    ).toBeVisible()
+    expect(within(next).getByText(/^Sent · waiting for Done or Snooze/)).toBeInTheDocument()
+    // the seed's reading that needs a time sits at the top, with its gap and what was said
+    const needs = screen.getByRole('region', { name: 'Needs a look' })
+    expect(within(needs).getByText('Call the plumber sometime next week')).toBeVisible()
+    expect(within(needs).getByText('Needs a time')).toBeVisible()
+    expect(within(needs).getByText(/^You said “book flights/)).toBeVisible()
     expect(screen.queryByText('Book the car service')).toBeNull() // done items aren't listed
+    expect(screen.queryByText('Gift idea for Sam', { exact: false })).toBeNull() // notes live in search
   })
 
-  it('says how many are left today and that the data is sample data', async () => {
+  it('collapses this week to a count and opens it on request', async () => {
     setup()
-    const today = await screen.findByRole('region', { name: 'Today' })
-    const left = within(today).getAllByRole('article').length
+    const toggle = await screen.findByRole('button', { name: /^This week \d+ more ›$/ })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByRole('article', { name: 'Put the bins out' })).toBeNull()
 
-    expect(screen.getByText(new RegExp(`· ${String(left)} left today$`))).toBeInTheDocument()
+    fireEvent.click(toggle)
+    expect(screen.getByRole('button', { name: 'This week hide' })).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    )
+    expect(screen.getByRole('article', { name: 'Put the bins out' })).toBeVisible()
+    // a later occurrence of a series is shown without Done or +1 hour (ADR 0009)
+    const week = screen.getByRole('region', { name: /^This week/ })
+    const [stretch] = within(week).getAllByRole('article', { name: 'Stretch for ten minutes' })
+    if (!stretch) throw new Error('the daily series should be in This week')
+    expect(within(stretch).queryByRole('button', { name: 'Done' })).toBeNull()
+  })
+
+  it('says how many are left today, what needs a look, and that the data is sample data', async () => {
+    setup()
+    await screen.findByRole('region', { name: 'Today' })
+
+    expect(screen.getByText(/^\d+ left today · 1 needs a look$/)).toBeInTheDocument()
     expect(screen.getByText('Sample data')).toBeInTheDocument()
   })
 
@@ -101,7 +130,11 @@ describe('App', () => {
 
     fireEvent.click(within(plants).getByRole('button', { name: 'Done' }))
     expect(await screen.findByText(/^Done for this time\. Next: .+, every \w+day\.$/)).toBeVisible()
-    expect(card('Water the plants')).toBeInTheDocument()
+    // next week is past the 7-day window, so the series is counted rather than listed
+    await waitFor(() => {
+      expect(screen.queryByRole('article', { name: 'Water the plants' })).toBeNull()
+    })
+    expect(screen.getByText('1 more reminder after this week')).toBeVisible()
   })
 
   it('snoozes for an hour and says until when', async () => {
@@ -271,7 +304,7 @@ describe('App', () => {
   it('fetches again on a timer and when the tab becomes visible (#112)', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     const client = new MockClient({ storage: null, timeZone: 'UTC' })
-    const list = vi.spyOn(client, 'listItems')
+    const list = vi.spyOn(client, 'feed')
     setup(client)
     await screen.findByRole('region', { name: 'Today' })
     expect(list).toHaveBeenCalledTimes(1)
@@ -399,6 +432,95 @@ describe('App', () => {
       }),
     ).toBe('Waiting for confirmation: Call mom at 17:00')
     expect(captureMessage({ added: [], needs_look: [], undo: null, proposal: null })).toBe('Saved.')
+  })
+
+  it('answers what a reading needs, in place, and it moves into the list (#22, #126)', async () => {
+    const client = new MockClient({ storage: null, timeZone: 'UTC' })
+    setup(client)
+    const needs = await screen.findByRole('region', { name: 'Needs a look' })
+    const plumber = within(needs).getByRole('article', {
+      name: 'Call the plumber sometime next week',
+    })
+
+    fireEvent.click(within(plumber).getByRole('button', { name: 'Answer…' }))
+    const field = within(plumber).getByLabelText('When?')
+    expect(field).toHaveFocus()
+    expect(within(plumber).getByRole('button', { name: 'Save' })).toBeDisabled()
+
+    fireEvent.change(field, { target: { value: 'no idea' } })
+    fireEvent.click(within(plumber).getByRole('button', { name: 'Save' }))
+    expect(await within(plumber).findByRole('alert')).toHaveTextContent('still needs a time')
+    expect(field).toHaveValue('no idea') // kept, to try again
+
+    fireEvent.change(field, { target: { value: 'tomorrow at 9am' } })
+    fireEvent.click(within(plumber).getByRole('button', { name: 'Save' }))
+    expect(await screen.findByText(/^Set for /)).toBeVisible()
+    await waitFor(() => {
+      expect(screen.queryByRole('region', { name: 'Needs a look' })).toBeNull()
+    })
+    const tomorrow = screen.getByRole('region', { name: 'Tomorrow' })
+    expect(
+      within(tomorrow).getByRole('article', { name: 'Call the plumber sometime next week' }),
+    ).toBeVisible()
+    expect(screen.getByText(/^\d+ left today$/)).toBeInTheDocument() // nothing needs a look now
+  })
+
+  it('dismisses a reading that needs a look', async () => {
+    setup()
+    const needs = await screen.findByRole('region', { name: 'Needs a look' })
+    fireEvent.click(within(needs).getByRole('button', { name: 'Dismiss' }))
+    expect(
+      await screen.findByText('Dismissed "Call the plumber sometime next week".'),
+    ).toBeVisible()
+    await waitFor(() => {
+      expect(screen.queryByRole('region', { name: 'Needs a look' })).toBeNull()
+    })
+  })
+
+  it('shows the empty state for a list with nothing scheduled but something to answer', async () => {
+    const client = new MockClient({ storage: null, timeZone: 'UTC' })
+    for (const item of await client.listItems({ include_done: true })) {
+      if (!item.gap) await client.deleteItem(item.id)
+    }
+    setup(client)
+    expect(await screen.findByText('Nothing scheduled')).toBeVisible()
+    expect(screen.getByRole('region', { name: 'Needs a look' })).toBeInTheDocument()
+  })
+
+  it('walks the rows with j and k, acts with d, answers with a, and captures with / (#22)', async () => {
+    setup()
+    await screen.findByRole('region', { name: 'Today' })
+
+    fireEvent.keyDown(document.body, { key: 'j' })
+    const plumber = screen.getByRole('article', { name: 'Call the plumber sometime next week' })
+    expect(plumber).toHaveFocus()
+    fireEvent.keyDown(document.body, { key: 'a' })
+    const field = within(plumber).getByLabelText('When?')
+    expect(field).toHaveFocus()
+    fireEvent.keyDown(field, { key: 'j' }) // typing: just a letter
+    expect(field).toHaveFocus()
+    fireEvent.click(within(plumber).getByRole('button', { name: 'Cancel' }))
+
+    fireEvent.keyDown(document.body, { key: 'j' })
+    expect(screen.getByRole('article', { name: 'Call the bank about the card' })).toHaveFocus()
+    fireEvent.keyDown(document.body, { key: 'k' })
+    expect(plumber).toHaveFocus()
+    fireEvent.keyDown(document.body, { key: 'j' })
+    fireEvent.keyDown(document.body, { key: 'd' })
+    expect(
+      await screen.findByText('Done. Any pending SMS or call for it is cancelled.'),
+    ).toBeVisible()
+
+    fireEvent.keyDown(document.body, { key: '/' })
+    const capture = screen.getByRole('textbox', { name: 'Capture a reminder or note' })
+    expect(capture).toHaveFocus()
+    fireEvent.keyDown(capture, { key: '?' })
+    expect(screen.queryByRole('dialog', { name: 'Keyboard shortcuts' })).toBeNull() // typing
+
+    fireEvent.keyDown(document.body, { key: '?' })
+    expect(screen.getByRole('dialog', { name: 'Keyboard shortcuts' })).toBeVisible()
+    fireEvent.keyDown(document.body, { key: 'Escape' })
+    expect(screen.queryByRole('dialog', { name: 'Keyboard shortcuts' })).toBeNull()
   })
 
   it('has no axe violations once loaded', async () => {

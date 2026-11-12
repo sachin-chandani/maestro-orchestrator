@@ -148,6 +148,19 @@ export function seedItems(now: Date, tz: string): StoredItem[] {
     },
     {
       ...base,
+      id: 13,
+      text: 'Call the plumber sometime next week',
+      kind: 'task',
+      status: 'pending',
+      due_at: null,
+      created_at: ago(15),
+      source_text:
+        'book flights, remind me friday at nine to check in, and call the plumber sometime next week',
+      source: 'web',
+      gap: 'when',
+    },
+    {
+      ...base,
       id: 10,
       text: 'Gift idea for Sam: the blue scarf from the Saturday market',
       kind: 'note',

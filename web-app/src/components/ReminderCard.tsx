@@ -16,6 +16,19 @@ export interface ReminderCardProps {
   snoozeLabel?: string
   /** While the screen waits on done or snooze, the buttons are disabled. */
   busy?: boolean
+  /**
+   * What the reminder is doing, in words, when the screen knows better than the item's own fields:
+   * a later occurrence of a series (#22) says nothing, an overdue one says so. Undefined keeps the
+   * card's own reading; null shows nothing.
+   */
+  stateLabel?: string | null
+  /** Whether Done and the snooze button are shown (default true). A later occurrence of a series
+   * has none: they act on the next one (ADR 0009). */
+  actions?: boolean
+  /** Drawn larger with an accent border: the design's Next up (#22). */
+  emphasis?: boolean
+  /** Lets the screen reach and focus the row (keyboard j/k, #22). */
+  id?: string
 }
 
 /** A reminder as the design draws it: time, text, what's going on with it, chips, Snooze and Done. */
@@ -27,17 +40,26 @@ export function ReminderCard({
   onSnooze,
   snoozeLabel = '+1 hour',
   busy = false,
+  stateLabel,
+  actions = true,
+  emphasis = false,
+  id,
 }: ReminderCardProps) {
   const textId = useId()
   const done = item.status === 'done'
   const next = item.snoozed_until ?? item.due_at
   const time = timeLabel ?? (next ? formatTime(next, timeZone) : '')
-  const state = stateLine(item, timeZone)
+  const state = stateLabel === undefined ? stateLine(item, timeZone) : stateLabel
   const chips = itemChips(item)
-  const classes = [styles.card, item.urgent && !done ? styles.urgent : '', done ? styles.done : '']
+  const classes = [
+    styles.card,
+    item.urgent && !done ? styles.urgent : '',
+    done ? styles.done : '',
+    emphasis ? styles.next : '',
+  ]
 
   return (
-    <article className={classes.join(' ')} aria-labelledby={textId}>
+    <article className={classes.join(' ')} aria-labelledby={textId} id={id} tabIndex={-1}>
       <div className={styles.body}>
         <span className={styles.time}>{time}</span>
         <div className={styles.main}>
@@ -56,7 +78,7 @@ export function ReminderCard({
           )}
         </div>
       </div>
-      {!done && (
+      {!done && actions && (
         <div className={styles.actions}>
           <button
             type="button"

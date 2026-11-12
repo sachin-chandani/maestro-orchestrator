@@ -150,6 +150,42 @@ export interface TodoList {
 }
 
 // ---------------------------------------------------------------------------------------------------
+// The upcoming feed (GET /feed, #22): everything the list shows, in one call.
+
+/** What an occurrence is doing, in the scheduler's terms (maestro.feed.STATES). */
+export type OccurrenceState = 'scheduled' | 'overdue' | 'awaiting' | 'held' | 'snoozed'
+
+/** One time a reminder goes (or went) out: a row in the list. */
+export interface Occurrence {
+  item: Item
+  /** When it goes out: the snoozed time, the due time, or the delivered occurrence. */
+  at: IsoDateTime
+  state: OccurrenceState
+  /** While held by quiet hours: when they let it out. */
+  held_until: IsoDateTime | null
+  /** While awaiting an answer: the next escalation stage, "text at 17:12". */
+  escalation_label: string | null
+  /** Done and +1 hour apply to this row (the first occurrence of its series, ADR 0009). */
+  acts: boolean
+}
+
+export interface Feed {
+  now: IsoDateTime
+  /** The end of the window, exclusive. */
+  until: IsoDateTime
+  /** The server's timezone; the client groups rows into days in it. */
+  timezone: string
+  /** Saved with a gap, newest first. */
+  needs_look: Item[]
+  /** Every row in the window, by `at`. */
+  upcoming: Occurrence[]
+  /** Tasks: reminders with no time, oldest first. */
+  anytime: Item[]
+  /** Reminders whose next time is past the window; none of their rows are listed. */
+  later: number
+}
+
+// ---------------------------------------------------------------------------------------------------
 // Capture that saves what it can and names what still needs a look (POST /capture, ADR 0017).
 
 export interface UndoToken {

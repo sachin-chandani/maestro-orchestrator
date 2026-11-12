@@ -5,6 +5,7 @@ import type {
   CaptureResult,
   ConnectionState,
   Device,
+  Feed,
   Health,
   Item,
   ListItemsOptions,
@@ -34,7 +35,15 @@ import {
   type MockState,
   type StoredItem,
 } from './store.ts'
-import { describeRule, shortLabel, toIso } from './time.ts'
+import {
+  addDays,
+  describeRule,
+  fromWallTime,
+  nextOccurrence,
+  shortLabel,
+  toIso,
+  wallTime,
+} from './time.ts'
 
 type Method = keyof MaestroClient
 
@@ -100,6 +109,17 @@ const DURATION = /^\s*(\d+)\s*(m|min|mins|minutes?|h|hr|hrs|hours?|d|days?)\s*$/
 const UNIT_MS = { m: 60_000, h: 3_600_000, d: 86_400_000 } as const
 
 const DEFAULT_QUIET: QuietHours = { start: '22:00', end: '07:00' }
+
+// maestro.confidence: words that name a time the rules can't read, so a task saying them is
+// asked for one rather than filed untimed (ADR 0017).
+const VAGUE_TIME_RE =
+  /\b(?:some\s?time|soon|later|eventually|asap|at some point|(?:next|this) (?:week|month|year)|after (?:work|lunch|dinner))\b/i
+// maestro.gaps.WANTED
+const GAP_WANTED: Record<string, string> = {
+  when: 'a time',
+  what: 'a description',
+  channel: 'a channel',
+}
 
 /**
  * MaestroClient on in-memory sample data (#101), so screens can be built and demoed with no
@@ -215,17 +235,175 @@ export class MockClient implements MaestroClient {
   }
 
   async captureSplit(text: string): Promise<CaptureResult> {
-    // The sample parser has no notion of doubt, so everything it reads is sure and saved at once;
-    // what needs a look is the server's call (maestro.gaps) and arrives with #22's screen.
+    // A stand-in for maestro.gaps: something to do with no time, in words that name one the sample
+    // parser can't read ("sometime next week", "soon"), is saved as needing a time (ADR 0017).
+    // The sample parser doesn't split sentences; that is the server's job (#130).
     const item = await this.capture(text)
+    const vague = item.kind === 'task' && VAGUE_TIME_RE.test(item.text)
+    if (vague) {
+      const stored = this.state.items.find((i) => i.id === item.id)
+      if (stored) stored.gap = 'when'
+      this.persist()
+      item.gap = 'when'
+    }
     this.undoIds += 1
     const expires = new Date(this.now().getTime() + 10 * 60_000)
     return {
-      added: [item],
-      needs_look: [],
+      added: vague ? [] : [item],
+      needs_look: vague ? [item] : [],
       undo: { id: this.undoIds, expires_at: this.iso(expires) },
       proposal: null,
     }
+  }
+
+  // -------------------------------------------------------------------------------------------------
+  // The list (#22): the same rows maestro.feed builds, from the sample data.
+
+  feed(days = 7): Promise<Feed> {
+    return this.call('feed', () => {
+      const now = this.now()
+      const today = wallTime(now, this.tz)
+      const until = fromWallTime(
+        { ...addDays(today, days), hour: 0, minute: 0, second: 0 },
+        this.tz,
+      )
+      const live = this.state.items.filter((i) => i.status !== 'done')
+      const upcoming: Feed['upcoming'] = []
+      let later = 0
+      for (const item of live) {
+        if (item.gap || item.kind !== 'reminder' || !item.due_at) continue
+        const rows = this.occurrences(item, now, until)
+        if (rows.length) upcoming.push(...rows)
+        else later += 1
+      }
+      upcoming.sort((a, b) => a.at.localeCompare(b.at) || a.item.id - b.item.id)
+      return {
+        now: this.iso(now),
+        until: this.iso(until),
+        timezone: this.tz,
+        needs_look: live
+          .filter((i) => i.gap)
+          .sort(byNewest)
+          .map((i) => this.view(i)),
+        upcoming,
+        anytime: live
+          .filter((i) => !i.gap && i.kind === 'task')
+          .sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id - b.id)
+          .map((i) => this.view(i)),
+        later,
+      }
+    })
+  }
+
+  fillGap(id: number, phrase: string): Promise<Item> {
+    return this.call('fillGap', () => {
+      const item = this.find(id)
+      if (!item.gap)
+        throw new ApiError('not_found', `No item #${String(id)} needing a look`, { status: 404 })
+      const wanted = GAP_WANTED[item.gap] ?? 'an answer'
+      const read = parseCapture(phrase, this.now(), this.tz)
+      if (item.gap === 'when') {
+        if (!read.dueAt) throw this.cannotRead(wanted, id)
+        item.due_at = this.iso(read.dueAt)
+        item.recurrence = read.recurrence
+        item.kind = 'reminder'
+      } else if (item.gap === 'channel') {
+        if (!read.channels) throw this.cannotRead(wanted, id)
+        item.channels = read.channels
+      } else {
+        if (!read.text.trim()) throw this.cannotRead(wanted, id)
+        item.text = read.text
+        if (read.dueAt) {
+          item.due_at = this.iso(read.dueAt)
+          item.kind = 'reminder'
+        } else item.kind = read.kind
+      }
+      item.gap = null
+      return this.view(item)
+    })
+  }
+
+  dismissGap(id: number): Promise<void> {
+    return this.call('dismissGap', () => {
+      const item = this.find(id)
+      if (!item.gap)
+        throw new ApiError('not_found', `No item #${String(id)} needing a look`, { status: 404 })
+      this.state.items = this.state.items.filter((i) => i !== item)
+    })
+  }
+
+  private cannotRead(wanted: string, id: number): ApiError {
+    // The server's own wording (maestro/api.py fill_needs_look).
+    return new ApiError(
+      'invalid',
+      `Couldn't read ${wanted} in that; #${String(id)} still needs ${wanted}`,
+      {
+        status: 422,
+      },
+    )
+  }
+
+  /** The rows one reminder puts in the window (maestro.feed._occurrences). */
+  private occurrences(item: StoredItem, now: Date, until: Date): Feed['upcoming'] {
+    if (!item.due_at) return []
+    const rows: Feed['upcoming'] = []
+    const view = this.view(item)
+    const delivered =
+      this.awaiting(item) && item.delivered ? new Date(item.delivered.occurrence) : null
+    let acts = true
+    if (delivered) {
+      rows.push({
+        item: view,
+        at: this.iso(delivered),
+        state: 'awaiting',
+        held_until: null,
+        escalation_label: item.escalation_label ?? null,
+        acts: true,
+      })
+      acts = false
+    }
+    const first = new Date(item.snoozed_until ?? item.due_at)
+    const seenDays = new Set<string>()
+    const series = this.series(item)
+    let at = first
+    let next: Date | null =
+      series && first.getTime() !== new Date(item.due_at).getTime() ? new Date(item.due_at) : null
+    let count = 0
+    while (at < until && count < 31) {
+      const day = this.iso(at).slice(0, 10)
+      const skip = seenDays.has(day) || (delivered !== null && at <= delivered)
+      if (!skip) {
+        seenDays.add(day)
+        const sentAt = sendTime(item, at, this.quiet, this.tz)
+        const state =
+          sentAt > at
+            ? 'held'
+            : at <= now
+              ? 'overdue'
+              : at.getTime() === first.getTime() && item.snoozed_until
+                ? 'snoozed'
+                : 'scheduled'
+        rows.push({
+          item: view,
+          at: this.iso(at),
+          state,
+          held_until: sentAt > at ? this.iso(sentAt) : null,
+          escalation_label: null,
+          acts,
+        })
+        acts = false
+        count += 1
+      }
+      if (!series) break
+      if (next) {
+        at = next
+        next = null
+      } else {
+        const { hour, minute, second } = wallTime(new Date(item.due_at), this.tz)
+        at = nextOccurrence(series.rule, at, { hour, minute, second }, this.tz, at)
+      }
+    }
+    return rows
   }
 
   done(id: number): Promise<Item> {

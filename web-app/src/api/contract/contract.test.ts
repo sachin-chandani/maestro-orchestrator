@@ -94,6 +94,42 @@ describe.each(clients)('%s', (_, make) => {
     expect((await make().health()).timezone).toBe(TZ)
   })
 
+  it('serves the same feed (#22)', async () => {
+    const client = make()
+    const feed = await client.feed()
+
+    expect(feed.timezone).toBe(TZ)
+    expect(feed.needs_look.map((i) => i.id)).toEqual([13])
+    expect(feed.upcoming.slice(0, 3).map((o) => [o.item.id, o.at, o.state, o.acts])).toEqual([
+      [1, '2026-11-05T13:20:00+05:30', 'awaiting', true],
+      [5, '2026-11-05T14:20:00+05:30', 'snoozed', true],
+      [2, '2026-11-05T15:30:00+05:30', 'scheduled', true],
+    ])
+    expect(feed.anytime).toEqual([])
+    expect(feed.later).toBe(0)
+    expect((await client.feed(1)).upcoming.every((o) => o.at < '2026-11-06')).toBe(true)
+  })
+
+  it('fills and dismisses what needs a look the same way (#126)', async () => {
+    const client = make()
+    expect(await rejection(client.fillGap(13, 'no idea'))).toMatchObject({
+      kind: 'invalid',
+      message: "Couldn't read a time in that; #13 still needs a time",
+    })
+    const filled = await client.fillGap(13, 'tomorrow at 9am')
+    expect([filled.kind, filled.due_at, filled.gap]).toEqual([
+      'reminder',
+      '2026-11-06T09:00:00+05:30',
+      null,
+    ])
+    expect((await rejection(client.fillGap(13, '5pm'))).kind).toBe('not_found') // no gap any more
+    expect((await rejection(client.dismissGap(1))).kind).toBe('not_found')
+
+    const other = make()
+    await other.dismissGap(13)
+    expect((await other.feed()).needs_look).toEqual([])
+  })
+
   it('rejects what the backend does not have yet', async () => {
     const client = make()
     for (const [method, support] of Object.entries(SUPPORT)) {

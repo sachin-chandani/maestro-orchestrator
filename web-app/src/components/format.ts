@@ -1,7 +1,14 @@
 // What the components show for an item: its time, and the chips the design puts under its text.
 // Pure functions, so screens and tests can use them without rendering.
 
-import type { ChipKind, ConnectionState, IsoDateTime, Item } from '../api/types.ts'
+import type {
+  ChipKind,
+  ConnectionState,
+  IsoDateTime,
+  Item,
+  ItemGap,
+  Occurrence,
+} from '../api/types.ts'
 import { dateTimeFormat } from '../lib/intl.ts'
 
 export interface ChipData {
@@ -71,4 +78,34 @@ export function connectionLabel(state: ConnectionState, serverName: string): str
         ? `Too many attempts · try in ${String(state.retry_after_seconds)}s`
         : 'Too many attempts'
   }
+}
+
+/**
+ * What a row in the list is doing, in words (#22): the occurrence's own state, not the item's,
+ * so a later occurrence of a snoozed series doesn't claim to be snoozed. Null says nothing.
+ */
+export function occurrenceState(occurrence: Occurrence, timeZone: string): string | null {
+  switch (occurrence.state) {
+    case 'awaiting':
+      return occurrence.escalation_label
+        ? `Sent · waiting for Done or Snooze · ${occurrence.escalation_label}`
+        : 'Sent · waiting for Done or Snooze'
+    case 'overdue':
+      return `Overdue · due ${formatTime(occurrence.at, timeZone)}`
+    case 'held':
+      return occurrence.held_until
+        ? `Held for quiet hours · goes out at ${formatTime(occurrence.held_until, timeZone)}`
+        : 'Held for quiet hours'
+    case 'snoozed':
+      return `Snoozed to ${formatTime(occurrence.at, timeZone)}`
+    case 'scheduled':
+      return null
+  }
+}
+
+/** What a gap is called on the chip, and what the answer field asks for (maestro.gaps.WANTED). */
+export const GAP_WORDS: Record<ItemGap, { chip: string; ask: string; example: string }> = {
+  when: { chip: 'Needs a time', ask: 'When?', example: 'tomorrow at 9am' },
+  what: { chip: 'Needs a description', ask: 'What did you mean?', example: 'call the dentist' },
+  channel: { chip: 'Needs a channel', ask: 'Which channel?', example: 'text me' },
 }

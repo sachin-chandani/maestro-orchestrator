@@ -1,4 +1,4 @@
-import { useId, type SyntheticEvent } from 'react'
+import { useId, type Ref, type SyntheticEvent } from 'react'
 import type { PreviewChip } from '../api/types.ts'
 import { Chip } from './Chip.tsx'
 import styles from './CaptureBar.module.css'
@@ -11,6 +11,8 @@ export interface CaptureBarProps {
   /** What Maestro understood so far; the screen fetches it (#104). Empty hides the row. */
   preview?: PreviewChip[]
   placeholder?: string
+  /** Lets the screen focus the field (the "/" shortcut, #22). */
+  inputRef?: Ref<HTMLInputElement>
 }
 
 /**
@@ -24,6 +26,7 @@ export function CaptureBar({
   onSubmit,
   preview = [],
   placeholder = 'text me tomorrow at 9am to call the bank',
+  inputRef,
 }: CaptureBarProps) {
   const inputId = useId()
   const submit = (event: SyntheticEvent) => {
@@ -55,6 +58,7 @@ export function CaptureBar({
         </label>
         <input
           id={inputId}
+          ref={inputRef}
           className={styles.input}
           value={value}
           onChange={(e) => {

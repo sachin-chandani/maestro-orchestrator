@@ -8,6 +8,24 @@
   border-radius: var(--radius-card);
 }
 
+/* Next up (#22): the one thing that is next, larger, with the accent on its edge. */
+.next {
+  border-color: var(--color-accent);
+  border-left-width: 4px;
+}
+
+.next .text {
+  font-size: var(--text-lg);
+  line-height: 24px;
+  font-weight: var(--weight-semibold);
+}
+
+/* Reachable from the keyboard (j/k) without a visible outline from a pointer. */
+.card:focus-visible {
+  outline: var(--focus-ring) solid var(--color-focus);
+  outline-offset: 2px;
+}
+
 /* Urgent and not done (the design's orange border); the "Urgent" chip says so in words. */
 .urgent {
   border-color: var(--color-urgent-border);
