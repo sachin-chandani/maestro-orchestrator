@@ -23,7 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
-from maestro import __version__, commands, devices, gaps, recurrence
+from maestro import __version__, commands, devices, feed, gaps, recurrence
 from maestro import captures as confirmations
 from maestro.actions import Action, apply
 from maestro.interpret import Context, Interpreter, interpret_assessed
@@ -179,6 +179,30 @@ class CaptureOut(BaseModel):
     added: list["ItemOut"]  # saved and, if they have a time, scheduled
     needs_look: list["ItemOut"]  # saved with a gap: visible, never scheduled
     undo: UndoOut | None  # null when the capture saved nothing to take back
+
+
+class OccurrenceOut(BaseModel):
+    """One time a reminder goes (or went) out: a row in the list (#22)."""
+
+    item: "ItemOut"
+    at: datetime
+    state: str  # scheduled, overdue, awaiting, held or snoozed (maestro.feed.STATES)
+    held_until: datetime | None  # while held: when quiet hours let it out
+    escalation_label: str | None  # while awaiting: the next stage, "text at 17:12"
+    acts: bool  # Done and +1 hour apply to this row (the first occurrence of its series)
+
+
+class FeedOut(BaseModel):
+    """Everything the list screen shows, in one call (#22, ADR 0017). The client groups `upcoming`
+    into days in `timezone`; the server only says when each row happens and what it is doing."""
+
+    now: datetime
+    until: datetime  # exclusive
+    timezone: str
+    needs_look: list["ItemOut"]  # saved with a gap, newest first
+    upcoming: list[OccurrenceOut]  # by `at`
+    anytime: list["ItemOut"]  # tasks, oldest first
+    later: int  # reminders whose next time is past the window
 
 
 class ItemOut(BaseModel):
@@ -588,6 +612,24 @@ def create_app(store: Store, api_token: str | None = None, notifier: Notifier | 
             raise HTTPException(status.HTTP_409_CONFLICT,
                                 f"The undo window for capture #{capture_id} has passed")
         return decided(capture_id, CaptureStatus.UNDONE)
+
+    @app.get("/feed", dependencies=[Depends(require_token)])
+    async def upcoming_feed(days: int = Query(default=feed.DEFAULT_DAYS, ge=1, le=feed.MAX_DAYS)) \
+            -> FeedOut:
+        """The next `days` days as the list shows them (#22): every occurrence of every pending
+        reminder (recurring ones expanded, snoozed ones at their snoozed time, delivered ones
+        waiting for an answer), plus tasks under Anytime and readings that need a look."""
+        built = feed.build(store, days=days, quiet=quiet, escalation=escalation)
+        awaiting = store.unacknowledged_ids()
+        return FeedOut(
+            now=built.now, until=built.until, timezone=store.tz.key,
+            needs_look=[ItemOut.of(i, awaiting) for i in built.needs_look],
+            upcoming=[OccurrenceOut(item=ItemOut.of(o.item, awaiting), at=o.at, state=o.state,
+                                    held_until=o.held_until, escalation_label=o.escalation_label,
+                                    acts=o.acts) for o in built.upcoming],
+            anytime=[ItemOut.of(i, awaiting) for i in built.anytime],
+            later=built.later,
+        )
 
     @app.get("/items", dependencies=[Depends(require_token)])
     async def list_items(include_done: bool = False, q: str | None = None,
