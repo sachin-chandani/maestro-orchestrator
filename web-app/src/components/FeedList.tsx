@@ -1,4 +1,4 @@
-import type { Item, Occurrence } from '../api/types.ts'
+import type { GapSuggestions, Item, Occurrence } from '../api/types.ts'
 import type { FeedGroups } from '../app/feedGroups.ts'
 import { dayLabel, isEmpty } from '../app/feedGroups.ts'
 import { rowId, type Row } from '../app/rows.ts'
@@ -19,6 +19,8 @@ export interface FeedListProps {
   onDone: (item: Item) => void
   onSnooze: (item: Item) => void
   onAnswer: (item: Item, phrase: string) => Promise<void>
+  loadSuggestions: (item: Item) => Promise<GapSuggestions>
+  onKeep: (item: Item) => void
   onDismiss: (item: Item) => void
 }
 
@@ -36,6 +38,8 @@ export function FeedList({
   onDone,
   onSnooze,
   onAnswer,
+  loadSuggestions,
+  onKeep,
   onDismiss,
 }: FeedListProps) {
   const card = (occurrence: Occurrence, options: { emphasis?: boolean; day?: boolean } = {}) => {
@@ -80,7 +84,10 @@ export function FeedList({
               key={rowId({ kind: 'needs', item })}
               id={rowId({ kind: 'needs', item })}
               item={item}
+              timeZone={timeZone}
               onAnswer={onAnswer}
+              loadSuggestions={loadSuggestions}
+              onKeep={onKeep}
               onDismiss={onDismiss}
               busy={busy.has(item.id)}
               highlighted={highlight?.has(item.id)}

@@ -65,6 +65,8 @@ describe('SUPPORT', () => {
       'GET /feed',
       'POST /needs-look/{id}',
       'DELETE /needs-look/{id}',
+      'GET /needs-look/{id}/suggestions',
+      'POST /needs-look/{id}/keep',
       'POST /devices',
       'GET /devices',
       'DELETE /devices/{id}',

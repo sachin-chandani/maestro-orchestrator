@@ -97,6 +97,7 @@ All settings come from environment variables or a `.env` file. See [.env.example
 | `MAESTRO_DB_URL` | Database URL, for a backend other than the default SQLite file: `sqlite:///data/maestro.db` or `postgresql://user:pw@host/maestro` (needs `pip install 'maestro-orchestrator[postgres]'`). Wins over `MAESTRO_DB` |
 | `MAESTRO_TIMEZONE` | Your IANA timezone, e.g. `Europe/London`. Defaults to the system zone, which is UTC in Docker, so set it when self-hosting |
 | `MAESTRO_API_TOKEN` | Bearer token for the API; required unless bound to localhost. Phones sign in with it once and keep a token of their own (see [Devices](#devices)) |
+| `MAESTRO_WRAPUP` | One evening notice when readings still need a look (#128), local time, e.g. `20:00`; empty = off |
 | `MAESTRO_RATE_LIMIT_WEBHOOK` | Webhook requests with an invalid signature allowed per minute per client (default 60, 0 = off). Genuine Twilio callbacks are never limited |
 | `MAESTRO_RATE_LIMIT_AUTH_FAILURES` | Wrong API tokens allowed per minute per client before it is locked out of the API (default 10, 0 = off). A missing token doesn't count |
 | `MAESTRO_TRUST_PROXY_HEADERS` | `true` behind a reverse proxy, so limits apply per real client (last `X-Forwarded-For` entry) |
@@ -226,7 +227,7 @@ Answering:
 - **A bare time** ("5pm", "tomorrow 9am") answers the one question asked in the last 30 minutes (`MAESTRO_GAP_REPLY_MINUTES`). If two are open, Maestro asks which and saves nothing.
 - **Naming it** (`#12 5pm`) works at any time, however old the question — only the shortcut expires, never the item.
 - **Anything else is captured as usual**: "call dad at 5pm" says what to do, so it's a new reminder, not an answer. A reply can only ever complete a question — it can never change a reminder that's already scheduled.
-- `dismiss` (or `maestro dismiss <id>`, `DELETE /needs-look/{id}`) drops a question instead of answering it.
+- `dismiss` (or `maestro dismiss <id>`, `DELETE /needs-look/{id}`) drops a question instead of answering it. The web app answers in one tap (#128): `GET /needs-look/{id}/suggestions` offers three concrete times worked out from the vague words ("next week" → Monday 09:00 · start of the week), never in the past or inside quiet hours; `POST /needs-look/{id}/keep` keeps it with no time, under Anytime. Set `MAESTRO_WRAPUP=20:00` for one evening notice — at most one a day, however many processes run — saying how many readings still need a look.
 
 Every capture can be undone for 10 minutes, on any channel, removing exactly what that capture added: `UNDO` by SMS or Telegram, `maestro undo <id>`, or `POST /captures/{id}/undo`. `maestro list` shows open questions under **Needs a look**, `maestro list --needs-look` shows only those, and the API has `GET /needs-look`, `POST /needs-look/{id}` and `POST /capture` (which answers `{added, needs_look, undo}`; `POST /items` keeps its old shape). See ADR 0017, #126.
 

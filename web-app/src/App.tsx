@@ -208,6 +208,21 @@ export default function App({ devTools }: AppProps) {
     }
   }
 
+  /** No time: keep the reading under Anytime (#128). */
+  const keep = async (item: Item) => {
+    if (busy.has(item.id)) return
+    setCardBusy(item.id, true)
+    try {
+      await client.keepGap(item.id)
+      say('Kept under Anytime.')
+      await refresh()
+    } catch (error) {
+      say(`Couldn't keep it: ${messageOf(error)}`)
+    } finally {
+      setCardBusy(item.id, false)
+    }
+  }
+
   const dismiss = async (item: Item) => {
     if (busy.has(item.id)) return
     setCardBusy(item.id, true)
@@ -441,6 +456,8 @@ export default function App({ devTools }: AppProps) {
             onDone={(i) => void act(i, 'done', ready.timeZone)}
             onSnooze={(i) => void act(i, 'snooze', ready.timeZone)}
             onAnswer={answer}
+            loadSuggestions={(i) => client.gapSuggestions(i.id)}
+            onKeep={(i) => void keep(i)}
             onDismiss={(i) => void dismiss(i)}
           />
         )}

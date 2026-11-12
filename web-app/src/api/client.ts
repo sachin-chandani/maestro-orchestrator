@@ -4,6 +4,7 @@ import type {
   ConnectionState,
   Device,
   Feed,
+  GapSuggestions,
   Health,
   Item,
   ItemEdit,
@@ -56,6 +57,10 @@ export interface MaestroClient {
   fillGap(id: number, phrase: string): Promise<Item>
   /** Drop a reading that needs a look rather than answering it. */
   dismissGap(id: number): Promise<void>
+  /** Three concrete times a when-gap's vague words could mean (#128), with what was said. */
+  gapSuggestions(id: number): Promise<GapSuggestions>
+  /** No time: keep the reading as it is, under Anytime (#128). */
+  keepGap(id: number): Promise<Item>
   /**
    * Take back everything one capture added (ADR 0017), by the undo token captureSplit returned.
    * Rejects with `conflict` once the 10-minute window has passed, `not_found` for an unknown or
@@ -146,6 +151,8 @@ export const SUPPORT: Record<keyof MaestroClient, Support> = {
   feed: { level: 'backend', endpoint: 'GET /feed' },
   fillGap: { level: 'backend', endpoint: 'POST /needs-look/{id}' },
   dismissGap: { level: 'backend', endpoint: 'DELETE /needs-look/{id}' },
+  gapSuggestions: { level: 'backend', endpoint: 'GET /needs-look/{id}/suggestions' },
+  keepGap: { level: 'backend', endpoint: 'POST /needs-look/{id}/keep' },
   searchNotes: {
     level: 'partial',
     endpoint: 'GET /items?q=',

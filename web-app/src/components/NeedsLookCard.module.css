@@ -50,3 +50,45 @@
   font-size: var(--text-sm);
   color: var(--color-urgent);
 }
+
+/* Suggested times (#128): three tappable rows, the time first, the reason quiet. */
+.suggestions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.suggestion {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-5);
+  width: 100%;
+  min-height: var(--touch-target);
+  padding: 0 var(--space-6);
+  border: 1px solid var(--color-line-control);
+  border-radius: var(--radius-button);
+  background: var(--color-surface);
+  color: var(--color-ink);
+  cursor: pointer;
+  text-align: left;
+}
+
+.suggestion:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.when {
+  font-family: var(--font-mono);
+  font-size: var(--text-md);
+  font-weight: var(--weight-medium);
+}
+
+.reason {
+  font-size: var(--text-sm);
+  color: var(--color-muted);
+}

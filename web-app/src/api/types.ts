@@ -186,6 +186,22 @@ export interface Feed {
 }
 
 // ---------------------------------------------------------------------------------------------------
+// Suggested times for a reading that needs one (GET /needs-look/{id}/suggestions, #128).
+
+export interface GapSuggestion {
+  at: IsoDateTime
+  /** A few words: "start of the week". */
+  reason: string
+}
+
+export interface GapSuggestions {
+  /** The vague words the question is about: "sometime next week". */
+  said: string
+  /** Up to three, soonest first; empty for a gap that isn't about time. */
+  suggestions: GapSuggestion[]
+}
+
+// ---------------------------------------------------------------------------------------------------
 // Capture that saves what it can and names what still needs a look (POST /capture, ADR 0017).
 
 export interface UndoToken {

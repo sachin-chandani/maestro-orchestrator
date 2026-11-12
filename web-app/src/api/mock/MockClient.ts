@@ -6,6 +6,8 @@ import type {
   ConnectionState,
   Device,
   Feed,
+  GapSuggestion,
+  GapSuggestions,
   Health,
   Item,
   ListItemsOptions,
@@ -119,6 +121,22 @@ const GAP_WANTED: Record<string, string> = {
   when: 'a time',
   what: 'a description',
   channel: 'a channel',
+}
+
+// maestro.suggest.said: the vague words the question is about.
+const SAID_RE =
+  /\b(?:some\s?time\s+(?:next|this)\s+(?:week|month)|(?:next|this)\s+(?:week|month)|at some point|some\s?time|soon|later|eventually|asap|tonight|morning|afternoon|evening|weekend|before|until|from)\b/i
+
+function saidOf(text: string): string {
+  return SAID_RE.exec(text)?.[0] ?? text
+}
+
+/** An ISO 8601 answer with an offset, or null: "2026-11-09T09:00:00+05:30". */
+function isoWithOffset(phrase: string): Date | null {
+  const trimmed = phrase.trim()
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?(?:Z|[+-]\d{2}:\d{2})$/.test(trimmed)) return null
+  const parsed = new Date(trimmed)
+  return Number.isNaN(parsed.getTime()) ? null : parsed
 }
 
 /**
@@ -322,17 +340,21 @@ export class MockClient implements MaestroClient {
       if (!item.gap)
         throw new ApiError('not_found', `No item #${String(id)} needing a look`, { status: 404 })
       const wanted = GAP_WANTED[item.gap] ?? 'an answer'
-      const read = parseCapture(phrase, this.now(), this.tz)
+      // A suggested time comes back as the ISO stamp with its offset (#128), read exactly,
+      // as maestro.gaps does; anything else is a phrase for the sample parser.
+      const exact = item.gap === 'when' ? isoWithOffset(phrase) : null
+      const read = exact ? null : parseCapture(phrase, this.now(), this.tz)
       if (item.gap === 'when') {
-        if (!read.dueAt) throw this.cannotRead(wanted, id)
-        item.due_at = this.iso(read.dueAt)
-        item.recurrence = read.recurrence
+        const dueAt = exact ?? read?.dueAt
+        if (!dueAt) throw this.cannotRead(wanted, id)
+        item.due_at = this.iso(dueAt)
+        item.recurrence = exact ? null : (read?.recurrence ?? null)
         item.kind = 'reminder'
       } else if (item.gap === 'channel') {
-        if (!read.channels) throw this.cannotRead(wanted, id)
+        if (!read?.channels) throw this.cannotRead(wanted, id)
         item.channels = read.channels
       } else {
-        if (!read.text.trim()) throw this.cannotRead(wanted, id)
+        if (!read?.text.trim()) throw this.cannotRead(wanted, id)
         item.text = read.text
         if (read.dueAt) {
           item.due_at = this.iso(read.dueAt)
@@ -342,6 +364,60 @@ export class MockClient implements MaestroClient {
       item.gap = null
       return this.view(item)
     })
+  }
+
+  gapSuggestions(id: number): Promise<GapSuggestions> {
+    return this.call('gapSuggestions', () => {
+      const item = this.find(id)
+      if (!item.gap) {
+        throw new ApiError('not_found', `No item #${String(id)} needing a look`, { status: 404 })
+      }
+      return {
+        said: saidOf(item.text),
+        suggestions: item.gap === 'when' ? this.suggestTimes(item.text) : [],
+      }
+    })
+  }
+
+  keepGap(id: number): Promise<Item> {
+    return this.call('keepGap', () => {
+      const item = this.find(id)
+      if (!item.gap) {
+        throw new ApiError('not_found', `No item #${String(id)} needing a look`, { status: 404 })
+      }
+      item.gap = null
+      return this.view(item)
+    })
+  }
+
+  /** The server's suggestion shapes (maestro/suggest.py), for the phrases the mock understands. */
+  private suggestTimes(text: string): GapSuggestion[] {
+    const now = this.now()
+    const today = wallTime(now, this.tz)
+    const at = (days: number, hour: number, reason: string): GapSuggestion => ({
+      at: this.iso(fromWallTime({ ...addDays(today, days), hour, minute: 0, second: 0 }, this.tz)),
+      reason,
+    })
+    // Days until the next Monday (1-7) and Saturday (1-7), strictly ahead, as the server counts.
+    const nextMonday = ((0 - today.weekday + 6) % 7) + 1
+    const nextSaturday = ((5 - today.weekday + 6) % 7) + 1
+    let picks: GapSuggestion[]
+    if (/\btonight\b/i.test(text)) {
+      picks = [at(0, 19, 'tonight'), at(0, 20, 'tonight'), at(0, 21, 'tonight')]
+    } else if (/\b(?:next|this) week\b/i.test(text)) {
+      picks = [
+        at(nextMonday, 9, 'start of the week'),
+        at(nextMonday, 18, 'start of the week, evening'),
+        at(nextMonday + 5, 10, 'the weekend'),
+      ]
+    } else {
+      picks = [
+        at(1, 9, 'tomorrow morning'),
+        at(1, 18, 'tomorrow evening'),
+        at(nextSaturday, 10, 'the weekend'),
+      ]
+    }
+    return picks.filter((p) => new Date(p.at) > now).slice(0, 3)
   }
 
   dismissGap(id: number): Promise<void> {

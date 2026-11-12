@@ -443,6 +443,12 @@ describe('App', () => {
     })
 
     fireEvent.click(within(plumber).getByRole('button', { name: 'Answer…' }))
+    // the sheet offers the mock's suggested times first (#128)
+    const list = await within(plumber).findByRole('list', { name: 'Suggested times' })
+    expect(within(list).getAllByRole('button')).toHaveLength(3)
+    expect(within(plumber).getByText('You said “sometime next week”')).toBeVisible()
+
+    fireEvent.click(within(plumber).getByRole('button', { name: 'Pick a time…' }))
     const field = within(plumber).getByLabelText('When?')
     expect(field).toHaveFocus()
     expect(within(plumber).getByRole('button', { name: 'Save' })).toBeDisabled()
@@ -463,6 +469,53 @@ describe('App', () => {
       within(tomorrow).getByRole('article', { name: 'Call the plumber sometime next week' }),
     ).toBeVisible()
     expect(screen.getByText(/^\d+ left today$/)).toBeInTheDocument() // nothing needs a look now
+  })
+
+  it('answers with one tap on a suggested time, and the reminder lands at it (#128)', async () => {
+    const client = new MockClient({ storage: null, timeZone: 'UTC' })
+    setup(client)
+    const needs = await screen.findByRole('region', { name: 'Needs a look' })
+    const plumber = within(needs).getByRole('article', {
+      name: 'Call the plumber sometime next week',
+    })
+
+    fireEvent.click(within(plumber).getByRole('button', { name: 'Answer…' }))
+    const list = await within(plumber).findByRole('list', { name: 'Suggested times' })
+    const [monday] = within(list).getAllByRole('button')
+    fireEvent.click(monday as HTMLElement)
+
+    expect(await screen.findByText(/^Set for /)).toBeVisible()
+    await waitFor(() => {
+      expect(screen.queryByRole('region', { name: 'Needs a look' })).toBeNull()
+    })
+    // Next Monday lands in the collapsed This week group most days; on a Monday it is a week out
+    // and only counted. Either way it is scheduled, not waiting.
+    const weekToggle = screen.queryByRole('button', { name: /^This week/ })
+    if (weekToggle) fireEvent.click(weekToggle)
+    const landed =
+      screen.queryByRole('article', { name: 'Call the plumber sometime next week' }) !== null ||
+      screen.queryByText(/more reminders? after this week/) !== null
+    expect(landed).toBe(true)
+  })
+
+  it('keeps a reading under Anytime with no time (#128)', async () => {
+    const client = new MockClient({ storage: null, timeZone: 'UTC' })
+    setup(client)
+    const needs = await screen.findByRole('region', { name: 'Needs a look' })
+    const plumber = within(needs).getByRole('article', {
+      name: 'Call the plumber sometime next week',
+    })
+
+    fireEvent.click(within(plumber).getByRole('button', { name: 'Answer…' }))
+    fireEvent.click(await within(plumber).findByRole('button', { name: 'No time · keep it' }))
+    expect(await screen.findByText('Kept under Anytime.')).toBeVisible()
+    await waitFor(() => {
+      expect(screen.queryByRole('region', { name: 'Needs a look' })).toBeNull()
+    })
+    const anytime = screen.getByRole('region', { name: 'Anytime' })
+    expect(
+      within(anytime).getByRole('article', { name: 'Call the plumber sometime next week' }),
+    ).toBeVisible()
   })
 
   it('dismisses a reading that needs a look', async () => {
@@ -495,6 +548,8 @@ describe('App', () => {
     const plumber = screen.getByRole('article', { name: 'Call the plumber sometime next week' })
     expect(plumber).toHaveFocus()
     fireEvent.keyDown(document.body, { key: 'a' })
+    await within(plumber).findByRole('list', { name: 'Suggested times' })
+    fireEvent.click(within(plumber).getByRole('button', { name: 'Pick a time…' }))
     const field = within(plumber).getByLabelText('When?')
     expect(field).toHaveFocus()
     fireEvent.keyDown(field, { key: 'j' }) // typing: just a letter

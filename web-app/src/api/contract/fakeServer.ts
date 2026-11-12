@@ -54,6 +54,14 @@ export function fakeServer(backend: MaestroClient, options: { token?: string } =
       await backend.undoCapture(captureId)
       return json(200, { id: captureId, status: 'undone' })
     }
+    if (method === 'GET' && /^\/needs-look\/\d+\/suggestions$/.test(path)) {
+      const gapId = Number(/^\/needs-look\/(\d+)/.exec(path)?.[1])
+      return send(200, () => backend.gapSuggestions(gapId))
+    }
+    if (method === 'POST' && /^\/needs-look\/\d+\/keep$/.test(path)) {
+      const gapId = Number(/^\/needs-look\/(\d+)/.exec(path)?.[1])
+      return send(200, () => backend.keepGap(gapId))
+    }
     if (/^\/needs-look\/\d+$/.test(path)) {
       if (method === 'POST') {
         const phrase = (body as { phrase?: unknown } | null)?.phrase

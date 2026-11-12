@@ -145,6 +145,32 @@ describe.each(clients)('%s', (_, make) => {
     expect((await client.getItem(ids(b)[0] ?? -1)).text).toBe('Renew the licence')
   })
 
+  it('suggests times for a when-gap and keeps one under Anytime the same way (#128)', async () => {
+    const client = make()
+    const body = await client.gapSuggestions(13) // the seed's "sometime next week"
+    expect(body.said).toBe('sometime next week')
+    expect(body.suggestions.length).toBe(3)
+    expect(body.suggestions.map((s) => s.reason)).toEqual([
+      'start of the week',
+      'start of the week, evening',
+      'the weekend',
+    ])
+    for (const s of body.suggestions) expect(s.at > START).toBe(true)
+
+    // answering with a suggestion round-trips exactly
+    const chosen = body.suggestions[0]
+    if (!chosen) throw new Error('no suggestion')
+    const filled = await client.fillGap(13, chosen.at)
+    expect([filled.gap, filled.kind, filled.due_at]).toEqual([null, 'reminder', chosen.at])
+
+    const other = make()
+    const kept = await other.keepGap(13)
+    expect([kept.gap ?? null, kept.kind, kept.due_at]).toEqual([null, 'task', null])
+    expect((await other.feed()).anytime.map((i) => i.id)).toContain(13)
+    expect((await rejection(other.keepGap(13))).kind).toBe('not_found')
+    expect((await rejection(other.gapSuggestions(13))).kind).toBe('not_found')
+  })
+
   it('fills and dismisses what needs a look the same way (#126)', async () => {
     const client = make()
     expect(await rejection(client.fillGap(13, 'no idea'))).toMatchObject({

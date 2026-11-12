@@ -6,6 +6,7 @@ import type {
   ConnectionState,
   Device,
   Feed,
+  GapSuggestions,
   Health,
   Item,
   ListItemsOptions,
@@ -131,6 +132,14 @@ export class HttpClient implements MaestroClient {
 
   dismissGap(id: number): Promise<void> {
     return this.request('DELETE', `/needs-look/${itemId(id)}`)
+  }
+
+  gapSuggestions(id: number): Promise<GapSuggestions> {
+    return this.request('GET', `/needs-look/${itemId(id)}/suggestions`)
+  }
+
+  keepGap(id: number): Promise<Item> {
+    return this.request('POST', `/needs-look/${itemId(id)}/keep`)
   }
 
   async undoCapture(id: number): Promise<void> {

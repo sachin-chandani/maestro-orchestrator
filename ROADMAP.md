@@ -114,7 +114,7 @@ Say it once and it's on your list. Design: `docs/design/mobile/README.md`; decis
 - [x] One list: Needs a look, Next up, Today, Tomorrow, This week, Anytime (#22)
 - [x] Say or type, reminders land in place, with a 10-second Undo (#104)
 - [ ] Hold-to-talk mic with live words (#127)
-- [ ] Needs a look: fill a gap in one tap, and an evening wrap-up (#128)
+- [x] Needs a look: fill a gap in one tap, and an evening wrap-up (#128)
 - [ ] Reminder screen: what you said, what will happen, and edit (#21)
 - [ ] Search across reminders, tasks and notes (#105)
 - [ ] Reach your server from your phone over HTTPS (#96), install to the home screen with web push (#24)
