@@ -240,7 +240,7 @@ describe('App', () => {
     expect(field).toHaveValue('') // not after the save: now
     fireEvent.change(field, { target: { value: 'buy milk' } })
 
-    save.fail(new ApiError('offline', "Can't reach the Maestro server"))
+    save.fail(new ApiError('server', 'Database is locked', { status: 500 }))
     expect(await screen.findByText(/Couldn't save "call mom at 5pm"/)).toBeVisible()
     expect(field).toHaveValue('buy milk') // what was typed meanwhile is not thrown away
   })
@@ -521,6 +521,169 @@ describe('App', () => {
     expect(screen.getByRole('dialog', { name: 'Keyboard shortcuts' })).toBeVisible()
     fireEvent.keyDown(document.body, { key: 'Escape' })
     expect(screen.queryByRole('dialog', { name: 'Keyboard shortcuts' })).toBeNull()
+  })
+
+  it('confirms a capture with Undo and a countdown, and undo takes it back (#104)', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const client = new MockClient({ storage: null, timeZone: 'UTC' })
+    setup(client)
+    await screen.findByRole('region', { name: 'Today' })
+    const field = screen.getByRole('textbox', { name: 'Capture a reminder or note' })
+
+    fireEvent.change(field, { target: { value: 'renew the passport' } })
+    fireEvent.submit(field)
+    expect(await screen.findByText('Saved as a task.')).toBeVisible()
+    const undoButton = await screen.findByRole('button', { name: /^Undo · 10s$/ })
+    // the new row is in the list, highlighted while the line is up
+    await waitFor(() => {
+      expect(screen.getByRole('article', { name: 'Renew the passport' })).toBeVisible()
+    })
+
+    act(() => {
+      vi.advanceTimersByTime(3000)
+    })
+    expect(screen.getByRole('button', { name: /^Undo · 7s$/ })).toBeVisible()
+
+    fireEvent.click(undoButton)
+    expect(await screen.findByText('Took it back.')).toBeVisible()
+    await waitFor(() => {
+      expect(screen.queryByRole('article', { name: 'Renew the passport' })).toBeNull()
+    })
+    expect(screen.queryByRole('button', { name: /^Undo/ })).toBeNull()
+  })
+
+  it('counts down 10 seconds and the line goes; the reminder stays (#104)', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const client = new MockClient({ storage: null, timeZone: 'UTC' })
+    setup(client)
+    await screen.findByRole('region', { name: 'Today' })
+    const field = screen.getByRole('textbox', { name: 'Capture a reminder or note' })
+
+    fireEvent.change(field, { target: { value: 'renew the passport' } })
+    fireEvent.submit(field)
+    await screen.findByRole('button', { name: /^Undo · 10s$/ })
+    await act(() => Promise.resolve()) // settle the mount, so the countdown's interval exists
+
+    act(() => {
+      vi.advanceTimersByTime(11_000)
+    })
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: /^Undo/ })).toBeNull()
+    })
+    expect(screen.queryByText('Saved as a task.')).toBeNull()
+    expect(screen.getByRole('article', { name: 'Renew the passport' })).toBeVisible() // still saved
+  })
+
+  it('names what a multi-part capture did, including what needs a look (#104)', async () => {
+    const client = new MockClient({ storage: null, timeZone: 'UTC' })
+    setup(client)
+    await screen.findByRole('region', { name: 'Today' })
+    const field = screen.getByRole('textbox', { name: 'Capture a reminder or note' })
+
+    fireEvent.change(field, { target: { value: 'book the mot sometime next week' } })
+    fireEvent.submit(field)
+    expect(await screen.findByText('"Book the mot sometime next week" needs a time.')).toBeVisible()
+    const needs = await screen.findByRole('region', { name: 'Needs a look' })
+    expect(
+      within(needs).getByRole('article', { name: 'Book the mot sometime next week' }),
+    ).toBeVisible()
+    // undo takes back the needs-a-look reading too
+    fireEvent.click(screen.getByRole('button', { name: /^Undo/ }))
+    await waitFor(() => {
+      expect(screen.queryByRole('article', { name: 'Book the mot sometime next week' })).toBeNull()
+    })
+  })
+
+  it('explains an undo that comes too late, and keeps the reminder (#104)', async () => {
+    const client = new MockClient({ storage: null, timeZone: 'UTC' })
+    setup(client)
+    await screen.findByRole('region', { name: 'Today' })
+    const field = screen.getByRole('textbox', { name: 'Capture a reminder or note' })
+
+    fireEvent.change(field, { target: { value: 'renew the passport' } })
+    fireEvent.submit(field)
+    const undoButton = await screen.findByRole('button', { name: /^Undo/ })
+
+    client.setFailure(
+      failWith('conflict', { times: 1, message: 'The undo window for capture #1 has passed' }),
+    )
+    fireEvent.click(undoButton)
+    expect(
+      await screen.findByText("Too late to undo — it's been more than 10 minutes."),
+    ).toBeVisible()
+    expect(screen.getByRole('article', { name: 'Renew the passport' })).toBeVisible()
+    expect(screen.queryByRole('button', { name: /^Undo/ })).toBeNull() // the line gave way
+  })
+
+  it('replaces the line when a second capture follows (#104)', async () => {
+    const client = new MockClient({ storage: null, timeZone: 'UTC' })
+    setup(client)
+    await screen.findByRole('region', { name: 'Today' })
+    const field = screen.getByRole('textbox', { name: 'Capture a reminder or note' })
+
+    fireEvent.change(field, { target: { value: 'renew the passport' } })
+    fireEvent.submit(field)
+    await screen.findByText('Saved as a task.')
+    fireEvent.change(field, { target: { value: 'the gate code is 4321' } })
+    fireEvent.submit(field)
+    expect(await screen.findByText('Saved as a note.')).toBeVisible()
+    expect(screen.queryByText('Saved as a task.')).toBeNull() // only the newest line shows
+    expect(screen.getAllByRole('button', { name: /^Undo/ })).toHaveLength(1)
+  })
+
+  it('queues a capture made offline and sends it when the server answers again (#104)', async () => {
+    const client = new MockClient({ storage: null, timeZone: 'UTC' })
+    setup(client)
+    await screen.findByRole('region', { name: 'Today' })
+    const field = screen.getByRole('textbox', { name: 'Capture a reminder or note' })
+
+    client.setFailure(failWith('offline'))
+    fireEvent.change(field, { target: { value: 'renew the passport' } })
+    fireEvent.submit(field)
+    expect(await screen.findByText('Saved on this phone, will send when online.')).toBeVisible()
+    expect(field).toHaveValue('') // kept in the outbox, not the box
+    expect(screen.queryByRole('button', { name: /^Undo/ })).toBeNull() // nothing saved yet
+    expect(screen.getByText('Offline · 1 waiting to send')).toBeInTheDocument()
+
+    client.setFailure(null) // the server answers again; the next refresh flushes the outbox
+    act(() => {
+      document.dispatchEvent(new Event('visibilitychange'))
+    })
+    expect(await screen.findByText('Sent the capture saved on this phone.')).toBeVisible()
+    await waitFor(() => {
+      expect(screen.getByRole('article', { name: 'Renew the passport' })).toBeVisible()
+    })
+    expect(screen.queryByText(/waiting to send/)).toBeNull()
+  })
+
+  it('reports a queued capture the server refuses, without retrying it forever (#104)', async () => {
+    const client = new MockClient({ storage: null, timeZone: 'UTC' })
+    setup(client)
+    await screen.findByRole('region', { name: 'Today' })
+    const field = screen.getByRole('textbox', { name: 'Capture a reminder or note' })
+
+    client.setFailure(failWith('offline'))
+    fireEvent.change(field, { target: { value: '   ' } })
+    fireEvent.submit(field) // CaptureBar trims: nothing sent
+    fireEvent.change(field, { target: { value: 'renew the passport' } })
+    fireEvent.submit(field)
+    await screen.findByText('Saved on this phone, will send when online.')
+
+    client.setFailure(
+      failWith('invalid', {
+        methods: ['capture'],
+        message: 'A capture needs between 1 and 2000 characters',
+      }),
+    )
+    act(() => {
+      document.dispatchEvent(new Event('visibilitychange'))
+    })
+    expect(
+      await screen.findByText(
+        'Couldn\'t save "renew the passport": A capture needs between 1 and 2000 characters',
+      ),
+    ).toBeVisible()
+    expect(screen.queryByText(/waiting to send/)).toBeNull() // dropped, not retried forever
   })
 
   it('has no axe violations once loaded', async () => {

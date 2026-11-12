@@ -1,0 +1,31 @@
+/* The capture status line (#104): the toast's look, plus Undo and its countdown. */
+
+.line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+}
+
+.message {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.undo {
+  flex: 0 0 auto;
+  min-height: var(--touch-target);
+  padding: 0 var(--space-6);
+  border: 1px solid var(--color-toast);
+  border-radius: var(--radius-button);
+  background: none;
+  color: var(--color-toast);
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.undo:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}

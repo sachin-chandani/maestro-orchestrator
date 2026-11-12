@@ -10,6 +10,8 @@ export type ApiErrorKind =
   | 'not_found'
   /** The server refused the input, e.g. a snooze of "xx" (422); `message` says why. */
   | 'invalid'
+  /** The moment for this has passed (409): an undo window that is over. */
+  | 'conflict'
   /** A pairing code that has run out (#95). */
   | 'expired'
   /** The server couldn't be reached at all. */

@@ -49,6 +49,11 @@ export function fakeServer(backend: MaestroClient, options: { token?: string } =
       const days = url.searchParams.get('days')
       return send(200, () => backend.feed(days === null ? undefined : Number(days)))
     }
+    if (method === 'POST' && /^\/captures\/\d+$/.test(path.replace(/\/undo$/, ''))) {
+      const captureId = Number(/^\/captures\/(\d+)\/undo$/.exec(path)?.[1])
+      await backend.undoCapture(captureId)
+      return json(200, { id: captureId, status: 'undone' })
+    }
     if (/^\/needs-look\/\d+$/.test(path)) {
       if (method === 'POST') {
         const phrase = (body as { phrase?: unknown } | null)?.phrase
@@ -158,7 +163,7 @@ export function fakeServer(backend: MaestroClient, options: { token?: string } =
       // A 429 says when to try again, as maestro/api.py does.
       const extra: Record<string, string> =
         error.retryAfterSeconds !== null ? { 'Retry-After': String(error.retryAfterSeconds) } : {}
-      return json(STATUS[error.kind] ?? 500, { detail: error.message }, extra)
+      return json(error.status ?? STATUS[error.kind] ?? 500, { detail: error.message }, extra)
     }
   }
 

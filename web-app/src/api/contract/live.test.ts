@@ -49,6 +49,15 @@ describe.skipIf(!url)('HttpClient against a live maestro serve', () => {
     expect(client.connection()).toEqual({ status: 'connected' })
   })
 
+  it('captures and undoes, so the capture leaves nothing behind (#104)', async () => {
+    const result = await client.captureSplit('live test: water the plants tomorrow at 8am')
+    const saved = result.added[0]
+    if (!saved || !result.undo) throw new Error('nothing saved or no undo token')
+    await client.undoCapture(result.undo.id)
+    expect((await rejection(client.getItem(saved.id))).kind).toBe('not_found')
+    await client.undoCapture(result.undo.id) // idempotent: the server answers yes again
+  })
+
   it('captures, lists, acts and deletes with the device token', async () => {
     const result = await client.captureSplit('live test: call the bank tomorrow at 9am')
     expect(result.added.length).toBe(1)

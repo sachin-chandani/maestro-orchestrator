@@ -133,6 +133,10 @@ export class HttpClient implements MaestroClient {
     return this.request('DELETE', `/needs-look/${itemId(id)}`)
   }
 
+  async undoCapture(id: number): Promise<void> {
+    await this.request('POST', `/captures/${itemId(id)}/undo`)
+  }
+
   // -------------------------------------------------------------------------------------------------
   // Notes: GET /items?q= has no notes-only filter yet, so notes are picked out here (SUPPORT).
 
@@ -283,6 +287,7 @@ const itemId = (id: number) => encodeURIComponent(String(id))
 const KIND_BY_STATUS: Record<number, ApiError['kind']> = {
   401: 'unauthorized',
   404: 'not_found',
+  409: 'conflict',
   410: 'expired',
   422: 'invalid',
   429: 'rate_limited',

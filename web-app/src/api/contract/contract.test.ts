@@ -110,6 +110,17 @@ describe.each(clients)('%s', (_, make) => {
     expect((await client.feed(1)).upcoming.every((o) => o.at < '2026-11-06')).toBe(true)
   })
 
+  it('undoes a capture the same way (#104)', async () => {
+    const client = make()
+    const result = await client.captureSplit('renew the passport')
+    const saved = result.added[0]?.id ?? -1
+
+    await client.undoCapture(result.undo?.id ?? -1)
+    expect((await rejection(client.getItem(saved))).kind).toBe('not_found')
+    await client.undoCapture(result.undo?.id ?? -1) // undone is undone: yes again, not an error
+    expect((await rejection(client.undoCapture(999))).kind).toBe('not_found')
+  })
+
   it('fills and dismisses what needs a look the same way (#126)', async () => {
     const client = make()
     expect(await rejection(client.fillGap(13, 'no idea'))).toMatchObject({

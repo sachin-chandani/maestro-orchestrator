@@ -112,7 +112,7 @@ Say it once and it's on your list. Design: `docs/design/mobile/README.md`; decis
 - [ ] The React app connected to the server and shipped in the release (#108, #111, #112)
 - [ ] Capture splits per reminder: sure ones save at once, unsure ones wait with a gap, one undo per sentence (#126)
 - [x] One list: Needs a look, Next up, Today, Tomorrow, This week, Anytime (#22)
-- [ ] Say or type, reminders land in place, with a 10-second Undo (#104)
+- [x] Say or type, reminders land in place, with a 10-second Undo (#104)
 - [ ] Hold-to-talk mic with live words (#127)
 - [ ] Needs a look: fill a gap in one tap, and an evening wrap-up (#128)
 - [ ] Reminder screen: what you said, what will happen, and edit (#21)

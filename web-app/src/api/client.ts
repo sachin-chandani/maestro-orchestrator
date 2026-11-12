@@ -56,6 +56,12 @@ export interface MaestroClient {
   fillGap(id: number, phrase: string): Promise<Item>
   /** Drop a reading that needs a look rather than answering it. */
   dismissGap(id: number): Promise<void>
+  /**
+   * Take back everything one capture added (ADR 0017), by the undo token captureSplit returned.
+   * Rejects with `conflict` once the 10-minute window has passed, `not_found` for an unknown or
+   * already-undone capture.
+   */
+  undoCapture(id: number): Promise<void>
 
   // Notes
   /** Notes matching `query` (all notes when empty), newest first. */
@@ -126,6 +132,7 @@ export const SUPPORT: Record<keyof MaestroClient, Support> = {
   getItem: { level: 'backend', endpoint: 'GET /items/{id}' },
   capture: { level: 'backend', endpoint: 'POST /items' },
   captureSplit: { level: 'backend', endpoint: 'POST /capture' },
+  undoCapture: { level: 'backend', endpoint: 'POST /captures/{id}/undo' },
   done: {
     level: 'partial',
     endpoint: 'POST /items/{id}/done',

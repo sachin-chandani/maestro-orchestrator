@@ -12,6 +12,8 @@ export interface FeedListProps {
   groups: FeedGroups
   timeZone: string
   busy: ReadonlySet<number>
+  /** Items just added by a capture (#104), while its status line is up. */
+  highlight?: ReadonlySet<number>
   weekOpen: boolean
   onToggleWeek: () => void
   onDone: (item: Item) => void
@@ -28,6 +30,7 @@ export function FeedList({
   groups,
   timeZone,
   busy,
+  highlight,
   weekOpen,
   onToggleWeek,
   onDone,
@@ -48,6 +51,7 @@ export function FeedList({
         stateLabel={occurrenceState(occurrence, timeZone)}
         actions={occurrence.acts}
         emphasis={options.emphasis}
+        highlighted={highlight?.has(occurrence.item.id)}
         busy={busy.has(occurrence.item.id)}
         onDone={onDone}
         onSnooze={onSnooze}
@@ -79,6 +83,7 @@ export function FeedList({
               onAnswer={onAnswer}
               onDismiss={onDismiss}
               busy={busy.has(item.id)}
+              highlighted={highlight?.has(item.id)}
             />
           )),
         )}
@@ -137,6 +142,7 @@ export function FeedList({
                 timeLabel="—"
                 stateLabel={null}
                 snoozeLabel="In 1 hour"
+                highlighted={highlight?.has(item.id)}
                 busy={busy.has(item.id)}
                 onDone={onDone}
                 onSnooze={onSnooze}

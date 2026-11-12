@@ -145,6 +145,10 @@ export class MockClient implements MaestroClient {
   /** Devices signed in during this session (not persisted: the sample data is about reminders). */
   private readonly signedIn: (Device & { token: string })[] = []
   private undoIds = 0
+  /** What each capture added and until when it can be taken back (not persisted, like a session). */
+  private readonly undoable = new Map<number, { itemIds: number[]; until: Date }>()
+  /** Captures already taken back: a second undo answers yes again, as the server does (#117). */
+  private readonly undone = new Set<number>()
 
   constructor(options: MockClientOptions = {}) {
     this.now = options.now ?? (() => new Date())
@@ -248,12 +252,29 @@ export class MockClient implements MaestroClient {
     }
     this.undoIds += 1
     const expires = new Date(this.now().getTime() + 10 * 60_000)
+    this.undoable.set(this.undoIds, { itemIds: [item.id], until: expires })
     return {
       added: vague ? [] : [item],
       needs_look: vague ? [item] : [],
       undo: { id: this.undoIds, expires_at: this.iso(expires) },
       proposal: null,
     }
+  }
+
+  undoCapture(id: number): Promise<void> {
+    return this.call('undoCapture', () => {
+      if (this.undone.has(id)) return // undone is undone: answered yes again, like the server
+      const undo = this.undoable.get(id)
+      if (!undo) throw new ApiError('not_found', `No capture #${String(id)}`, { status: 404 })
+      if (this.now() > undo.until) {
+        throw new ApiError('conflict', `The undo window for capture #${String(id)} has passed`, {
+          status: 409,
+        })
+      }
+      this.undoable.delete(id)
+      this.undone.add(id)
+      this.state.items = this.state.items.filter((i) => !undo.itemIds.includes(i.id))
+    })
   }
 
   // -------------------------------------------------------------------------------------------------

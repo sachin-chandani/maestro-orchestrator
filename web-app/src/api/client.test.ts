@@ -61,6 +61,7 @@ describe('SUPPORT', () => {
       'POST /items/{id}/snooze',
       'DELETE /items/{id}',
       'POST /capture',
+      'POST /captures/{id}/undo',
       'GET /feed',
       'POST /needs-look/{id}',
       'DELETE /needs-look/{id}',

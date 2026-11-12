@@ -15,6 +15,8 @@ export interface NeedsLookCardProps {
   busy?: boolean
   /** Lets the screen reach and focus the row (keyboard j/k, #22). */
   id?: string
+  /** Just added by a capture (#104). */
+  highlighted?: boolean
 }
 
 /**
@@ -22,7 +24,14 @@ export interface NeedsLookCardProps {
  * dashed chip, and the two ways to settle it. Answer reveals one field, so the gap is filled in
  * place with one tap and a phrase; #128's suggested times will sit behind the same button.
  */
-export function NeedsLookCard({ item, onAnswer, onDismiss, busy = false, id }: NeedsLookCardProps) {
+export function NeedsLookCard({
+  item,
+  onAnswer,
+  onDismiss,
+  busy = false,
+  id,
+  highlighted = false,
+}: NeedsLookCardProps) {
   const textId = useId()
   const fieldId = useId()
   const gap = item.gap ?? 'when'
@@ -54,7 +63,7 @@ export function NeedsLookCard({ item, onAnswer, onDismiss, busy = false, id }: N
 
   return (
     <article
-      className={`${card.card ?? ''} ${styles.card ?? ''}`}
+      className={`${card.card ?? ''} ${styles.card ?? ''} ${highlighted ? (card.justAdded ?? '') : ''}`}
       aria-labelledby={textId}
       id={id}
       tabIndex={-1}

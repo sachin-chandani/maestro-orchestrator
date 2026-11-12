@@ -29,6 +29,8 @@ export interface ReminderCardProps {
   emphasis?: boolean
   /** Lets the screen reach and focus the row (keyboard j/k, #22). */
   id?: string
+  /** Just added by a capture (#104): a thin accent line runs out over the undo window on screen. */
+  highlighted?: boolean
 }
 
 /** A reminder as the design draws it: time, text, what's going on with it, chips, Snooze and Done. */
@@ -44,6 +46,7 @@ export function ReminderCard({
   actions = true,
   emphasis = false,
   id,
+  highlighted = false,
 }: ReminderCardProps) {
   const textId = useId()
   const done = item.status === 'done'
@@ -56,6 +59,7 @@ export function ReminderCard({
     item.urgent && !done ? styles.urgent : '',
     done ? styles.done : '',
     emphasis ? styles.next : '',
+    highlighted ? styles.justAdded : '',
   ]
 
   return (

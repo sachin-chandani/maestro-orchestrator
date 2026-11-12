@@ -6,11 +6,13 @@ import styles from './App.module.css'
 import { captureMessage } from './app/captureMessage.ts'
 import { useClient, useConnection } from './app/clientContext.ts'
 import { groupFeed } from './app/feedGroups.ts'
+import { createOutbox } from './app/outbox.ts'
 import { headerDate, nextTime } from './app/groups.ts'
 import { useSequence } from './app/sequence.ts'
 import { clearToken, loadToken, saveToken } from './app/session.ts'
 import { SHORTCUT_LIST, useShortcuts } from './app/useShortcuts.ts'
 import { CaptureBar } from './components/CaptureBar.tsx'
+import { CaptureStatus } from './components/CaptureStatus.tsx'
 import { ConnectionPill } from './components/ConnectionPill.tsx'
 import { rowId, rowsOf } from './app/rows.ts'
 import { FeedList } from './components/FeedList.tsx'
@@ -27,6 +29,14 @@ type Load =
 interface Notice {
   id: number
   text: string
+}
+
+/** The last capture, while its status line is up (#104). */
+interface LastCapture {
+  id: number // the notice sequence, so a new capture restarts the countdown
+  text: string
+  undoId: number | null // null when nothing was saved to take back
+  itemIds: number[] // what it added, for the highlight
 }
 
 /**
@@ -68,6 +78,10 @@ export default function App({ devTools }: AppProps) {
   const [draft, setDraft] = useState('')
   const [saving, setSaving] = useState(false)
   const [toast, setToast] = useState<Notice | null>(null)
+  const [lastCapture, setLastCapture] = useState<LastCapture | null>(null)
+  const [undoing, setUndoing] = useState(false)
+  const [outbox] = useState(createOutbox)
+  const [queued, setQueued] = useState(0)
   const [weekOpen, setWeekOpen] = useState(false)
   const [help, setHelp] = useState(false)
   // Regrouped on every refresh and at midnight: `now` is state so a tick can move the day on.
@@ -81,6 +95,7 @@ export default function App({ devTools }: AppProps) {
   const say = useCallback(
     (text: string) => {
       setToast({ id: notices.next(), text })
+      setLastCapture(null) // one line above the bar at a time; the newest thing said wins
     },
     [notices],
   )
@@ -207,19 +222,87 @@ export default function App({ devTools }: AppProps) {
     }
   }
 
+  /** Send what was captured offline, oldest first; each refusal is reported, not retried. */
+  const flushOutbox = useCallback(async () => {
+    const sent = await outbox.flush(
+      async (text) => {
+        await client.captureSplit(text)
+      },
+      (text, error) => {
+        say(`Couldn't save "${text}": ${messageOf(error)}`)
+      },
+    )
+    setQueued(outbox.pending().length)
+    if (sent > 0) {
+      say(
+        sent === 1
+          ? 'Sent the capture saved on this phone.'
+          : `Sent ${String(sent)} captures saved on this phone.`,
+      )
+      await refresh()
+    }
+  }, [client, outbox, refresh, say])
+
+  // Captures queued while offline go as soon as the server answers again (#104). On a timer tick,
+  // never synchronously in the effect: flushing sets state as results come back.
+  useEffect(() => {
+    if (connection.status !== 'connected' || outbox.pending().length === 0) return
+    const timer = setTimeout(() => void flushOutbox(), 0)
+    return () => {
+      clearTimeout(timer)
+    }
+  }, [connection.status, outbox, flushOutbox])
+
   const capture = async (text: string) => {
     setSaving(true)
     // The box is cleared now, not after the save, so words typed during a slow save aren't lost
     // with it (#112). If the save fails and nothing new has been typed, the text comes back.
     setDraft('')
     try {
-      say(captureMessage(await client.captureSplit(text)))
+      await flushOutbox() // older captures first, so the list reads in the order things were said
+      const result = await client.captureSplit(text)
+      const saved = [...result.added, ...result.needs_look]
+      // The capture status line (#104): what was saved, with Undo while the window is on screen.
+      setToast(null)
+      setLastCapture({
+        id: notices.next(),
+        text: captureMessage(result),
+        undoId: result.undo?.id ?? null,
+        itemIds: saved.map((i) => i.id),
+      })
       await refresh()
     } catch (error) {
-      setDraft((current) => (current.trim() ? current : text))
-      say(`Couldn't save "${text}": ${messageOf(error)}`)
+      if (isApiError(error, 'offline')) {
+        // Saved on this phone: sent when the server answers again. Nothing to undo yet.
+        outbox.push(text)
+        setQueued(outbox.pending().length)
+        say('Saved on this phone, will send when online.')
+      } else {
+        setDraft((current) => (current.trim() ? current : text))
+        say(`Couldn't save "${text}": ${messageOf(error)}`)
+      }
     } finally {
       setSaving(false)
+    }
+  }
+
+  /** Take back everything the last capture added (#104). */
+  const undo = async (undoId: number) => {
+    setUndoing(true)
+    try {
+      await client.undoCapture(undoId)
+      say('Took it back.')
+      await refresh()
+    } catch (error) {
+      if (isApiError(error, 'conflict')) {
+        say("Too late to undo — it's been more than 10 minutes.")
+      } else if (isApiError(error, 'not_found')) {
+        say('Already taken back.')
+      } else {
+        say(`Couldn't undo: ${messageOf(error)}`)
+      }
+    } finally {
+      setUndoing(false)
     }
   }
 
@@ -308,7 +391,10 @@ export default function App({ devTools }: AppProps) {
       <header className={styles.header}>
         <div className={styles.titleRow}>
           <h1 className={styles.title}>{ready ? headerDate(now, ready.timeZone) : 'Maestro'}</h1>
-          <ConnectionPill state={connection} serverName={pillName} />
+          <ConnectionPill
+            state={connection.status === 'offline' ? { ...connection, queued } : connection}
+            serverName={pillName}
+          />
         </div>
         {groups && (
           <p className={styles.summary}>
@@ -347,6 +433,7 @@ export default function App({ devTools }: AppProps) {
             groups={groups}
             timeZone={ready.timeZone}
             busy={busy}
+            highlight={lastCapture ? new Set(lastCapture.itemIds) : undefined}
             weekOpen={weekOpen}
             onToggleWeek={() => {
               setWeekOpen((open) => !open)
@@ -387,7 +474,20 @@ export default function App({ devTools }: AppProps) {
       )}
 
       <footer className={styles.footer}>
-        <Toast message={toast?.text ?? null} messageKey={toast?.id} onDismiss={dismissToast} />
+        {lastCapture ? (
+          <CaptureStatus
+            key={lastCapture.id} // a new capture remounts the line, restarting its countdown
+            message={lastCapture.text}
+            undoId={lastCapture.undoId}
+            busy={undoing}
+            onUndo={(undoId) => void undo(undoId)}
+            onDismiss={() => {
+              setLastCapture(null)
+            }}
+          />
+        ) : (
+          <Toast message={toast?.text ?? null} messageKey={toast?.id} onDismiss={dismissToast} />
+        )}
         <CaptureBar
           value={draft}
           onChange={setDraft}

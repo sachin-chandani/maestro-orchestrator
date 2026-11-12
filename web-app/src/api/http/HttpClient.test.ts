@@ -110,6 +110,23 @@ describe('requests', () => {
     expect(server.calls[0]?.url).toBe('/capture')
   })
 
+  it('posts an undo and reads a 409 as the window having passed', async () => {
+    const server = scripted(
+      ok({ id: 9, status: 'undone' }),
+      fail(409, 'The undo window for capture #9 has passed'),
+    )
+    const client = new HttpClient(server)
+
+    await client.undoCapture(9)
+    expect(server.calls[0]?.url).toBe('/captures/9/undo')
+    expect(server.calls[0]?.init.method).toBe('POST')
+    expect(await rejection(client.undoCapture(9))).toMatchObject({
+      kind: 'conflict',
+      status: 409,
+      message: 'The undo window for capture #9 has passed',
+    })
+  })
+
   it('reads a held proposal (202, MAESTRO_CONFIRM=unsure) as nothing saved yet', async () => {
     const server = scripted(ok({ id: 4, status: 'pending', lines: ['Call mom at 17:00'] }, 202))
     const client = new HttpClient(server)

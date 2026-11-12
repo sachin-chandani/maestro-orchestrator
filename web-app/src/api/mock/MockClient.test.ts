@@ -3,6 +3,7 @@ import { SUPPORT, type MaestroClient } from '../client.ts'
 import { ApiError, isApiError } from '../errors.ts'
 import type { ConnectionState, Item } from '../types.ts'
 import { MockClient, failWith, type MockClientOptions } from './MockClient.ts'
+import { SENTENCES } from '../../test/sentences.ts'
 import { STORAGE_KEY, type KeyValueStorage } from './store.ts'
 
 const TZ = 'Asia/Kolkata'
@@ -666,6 +667,59 @@ describe('the feed (#22)', () => {
     expect((await client.feed()).needs_look).toEqual([])
     expect((await rejection(client.dismissGap(13))).kind).toBe('not_found')
     expect((await rejection(client.dismissGap(1))).kind).toBe('not_found') // not a gap
+  })
+})
+
+describe('undo (#104, ADR 0017)', () => {
+  it('takes back exactly what one capture added, once', async () => {
+    const { client } = setup()
+    const first = await client.captureSplit('renew the passport')
+    const second = await client.captureSplit('buy stamps')
+    const firstId = first.added[0]?.id ?? -1
+
+    await client.undoCapture(first.undo?.id ?? -1)
+    const texts = (await client.listItems()).map((i) => i.text)
+    expect(texts).not.toContain('Renew the passport')
+    expect(texts).toContain('Buy stamps') // the second capture is untouched
+    expect((await rejection(client.getItem(firstId))).kind).toBe('not_found')
+
+    // a second undo of the same capture answers yes again, as the server does
+    await client.undoCapture(first.undo?.id ?? -1)
+    // an unknown token is another matter
+    expect(await rejection(client.undoCapture(999))).toMatchObject({
+      kind: 'not_found',
+      status: 404,
+    })
+    await client.undoCapture(second.undo?.id ?? -1)
+  })
+
+  it('takes back a needs-a-look reading too', async () => {
+    const { client } = setup()
+    const result = await client.captureSplit('call the dentist sometime next week')
+    await client.undoCapture(result.undo?.id ?? -1)
+    expect((await client.feed()).needs_look.map((i) => i.id)).toEqual([13]) // only the seed's
+  })
+
+  it('refuses once the ten-minute window has passed, in the server words', async () => {
+    const { client, setNow } = setup()
+    const result = await client.captureSplit('renew the passport')
+    setNow('2026-11-05T14:10:01+05:30')
+    expect(await rejection(client.undoCapture(result.undo?.id ?? -1))).toMatchObject({
+      kind: 'conflict',
+      status: 409,
+      message: `The undo window for capture #${String(result.undo?.id ?? -1)} has passed`,
+    })
+    expect((await client.listItems()).map((i) => i.text)).toContain('Renew the passport')
+  })
+})
+
+describe('the shared sentences fixture (#104)', () => {
+  it.each(SENTENCES)('splits $text as the screens rehearse', async (sentence) => {
+    const { client } = setup()
+    const result = await client.captureSplit(sentence.text)
+    expect(result.added.map((i) => i.text)).toEqual(sentence.added)
+    expect(result.needs_look.map((i) => [i.text, i.gap])).toEqual(sentence.needsLook)
+    expect(result.undo).not.toBeNull()
   })
 })
 
