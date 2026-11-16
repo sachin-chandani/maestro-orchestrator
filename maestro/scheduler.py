@@ -21,7 +21,7 @@ from datetime import time as dt_time
 from typing import TYPE_CHECKING
 
 from maestro import recurrence
-from maestro.models import Delivery, Item
+from maestro.models import MAX_ATTEMPTS, Delivery, Item
 from maestro.notifier import MultiNotifier, Notifier
 from maestro.observability import METRICS
 from maestro.quiet import is_urgent
@@ -34,7 +34,6 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-MAX_ATTEMPTS = 5
 MAX_BACKOFF = timedelta(minutes=30)
 
 
@@ -151,7 +150,7 @@ def _deliver(store: Store, item: Item, item_id: int, due_at: datetime, channels:
     waiting = False
     for name, channel in channels.items():
         delivery = state.get(name) or Delivery(channel=name)
-        if delivery.delivered_at or delivery.attempts >= MAX_ATTEMPTS:
+        if delivery.finished():
             continue
         if delivery.next_attempt_at and delivery.next_attempt_at > now:
             waiting = True

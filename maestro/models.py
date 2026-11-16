@@ -63,6 +63,10 @@ class Acknowledgement:
     via: str  # the interface it came from: cli, web, api, telegram, email, twilio_sms, twilio_call…
 
 
+#: Tries per channel before it is given up on, so one broken integration can't block a reminder forever.
+MAX_ATTEMPTS = 5
+
+
 @dataclass
 class Delivery:
     """Delivery state of one occurrence of an item on one channel."""
@@ -72,6 +76,10 @@ class Delivery:
     delivered_at: datetime | None = None
     next_attempt_at: datetime | None = None
     last_error: str | None = None
+
+    def finished(self, max_attempts: int = MAX_ATTEMPTS) -> bool:
+        """Delivered, or given up on: nothing more will be sent on this channel."""
+        return self.delivered_at is not None or self.attempts >= max_attempts
 
 
 @dataclass
@@ -85,7 +93,7 @@ class Device:
     name: str  # what the person called it: "Sachin's iPhone"
     token_hash: str  # maestro.devices.hash_token(token); never the token
     created_at: datetime
-    last_seen_at: datetime | None = None  # the last request it made, to the hour
+    last_seen_at: datetime | None = None  # last request; written at most hourly (devices.SEEN_EVERY)
     revoked_at: datetime | None = None
     id: int | None = None
 

@@ -40,7 +40,7 @@ def register(store: Store, name: str, now: datetime) -> tuple[Device, str]:
 
 
 def authenticate(store: Store, token: str, now: datetime) -> Device | None:
-    """The live device this token belongs to, or None. Records when it was last seen, to the hour."""
+    """The live device this token belongs to, or None. Records when it was last seen, at most once an hour."""
     if not token.startswith(PREFIX):
         return None  # not a device token: don't touch the database for a guess at the master token
     device = store.find_device(hash_token(token))

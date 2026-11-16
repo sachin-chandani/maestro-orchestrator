@@ -151,7 +151,7 @@ class DeviceOut(BaseModel):
     id: int
     name: str
     created_at: datetime
-    last_seen_at: datetime | None  # to the hour
+    last_seen_at: datetime | None  # accurate to within an hour
     current: bool  # the device making this request
 
     @classmethod
