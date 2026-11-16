@@ -85,7 +85,7 @@ class Device:
     name: str  # what the person called it: "Sachin's iPhone"
     token_hash: str  # maestro.devices.hash_token(token); never the token
     created_at: datetime
-    last_seen_at: datetime | None = None  # the last request it made, to the hour
+    last_seen_at: datetime | None = None  # last request; written at most hourly (devices.SEEN_EVERY)
     revoked_at: datetime | None = None
     id: int | None = None
 

@@ -21,6 +21,7 @@ from maestro import recurrence
 from maestro.escalation import Stage, is_escalation_key
 from maestro.models import Item, Kind, Status
 from maestro.quiet import QuietHours, is_urgent
+from maestro.scheduler import MAX_ATTEMPTS
 from maestro.storage import ACK_WINDOW, Store
 
 #: How many days the feed covers by default, and at most. A week reads at a glance; a month does not.
@@ -146,8 +147,12 @@ def _times(item: Item, first: datetime) -> Iterator[datetime]:
 def _state(item: Item, at: datetime, now: datetime, quiet: QuietHours | None,
            snoozed: bool) -> tuple[str, datetime | None]:
     """What this occurrence is doing, in the scheduler's terms."""
-    if quiet is not None and not is_urgent(item) and quiet.contains(at.astimezone(now.tzinfo)):
-        return "held", quiet.ends_after(at.astimezone(now.tzinfo))
+    if quiet is not None and not is_urgent(item):
+        # The scheduler holds on the time it is now, not the time the reminder was for (#138): one
+        # due in last night's window that is still unsent this morning is overdue, not held.
+        moment = max(at, now).astimezone(now.tzinfo)
+        if quiet.contains(moment):
+            return "held", quiet.ends_after(moment)
     if at <= now:
         return "overdue", None  # due and not sent yet: the scheduler is about to, or is behind
     if snoozed:
@@ -171,8 +176,9 @@ def _escalation_label(store: Store, item: Item, occurrence: datetime, now: datet
         resume = quiet.last_end(now.astimezone(store.tz))
         start = max(first_notice, resume)
     for stage in stages:
-        if all((d := state.get(key)) and d.delivered_at for key in stage.channels):
-            continue  # this stage already went out
+        if all((d := state.get(key)) and (d.delivered_at or d.attempts >= MAX_ATTEMPTS)
+               for key in stage.channels):
+            continue  # this stage went out, or gave up the way `escalate` does (#138)
         at = (start + stage.delay).astimezone(store.tz)
         names = ", ".join(_CHANNEL_WORDS.get(name, name) for name in stage.names)
         return f"{names} at {at:%H:%M}"
