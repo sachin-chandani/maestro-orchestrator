@@ -30,7 +30,7 @@ const card = (text: string) => screen.getByRole('article', { name: text })
  */
 function hold(
   client: MockClient,
-  method: 'done' | 'capture' | 'listItems',
+  method: 'done' | 'snooze' | 'capture' | 'listItems',
   matches: (arg: unknown) => boolean = () => true,
 ) {
   let release: () => void = () => undefined
@@ -41,7 +41,12 @@ function hold(
   })
   type Method = (...args: unknown[]) => Promise<unknown>
   const original = (client[method] as Method).bind(client)
-  const spy = vi.spyOn(client, method) as unknown as { mockImplementation(fn: Method): void }
+  // Spying twice returns this same spy, whose implementation calls itself forever: tests count
+  // calls through `calls()` below, never with their own vi.spyOn on the held method.
+  const spy = vi.spyOn(client, method) as unknown as {
+    mockImplementation(fn: Method): void
+    mock: { calls: unknown[][] }
+  }
   spy.mockImplementation(async (...args) => {
     if (matches(args[0])) await gate
     return original(...args)
@@ -53,6 +58,8 @@ function hold(
     fail: (error: unknown) => {
       fail(error)
     },
+    /** How many calls the held method has taken so far. */
+    calls: () => spy.mock.calls.length,
   }
 }
 
@@ -585,6 +592,77 @@ describe('App', () => {
     expect(screen.getByRole('dialog', { name: 'Keyboard shortcuts' })).toBeVisible()
     fireEvent.keyDown(document.body, { key: 'Escape' })
     expect(screen.queryByRole('dialog', { name: 'Keyboard shortcuts' })).toBeNull()
+  })
+
+  // #138, ADR 0009: the d/s guard used to be render state read through a stale closure, so a
+  // double press finished two occurrences of a recurring reminder. Only the first press may act.
+  it('d acts once however often it is pressed while the first is in flight (#138)', async () => {
+    const client = new MockClient({ storage: null, timeZone: 'UTC' })
+    const held = hold(client, 'done')
+    setup(client)
+    await screen.findByRole('region', { name: 'Today' })
+    fireEvent.keyDown(document.body, { key: 'j' })
+    fireEvent.keyDown(document.body, { key: 'j' }) // the first acting row: the bank reminder
+    fireEvent.keyDown(document.body, { key: 'd' })
+    fireEvent.keyDown(document.body, { key: 'd' })
+    fireEvent.keyDown(document.body, { key: 'd' })
+    held.release()
+    expect(
+      await screen.findByText('Done. Any pending SMS or call for it is cancelled.'),
+    ).toBeVisible()
+    expect(held.calls()).toBe(1)
+  })
+
+  it('s snoozes once for a double press (#138)', async () => {
+    const client = new MockClient({ storage: null, timeZone: 'UTC' })
+    const held = hold(client, 'snooze')
+    setup(client)
+    await screen.findByRole('region', { name: 'Today' })
+    fireEvent.keyDown(document.body, { key: 'j' })
+    fireEvent.keyDown(document.body, { key: 'j' })
+    fireEvent.keyDown(document.body, { key: 's' })
+    fireEvent.keyDown(document.body, { key: 's' })
+    held.release()
+    expect(await screen.findByText(/Snoozed to .*Escalation restarts from then\./)).toBeVisible()
+    expect(held.calls()).toBe(1)
+  })
+
+  it('a double click on Done acts once (#138)', async () => {
+    const client = new MockClient({ storage: null, timeZone: 'UTC' })
+    const held = hold(client, 'done')
+    setup(client)
+    await screen.findByRole('region', { name: 'Today' })
+    const button = within(card('Call the bank about the card')).getByRole('button', {
+      name: 'Done',
+    })
+    fireEvent.click(button)
+    fireEvent.click(button)
+    held.release()
+    expect(
+      await screen.findByText('Done. Any pending SMS or call for it is cancelled.'),
+    ).toBeVisible()
+    expect(held.calls()).toBe(1)
+  })
+
+  it('acts again once the first action has finished', async () => {
+    const client = new MockClient({ storage: null, timeZone: 'UTC' })
+    setup(client)
+    await screen.findByRole('region', { name: 'Today' })
+    const spy = vi.spyOn(client, 'done')
+    fireEvent.keyDown(document.body, { key: 'j' })
+    fireEvent.keyDown(document.body, { key: 'j' })
+    fireEvent.keyDown(document.body, { key: 'd' })
+    await screen.findByText('Done. Any pending SMS or call for it is cancelled.')
+    await waitFor(() => {
+      expect(screen.queryByRole('article', { name: 'Call the bank about the card' })).toBeNull()
+    })
+    // The guard released: the next acting row can be focused and acted on.
+    fireEvent.keyDown(document.body, { key: 'j' })
+    fireEvent.keyDown(document.body, { key: 'j' })
+    fireEvent.keyDown(document.body, { key: 'd' })
+    await waitFor(() => {
+      expect(spy).toHaveBeenCalledTimes(2)
+    })
   })
 
   it('confirms a capture with Undo and a countdown, and undo takes it back (#104)', async () => {

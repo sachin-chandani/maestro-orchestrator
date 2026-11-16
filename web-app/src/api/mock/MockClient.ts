@@ -445,9 +445,15 @@ export class MockClient implements MaestroClient {
     if (!item.due_at) return []
     const rows: Feed['upcoming'] = []
     const view = this.view(item)
+    // Only within ACK_WINDOW (#138), like target() and maestro.feed: an older delivery nobody
+    // answered shows at its own time again, without buttons for a fired one-off.
     const delivered =
-      this.awaiting(item) && item.delivered ? new Date(item.delivered.occurrence) : null
-    let acts = true
+      this.awaiting(item) &&
+      item.delivered &&
+      now.getTime() - new Date(item.delivered.sent_at).getTime() <= ACK_WINDOW_MS
+        ? new Date(item.delivered.occurrence)
+        : null
+    let acts = item.status !== 'fired'
     if (delivered) {
       rows.push({
         item: view,

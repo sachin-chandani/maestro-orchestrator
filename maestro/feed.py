@@ -21,7 +21,7 @@ from maestro import recurrence
 from maestro.escalation import Stage, is_escalation_key
 from maestro.models import Item, Kind, Status
 from maestro.quiet import QuietHours, is_urgent
-from maestro.storage import Store
+from maestro.storage import ACK_WINDOW, Store
 
 #: How many days the feed covers by default, and at most. A week reads at a glance; a month does not.
 DEFAULT_DAYS = 7
@@ -73,7 +73,11 @@ def build(store: Store, now: datetime | None = None, days: int = DEFAULT_DAYS,
     days = max(1, min(days, MAX_DAYS))
     feed = Feed(now=now, until=window_end(now, days))
     feed.needs_look = store.needs_look()
-    awaiting = {item.id: occurrence for item, occurrence in store.unacknowledged()}
+    # Only deliveries a Done or Snooze can still be about (#138): the same ACK_WINDOW the
+    # acknowledgements (storage/logic.py ack_cutoff) and escalation apply. Anything older shows
+    # at its own time again, without buttons for a fired one-off (_occurrences).
+    awaiting = {item.id: occurrence
+                for item, occurrence in store.unacknowledged(since=now - ACK_WINDOW)}
 
     for item in store.list():
         if item.gap is not None or item.status == Status.DONE:
@@ -96,14 +100,16 @@ def _occurrences(store: Store, item: Item, delivered: datetime | None, feed: Fee
     """The rows one reminder puts in the window, first occurrence first."""
     assert item.due_at is not None
     if delivered is not None:
-        # Delivered and not yet answered: it is "now" to the person however long ago it went out,
-        # and Done or +1 hour act on that occurrence (ADR 0009).
+        # Delivered within ACK_WINDOW and not yet answered: it is "now" to the person, and Done
+        # or +1 hour act on that occurrence (ADR 0009).
         yield Occurrence(item, delivered.astimezone(feed.now.tzinfo), "awaiting",
                          escalation_label=_escalation_label(store, item, delivered, feed.now,
                                                             quiet, escalation))
         acts = False  # the row above owns the buttons
     else:
-        acts = True
+        # A fired one-off went out and its answer window has passed: still listed (it was never
+        # answered), but Done and +1 hour can no longer be about an occurrence that old (#138).
+        acts = item.status != Status.FIRED
     first = item.snoozed_until or item.due_at
     seen_days: set[date] = set()
     count = 0

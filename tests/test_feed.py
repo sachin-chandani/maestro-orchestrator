@@ -114,6 +114,40 @@ def test_a_delivered_reminder_waits_for_an_answer_at_the_time_it_went_out(store)
     assert row.escalation_label is None  # no stages configured
 
 
+def test_an_unanswered_delivery_stops_awaiting_after_the_ack_window(store):
+    # #138: a delivery nobody answered used to sit at the top as "awaiting" forever, and took
+    # Done and +1 hour with it. Past ACK_WINDOW it reads at its own time again, without buttons.
+    due = NOW - timedelta(hours=13)
+    item = reminder(store, "Missed", due)
+    store.record_delivery(item.id, due, Delivery(channel="console", attempts=1, delivered_at=due))
+    store.finish_occurrence(item.id, due, None)  # the scheduler's update after sending a one-off
+    (row,) = feed.build(store, NOW).upcoming
+    assert (row.at, row.state, row.acts) == (due, "overdue", False)
+
+
+def test_an_unanswered_delivery_within_the_ack_window_still_awaits(store):
+    due = NOW - timedelta(hours=11)
+    item = reminder(store, "Recent", due)
+    store.record_delivery(item.id, due, Delivery(channel="console", attempts=1, delivered_at=due))
+    store.finish_occurrence(item.id, due, None)
+    (row,) = feed.build(store, NOW).upcoming
+    assert (row.at, row.state, row.acts) == (due, "awaiting", True)
+
+
+def test_an_old_unanswered_delivery_of_a_series_gives_way_to_the_next_occurrence(store):
+    # #138: the stale awaiting row is gone, and the buttons are back on the next occurrence.
+    old = NOW - timedelta(days=21)
+    item = reminder(store, "Pills", old, recurrence="daily")
+    store.record_delivery(item.id, old, Delivery(channel="console", attempts=1, delivered_at=old))
+    store.reschedule(item.id, dt(2026, 10, 27, 18, 0))  # the scheduler moved the series on
+    built = feed.build(store, NOW, days=2)
+    assert all(o.state != "awaiting" for o in built.upcoming)
+    assert rows(built) == [
+        ("Pills", dt(2026, 10, 27, 18, 0), "scheduled", True),
+        ("Pills", dt(2026, 10, 28, 18, 0), "scheduled", False),
+    ]
+
+
 def test_a_snoozed_one_off_is_at_its_snoozed_time(store):
     item = reminder(store, "Call back", dt(2026, 10, 27, 7, 0))
     store.snooze(item.id, dt(2026, 10, 27, 9, 30), via="cli", now=NOW)

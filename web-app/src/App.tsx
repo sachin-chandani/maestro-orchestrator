@@ -154,7 +154,13 @@ export default function App({ devTools }: AppProps) {
     setToast(null)
   }, [])
 
+  // The in-flight guard is this ref, not the `busy` state: state only changes on a commit, so a
+  // second press before one (stale closures, batched events) would still read the gate as open
+  // and act twice on a recurring reminder (#138, ADR 0009). `busy` stays what the cards render.
+  const inflight = useRef<Set<number>>(new Set())
   const setCardBusy = (id: number, isBusy: boolean) => {
+    if (isBusy) inflight.current.add(id)
+    else inflight.current.delete(id)
     setBusy((current) => {
       const next = new Set(current)
       if (isBusy) next.add(id)
@@ -164,7 +170,7 @@ export default function App({ devTools }: AppProps) {
   }
 
   const act = async (item: Item, action: 'done' | 'snooze', timeZone: string) => {
-    if (busy.has(item.id)) return // a second tap while the first is in flight does nothing
+    if (inflight.current.has(item.id)) return // a second press while the first is in flight does nothing
     setCardBusy(item.id, true)
     try {
       if (action === 'done') {
@@ -210,7 +216,7 @@ export default function App({ devTools }: AppProps) {
 
   /** No time: keep the reading under Anytime (#128). */
   const keep = async (item: Item) => {
-    if (busy.has(item.id)) return
+    if (inflight.current.has(item.id)) return
     setCardBusy(item.id, true)
     try {
       await client.keepGap(item.id)
@@ -224,7 +230,7 @@ export default function App({ devTools }: AppProps) {
   }
 
   const dismiss = async (item: Item) => {
-    if (busy.has(item.id)) return
+    if (inflight.current.has(item.id)) return
     setCardBusy(item.id, true)
     try {
       await client.dismissGap(item.id)

@@ -629,6 +629,18 @@ describe('the feed (#22)', () => {
     expect(feed.later).toBe(0)
   })
 
+  it('an unanswered delivery stops awaiting after the ack window (#138)', async () => {
+    const { client, setNow } = setup()
+    await client.feed() // delivers the bank reminder (due 13:20, nobody answers)
+    setNow('2026-11-07T14:00:00+05:30') // two days on, well past ACK_WINDOW
+    const feed = await client.feed()
+    const bank = feed.upcoming.find((o) => o.item.text === 'Call the bank about the card')
+    // Still listed at its own time, but no longer awaiting and without buttons: Done or +1 hour
+    // can no longer be about a delivery that old (maestro.feed does the same).
+    expect(bank).toMatchObject({ state: 'overdue', acts: false })
+    expect(bank?.at.slice(0, 10)).toBe('2026-11-05')
+  })
+
   it('counts a reminder past the window instead of listing it', async () => {
     const { client } = setup()
     await client.capture('renew the passport in 10 days')
