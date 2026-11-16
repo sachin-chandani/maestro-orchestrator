@@ -21,7 +21,6 @@ from maestro import recurrence
 from maestro.escalation import Stage, is_escalation_key
 from maestro.models import Item, Kind, Status
 from maestro.quiet import QuietHours, is_urgent
-from maestro.scheduler import MAX_ATTEMPTS
 from maestro.storage import ACK_WINDOW, Store
 
 #: How many days the feed covers by default, and at most. A week reads at a glance; a month does not.
@@ -147,12 +146,11 @@ def _times(item: Item, first: datetime) -> Iterator[datetime]:
 def _state(item: Item, at: datetime, now: datetime, quiet: QuietHours | None,
            snoozed: bool) -> tuple[str, datetime | None]:
     """What this occurrence is doing, in the scheduler's terms."""
-    if quiet is not None and not is_urgent(item):
-        # The scheduler holds on the time it is now, not the time the reminder was for (#138): one
-        # due in last night's window that is still unsent this morning is overdue, not held.
-        moment = max(at, now).astimezone(now.tzinfo)
-        if quiet.contains(moment):
-            return "held", quiet.ends_after(moment)
+    # The scheduler holds on the time it is now, not the time the reminder was for (#138): one due
+    # in last night's window that is still unsent this morning is overdue, not held.
+    moment = max(at, now).astimezone(now.tzinfo)
+    if quiet is not None and quiet.holds(item, moment):
+        return "held", quiet.ends_after(moment)
     if at <= now:
         return "overdue", None  # due and not sent yet: the scheduler is about to, or is behind
     if snoozed:
@@ -172,14 +170,22 @@ def _escalation_label(store: Store, item: Item, occurrence: datetime, now: datet
     if first_notice is None:
         return None
     start = first_notice
-    if quiet is not None and not is_urgent(item):
-        resume = quiet.last_end(now.astimezone(store.tz))
-        start = max(first_notice, resume)
+    local = now.astimezone(store.tz)
+    if quiet is not None and quiet.holds(item, local):
+        # escalate() sends nothing inside the window and times the stages from its end (#138)
+        start = max(first_notice, quiet.ends_after(local))
+    elif quiet is not None and not is_urgent(item):
+        start = max(first_notice, quiet.last_end(local))
     for stage in stages:
-        if all((d := state.get(key)) and (d.delivered_at or d.attempts >= MAX_ATTEMPTS)
-               for key in stage.channels):
+        tried = [d for key in stage.channels if (d := state.get(key))]
+        if len(tried) == len(stage.channels) and all(d.finished() for d in tried):
             continue  # this stage went out, or gave up the way `escalate` does (#138)
-        at = (start + stage.delay).astimezone(store.tz)
+        at = start + stage.delay
+        # a stage that is retrying goes out at its next attempt, not at its (past) stage time
+        retries = [d.next_attempt_at for d in tried if not d.finished() and d.next_attempt_at]
+        if retries:
+            at = max(at, min(retries))
+        at = at.astimezone(store.tz)
         names = ", ".join(_CHANNEL_WORDS.get(name, name) for name in stage.names)
         return f"{names} at {at:%H:%M}"
     return None

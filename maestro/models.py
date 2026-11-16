@@ -63,6 +63,10 @@ class Acknowledgement:
     via: str  # the interface it came from: cli, web, api, telegram, email, twilio_sms, twilio_call…
 
 
+#: Tries per channel before it is given up on, so one broken integration can't block a reminder forever.
+MAX_ATTEMPTS = 5
+
+
 @dataclass
 class Delivery:
     """Delivery state of one occurrence of an item on one channel."""
@@ -72,6 +76,10 @@ class Delivery:
     delivered_at: datetime | None = None
     next_attempt_at: datetime | None = None
     last_error: str | None = None
+
+    def finished(self, max_attempts: int = MAX_ATTEMPTS) -> bool:
+        """Delivered, or given up on: nothing more will be sent on this channel."""
+        return self.delivered_at is not None or self.attempts >= max_attempts
 
 
 @dataclass

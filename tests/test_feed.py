@@ -8,7 +8,7 @@ from conftest import TZ, dt
 from maestro import feed
 from maestro.config import Config
 from maestro.escalation import build_stages
-from maestro.models import Delivery, Item, Kind
+from maestro.models import MAX_ATTEMPTS, Delivery, Item, Kind
 from maestro.notifier import CHANNELS
 from maestro.quiet import parse_quiet_hours
 from maestro.storage import SQLiteStore
@@ -105,7 +105,6 @@ def test_states_follow_the_scheduler(store):
     assert feed.build(store, NOW).upcoming[2].state == "scheduled"  # no quiet hours configured
 
 
-
 def test_a_reminder_missed_in_last_nights_window_is_overdue_not_held(store):
     """#138: holding follows the time it is now, like the scheduler, not the reminder's own time."""
     reminder(store, "Missed overnight", dt(2026, 10, 26, 23, 0))  # the server was down
@@ -114,6 +113,28 @@ def test_a_reminder_missed_in_last_nights_window_is_overdue_not_held(store):
     # but still due inside the window it is held until the window ends
     (row,) = feed.build(store, dt(2026, 10, 27, 1, 0), quiet=QUIET).upcoming
     assert (row.state, row.held_until) == ("held", dt(2026, 10, 27, 7, 0))
+
+
+def test_inside_quiet_hours_escalation_is_timed_from_the_window_end(store, channels):
+    """#138: escalate() sends nothing in the window and re-times the stages from its end."""
+    stages = build_stages(Config(escalation="10m=sms"))
+    first = dt(2026, 10, 26, 21, 55)
+    item = reminder(store, "Take pills", first)
+    store.record_delivery(item.id, first, Delivery(channel="console", attempts=1, delivered_at=first))
+    (row,) = feed.build(store, dt(2026, 10, 26, 23, 0), quiet=QUIET, escalation=stages).upcoming
+    assert row.escalation_label == "sms at 07:10"  # not 22:05, a time already past
+
+
+def test_a_retrying_stage_is_announced_at_its_next_attempt(store, channels):
+    stages = build_stages(Config(escalation="10m=sms"))
+    first = dt(2026, 10, 27, 7, 0)
+    item = reminder(store, "Take pills", first)
+    store.record_delivery(item.id, first, Delivery(channel="console", attempts=1, delivered_at=first))
+    store.record_delivery(item.id, first, Delivery(channel="escalation1:sms", attempts=2,
+                                                   next_attempt_at=dt(2026, 10, 27, 7, 25)))
+    (row,) = feed.build(store, dt(2026, 10, 27, 7, 20), escalation=stages).upcoming
+    assert row.escalation_label == "sms at 07:25"
+
 
 def test_a_delivered_reminder_waits_for_an_answer_at_the_time_it_went_out(store):
     item = reminder(store, "Take pills", dt(2026, 10, 27, 7, 0))
@@ -246,8 +267,6 @@ def test_the_label_names_the_next_stage_still_to_go_out(store, channels):
 
 def test_a_stage_that_gave_up_is_not_announced(store, channels):
     """#138: escalate() skips a stage whose channels used up their attempts; so does the label."""
-    from maestro.scheduler import MAX_ATTEMPTS
-
     stages = build_stages(Config(escalation="10m=sms, 30m=call"))
     item = reminder(store, "Take pills", dt(2026, 10, 27, 7, 0))
     first = dt(2026, 10, 27, 7, 0)

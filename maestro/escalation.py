@@ -139,7 +139,7 @@ def _escalate_item(store: Store, stages: list[Stage], now: datetime, deliver: De
         if now - start < stage.delay:
             break  # later stages aren't due either
         pending = [key for key in stage.channels
-                   if not (d := state.get(key)) or not (d.delivered_at or d.attempts >= max_attempts)]
+                   if not (d := state.get(key)) or not d.finished(max_attempts)]
         if not pending:
             continue
         first_try = all(key not in state for key in pending)
