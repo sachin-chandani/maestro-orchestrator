@@ -110,7 +110,8 @@ The rest of the original v0.4 moved on 2026-11-11: #61 and #84 to v0.6, #14, #59
 - [x] One list: Needs a look, Next up, Today, Tomorrow, This week, Anytime (#22)
 - [x] Say or type, reminders land in place, with a 10-second Undo (#104)
 - [x] Fill a gap in one tap, and an evening wrap-up (#128)
-- [ ] Hold-to-talk mic with live words (#127)
+- [x] Review fixes: feed states, offline captures kept, escalation labels (#138)
+- [ ] Review fixes: evening wrap-up replies and quiet hours (#139); "ten to five" and suggested times (#140)
 - [ ] Mobile layout, keyboard and screen-reader accessibility (#87)
 - [ ] Live check: the reminder reaches your phone on Telegram (#132)
 
@@ -127,6 +128,7 @@ Use the loop every day for a week and fix what gets in the way (#133). The frict
 - [ ] Pair a phone with a QR code (#95, #106), Settings (#107), share into Maestro (#97)
 - [ ] Edit by replying: "make it 4pm" (#85); Telegram acts on the message you replied to (#61)
 - [ ] Lead-time alerts: "remind me an hour before" (#84)
+- [ ] Parser: "Friday" said on a Friday (#136), ranges keep their words (#137)
 - [ ] End-to-end tests in CI (#23)
 
 Exit criteria: the friction log exists and its top items are fixed; a phone installs the app and gets web push over HTTPS; everything doable from the CLI is doable from the phone; e2e tests run in CI.
